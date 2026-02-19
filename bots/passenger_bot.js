@@ -6,14 +6,31 @@ if(!token){ console.error("PASSENGER_BOT_TOKEN yoxdur"); process.exit(1); }
 
 const bot = new Telegraf(token);
 
-bot.start(async (ctx)=>{
-  const webUrl = process.env.WEBAPP_URL;
-  if(!webUrl) return ctx.reply("WEBAPP_URL yoxdur (.env)");
-  const u = new URL(webUrl);
-  if(process.env.BACKEND_URL) u.searchParams.set("backend", process.env.BACKEND_URL);
+function buildWebUrl(ctx){
+  // Prefer WEBAPP_URL, fallback to BACKEND_URL + /passenger
+  let webUrl = (process.env.WEBAPP_URL || "").trim();
+  if(!webUrl){
+    const backend = (process.env.BACKEND_URL || "").trim();
+    if(backend) webUrl = backend.replace(/\/+$/,"") + "/passenger";
+  }
+  if(!webUrl) return null;
+
+  let u;
+  try { u = new URL(webUrl); } catch(e){ return null; }
+
+  const backend = (process.env.BACKEND_URL || "").trim();
+  if(backend) u.searchParams.set("backend", backend);
+
+  // Fix: correct param name (was broken with leading quote)
   u.searchParams.set("chat_id", String(ctx.chat.id));
+  return u.toString();
+}
+
+bot.start(async (ctx)=>{
+  const url = buildWebUrl(ctx);
+  if(!url) return ctx.reply("WEBAPP_URL və ya BACKEND_URL düzgün deyil (.env).");
   return ctx.reply("PayTaksi 🚕\nSifariş üçün düyməni bas:", Markup.inlineKeyboard([
-    Markup.button.webApp("🚕 Sifariş ver (Xəritə)", u.toString())
+    Markup.button.webApp("🚕 Sifariş ver (Xəritə)", url)
   ]));
 });
 

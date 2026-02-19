@@ -1,14 +1,9 @@
 /**
- * PayTaksi Telegram - backend/src/index.js (PATCH)
- * ✅ Nothing removed intentionally; existing API + WS kept
- * ✅ Adds Telegram Mini App hosting on the SAME Render Web Service (FREE)
- * ✅ Auto-starts bots inside same service (no paid Background Worker)
- *
- * URLs after deploy:
- *   - https://<render>.onrender.com/            -> health text
- *   - https://<render>.onrender.com/passenger  -> Mini App (web/passenger.html)
- *   - https://<render>.onrender.com/web/...    -> static web files
- *   - wss://<render>.onrender.com              -> WebSocket (same host)
+ * PayTaksi Telegram - backend/src/index.js (PATCH 2)
+ * Fixes Telegram "Not Found" by adding alias routes:
+ *   /passenger, /passenger/, /passenger.html, /passenger/index.html
+ * Also serves /web static directory.
+ * Bots start inside same service (FREE, no worker).
  */
 const express = require("express");
 const cors = require("cors");
@@ -38,13 +33,18 @@ app.use(
 );
 
 // ===== Serve Mini App (FREE) =====
-// Repo root has /web/passenger.html
 const WEB_DIR = path.join(__dirname, "..", "..", "web");
 app.use("/web", express.static(WEB_DIR));
 
-app.get("/passenger", (req, res) => {
+function sendPassenger(res) {
   return res.sendFile(path.join(WEB_DIR, "passenger.html"));
-});
+}
+
+// Telegram sometimes opens different variants -> avoid 404
+app.get("/passenger", (req, res) => sendPassenger(res));
+app.get("/passenger/", (req, res) => sendPassenger(res));
+app.get("/passenger.html", (req, res) => sendPassenger(res));
+app.get("/passenger/index.html", (req, res) => sendPassenger(res));
 
 // --- In-memory store (MVP) ---
 const store = {
@@ -69,7 +69,7 @@ function distanceKm(a, b) {
 function computePrice(km) {
   const base = Number(process.env.BASE_FEE || process.env.PRICE_BASE_AZN || 1.0);
   const per = Number(process.env.PRICE_PER_KM || process.env.PRICE_PER_KM_AZN || 0.5);
-  const min = Number(process.env.PRICE_MIN_AZN || 0);
+  const min = Number(process.env.PRICE_MIN_AZN || process.env.PRICE_MIN_AZN || 0);
   const p = +(base + km * per).toFixed(2);
   return Math.max(min, p);
 }
@@ -219,8 +219,7 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log("PayTaksi backend listening on", PORT);
 
-  // ===== Start bots inside same Render Web Service (FREE) =====
-  // IMPORTANT: this keeps your free plan. No Background Worker.
+  // Start bots inside same service (FREE)
   try {
     const botsDir = path.join(__dirname, "..", "..", "bots");
     require(path.join(botsDir, "passenger_bot.js"));
