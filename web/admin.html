@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="az">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PayTaksi Admin Panel</title>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;background:#0f172a;color:#e2e8f0}
+    header{padding:14px 16px;background:#111827;position:sticky;top:0;z-index:10;border-bottom:1px solid rgba(255,255,255,.08)}
+    h1{font-size:18px;margin:0}
+    .wrap{max-width:980px;margin:0 auto;padding:14px 16px}
+    .grid{display:grid;grid-template-columns:1fr;gap:12px}
+    @media(min-width:900px){.grid{grid-template-columns:1fr 1fr}}
+    .card{background:#111827;border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:12px;box-shadow:0 10px 30px rgba(0,0,0,.25)}
+    .row{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+    .muted{color:#94a3b8;font-size:12px}
+    button{background:#22c55e;border:0;color:#052e14;padding:10px 12px;border-radius:10px;font-weight:700;cursor:pointer}
+    button.secondary{background:#334155;color:#e2e8f0}
+    table{width:100%;border-collapse:collapse;font-size:14px}
+    th,td{padding:10px;border-bottom:1px solid rgba(255,255,255,.08);text-align:left}
+    code{background:#0b1220;padding:2px 6px;border-radius:8px;border:1px solid rgba(255,255,255,.06)}
+    .pill{display:inline-block;background:#0b1220;border:1px solid rgba(255,255,255,.08);padding:3px 8px;border-radius:999px;font-size:12px;color:#cbd5e1}
+    .ok{color:#22c55e}
+    .warn{color:#f59e0b}
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap row">
+      <h1>PayTaksi — Admin Panel</h1>
+      <div class="row" style="gap:8px">
+        <span class="pill" id="status">Yüklənir…</span>
+        <button class="secondary" id="refresh">Yenilə</button>
+      </div>
+    </div>
+  </header>
+
+  <div class="wrap">
+    <div class="grid">
+      <div class="card">
+        <div class="row">
+          <div>
+            <div style="font-weight:800">Onlayn sürücülər</div>
+            <div class="muted">/api/drivers/online</div>
+          </div>
+          <button id="btnDrivers">Yüklə</button>
+        </div>
+        <div style="margin-top:10px;overflow:auto">
+          <table>
+            <thead><tr><th>Driver ID</th><th>Ad</th><th>Telefon</th><th>Son yenilənmə</th></tr></thead>
+            <tbody id="driversBody"><tr><td colspan="4" class="muted">Hələ məlumat yoxdur.</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="row">
+          <div>
+            <div style="font-weight:800">Sifarişlər (son 50)</div>
+            <div class="muted">/api/orders/recent</div>
+          </div>
+          <button id="btnOrders">Yüklə</button>
+        </div>
+        <div style="margin-top:10px;overflow:auto">
+          <table>
+            <thead><tr><th>#</th><th>Passenger</th><th>Driver</th><th>Status</th></tr></thead>
+            <tbody id="ordersBody"><tr><td colspan="4" class="muted">Hələ məlumat yoxdur.</td></tr></tbody>
+          </table>
+        </div>
+        <div class="muted" style="margin-top:8px">
+          Qeyd: Bu sadə admin panel MVP-dir. Sonra: filtr, detal, chat log, qiymət tənzimləmə, s.
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+  async function j(url){
+    const r = await fetch(url, { credentials: 'same-origin' });
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    return r.json();
+  }
+
+  function setStatus(text, ok=true){
+    const el = document.getElementById('status');
+    el.textContent = text;
+    el.className = 'pill ' + (ok ? 'ok':'warn');
+  }
+
+  async function loadDrivers(){
+    setStatus('Sürücülər yüklənir…', true);
+    try{
+      const data = await j('/api/drivers/online');
+      const list = data?.drivers || [];
+      const tb = document.getElementById('driversBody');
+      if(!list.length){ tb.innerHTML = '<tr><td colspan="4" class="muted">Onlayn sürücü yoxdur.</td></tr>'; }
+      else{
+        tb.innerHTML = list.map(d => {
+          const ts = d.updated_at ? new Date(d.updated_at).toLocaleString() : '';
+          return `<tr><td><code>${d.driver_id}</code></td><td>${d.name||''}</td><td>${d.phone||''}</td><td>${ts}</td></tr>`;
+        }).join('');
+      }
+      setStatus('Hazır ✅', true);
+    }catch(e){
+      setStatus('Xəta: sürücülər', false);
+      console.error(e);
+    }
+  }
+
+  async function loadOrders(){
+    setStatus('Sifarişlər yüklənir…', true);
+    try{
+      const data = await j('/api/orders/recent');
+      const list = data?.orders || [];
+      const tb = document.getElementById('ordersBody');
+      if(!list.length){ tb.innerHTML = '<tr><td colspan="4" class="muted">Sifariş yoxdur.</td></tr>'; }
+      else{
+        tb.innerHTML = list.map(o => `<tr><td><code>${o.id}</code></td><td>${o.passenger_id||''}</td><td>${o.driver_id||''}</td><td>${o.status||''}</td></tr>`).join('');
+      }
+      setStatus('Hazır ✅', true);
+    }catch(e){
+      setStatus('Xəta: sifarişlər', false);
+      console.error(e);
+    }
+  }
+
+  document.getElementById('btnDrivers').addEventListener('click', loadDrivers);
+  document.getElementById('btnOrders').addEventListener('click', loadOrders);
+  document.getElementById('refresh').addEventListener('click', async ()=>{ await loadDrivers(); await loadOrders(); });
+  loadDrivers();
+  loadOrders();
+</script>
+</body>
+</html>

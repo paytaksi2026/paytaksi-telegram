@@ -46,6 +46,16 @@ app.get("/passenger/", (req, res) => sendPassenger(res));
 app.get("/passenger.html", (req, res) => sendPassenger(res));
 app.get("/passenger/index.html", (req, res) => sendPassenger(res));
 
+
+// Admin WebApp (Mini App)
+function sendAdmin(res) {
+  res.sendFile(path.join(__dirname, "..", "..", "web", "admin.html"));
+}
+app.get("/admin", (req, res) => sendAdmin(res));
+app.get("/admin/", (req, res) => sendAdmin(res));
+app.get("/admin.html", (req, res) => sendAdmin(res));
+app.get("/admin/index.html", (req, res) => sendAdmin(res));
+
 // --- In-memory store (MVP) ---
 const store = {
   drivers: new Map(),
@@ -126,10 +136,6 @@ app.post("/api/order/:orderId/accept", (req, res) => {
   order.status = "ACCEPTED";
   order.driverId = String(driverId);
 
-  // If driver registered chatId, save it (used for passenger-driver chat)
-  const reg = store.drivers.get(String(driverId));
-  if (reg && reg.chatId) order.driverChatId = reg.chatId;
-
   const d = store.drivers.get(String(driverId)) || { online: true };
   if (name) d.name = name;
   if (car) d.car = car;
@@ -137,43 +143,6 @@ app.post("/api/order/:orderId/accept", (req, res) => {
 
   broadcast({ type: "order_accepted", order });
   res.json({ ok: true, order });
-});
-
-// Order details (bots use this to forward chat to the other side)
-app.get('/api/order/:orderId', (req, res) => {
-  const { orderId } = req.params;
-  const order = store.orders.get(orderId);
-  if (!order) return res.status(404).json({ ok: false, error: 'order not found' });
-  res.json({ ok: true, order });
-});
-
-// Driver registers its chatId (so backend can later return it for chats)
-app.post('/api/driver/register', (req, res) => {
-  const { driverId, chatId, name, car } = req.body || {};
-  if (!driverId || !chatId) return res.status(400).json({ ok: false, error: 'driverId and chatId required' });
-
-  const d = store.drivers.get(String(driverId)) || { online: true };
-  d.chatId = Number(chatId);
-  d.ts = Date.now();
-  if (name) d.name = name;
-  if (car) d.car = car;
-  store.drivers.set(String(driverId), d);
-  broadcast({ type: 'driver_registered', driverId: String(driverId) });
-  res.json({ ok: true });
-});
-
-// Driver pulls orders (near real-time on free tier)
-// GET /api/driver/orders?driverId=123
-app.get('/api/driver/orders', (req, res) => {
-  const driverId = String(req.query.driverId || '');
-  if (!driverId) return res.status(400).json({ ok: false, error: 'driverId required' });
-
-  const out = [];
-  for (const o of store.orders.values()) {
-    if (o.status === 'SEARCHING' && !o.driverId) out.push(o);
-    else if (o.driverId === driverId) out.push(o);
-  }
-  res.json({ ok: true, orders: out });
 });
 
 app.post("/api/order/:orderId/status", (req, res) => {

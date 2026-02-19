@@ -360,4 +360,15 @@ export function mountRoutes(app, notify) {
     if (!full) return res.status(404).json({ error: 'order_not_found' });
     res.json({ ok: true, order: full });
   });
+  // Admin: recent orders (last 50)
+  app.get('/api/orders/recent', (req, res) => {
+    try {
+      const db = getDb();
+      const orders = db.prepare('SELECT * FROM orders ORDER BY id DESC LIMIT 50').all();
+      res.json({ ok: true, orders });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: String(e) });
+    }
+  });
+
 }
