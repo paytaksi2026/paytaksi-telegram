@@ -11,15 +11,22 @@ const state = new Map(); // chatId -> {online, name, car, lastOrderId}
 
 function mainKeyboard(){
   return Markup.keyboard([
-    [ (() => { const url = getDriverWebAppUrl(); return url ? { text: '🗺️ Sürücü paneli (Xəritə)', web_app: { url } } : { text: '🗺️ Sürücü paneli (Xəritə)' }; })() ],
-      ["🟢 Onlayn ol","🔴 Oflayn ol"],
-      ["📍 Yer göndər"],
-      ["ℹ️ Qəbul: /accept ID"]
-    ]).resize();
+    ["🟢 Onlayn ol","🔴 Oflayn ol"],
+    ["📍 Yer göndər"],
+    ["ℹ️ Qəbul: /accept ID"]
+  ]).resize();
 }
 
 bot.start((ctx)=>{
   if(!state.has(ctx.chat.id)) state.set(ctx.chat.id,{online:false,name:ctx.from.first_name||"",car:"Toyota Aqua"});
+  // Mini App düyməsi (yeni əlavə, köhnə funksiyalar qalır)
+  const url = getDriverWebAppUrl();
+  if(url){
+    ctx.reply(
+      "🚕 Sürücü Paneli — Mini App\nXəritəni açmaq üçün düyməyə bas:",
+      Markup.inlineKeyboard([Markup.button.webApp("🚕 Sürücü Paneli (Xəritə)", url)])
+    );
+  }
   ctx.reply("Sürücü paneli 🚕", mainKeyboard());
 });
 

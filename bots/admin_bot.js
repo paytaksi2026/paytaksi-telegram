@@ -1,13 +1,22 @@
 require("dotenv").config();
-const { Telegraf } = require("telegraf");
-const { getAdminWebAppUrl } = require("./webapp_url");
+const { Telegraf, Markup } = require("telegraf");
 const { get } = require("./api");
+const { getAdminWebAppUrl } = require("./webapp_url");
 
 const token = process.env.ADMIN_BOT_TOKEN;
 if(!token){ console.error("ADMIN_BOT_TOKEN yoxdur"); process.exit(1); }
 const bot = new Telegraf(token);
 
-bot.start((ctx)=>ctx.reply("Admin bot 🛠️\n/health\n/drivers"));
+bot.start((ctx)=>{
+  const url = getAdminWebAppUrl();
+  if(url){
+    ctx.reply(
+      "🛠 Admin Paneli — Mini App\nAçmaq üçün düyməyə bas:",
+      Markup.inlineKeyboard([Markup.button.webApp("🛠 Admin Paneli", url)])
+    );
+  }
+  ctx.reply("Admin bot 🛠️\n/health\n/drivers");
+});
 
 bot.command("health", async (ctx)=>{
   try{ const r=await get("/health"); ctx.reply(r.ok?"Backend OK ✅":"Backend Xəta"); }
@@ -27,14 +36,3 @@ bot.command("drivers", async (ctx)=>{
 bot.launch().then(()=>console.log("Admin bot started"));
 process.once("SIGINT",()=>bot.stop("SIGINT"));
 process.once("SIGTERM",()=>bot.stop("SIGTERM"));
-
-
-bot.command('panel', async (ctx) => {
-  const adminWebAppUrl = getAdminWebAppUrl();
-  return ctx.reply('🧰 Admin panelini aç:', {
-    reply_markup: {
-      keyboard: [[{ text: '🧰 Admin Paneli (App)', web_app: { url: adminWebAppUrl } }]],
-      resize_keyboard: true
-    }
-  });
-});

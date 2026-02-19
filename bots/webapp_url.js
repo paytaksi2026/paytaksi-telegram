@@ -1,56 +1,49 @@
-// Helper: build Telegram Mini App (WebApp) URLs for passenger/driver/admin
-// Works on Render (RENDER_EXTERNAL_URL) or custom WEBAPP_URL, DRIVER_WEBAPP_URL, ADMIN_WEBAPP_URL
-
-function normalizeBase(url) {
-  if (!url) return '';
-  // remove trailing slash
-  return String(url).trim().replace(/\/+$/, '');
+function normalizeBase(base) {
+  if (!base) return null;
+  base = String(base).trim();
+  if (!base) return null;
+  return base.replace(/\/+$/, "");
 }
 
-function pickBaseUrl() {
-  // Prefer explicit WEBAPP_URL (full base), else Render external URL
-  const env = process.env;
-  return normalizeBase(env.WEBAPP_URL || env.RENDER_EXTERNAL_URL || env.RENDER_URL || '');
-}
-
-function join(base, path) {
-  if (!base) return '';
-  if (!path) return base;
-  if (path.startsWith('/')) return base + path;
-  return base + '/' + path;
+function baseFromEnv() {
+  return (
+    normalizeBase(process.env.RENDER_EXTERNAL_URL) ||
+    normalizeBase(process.env.PUBLIC_URL) ||
+    null
+  );
 }
 
 function getPassengerWebAppUrl() {
-  const env = process.env;
-  if (env.PASSENGER_WEBAPP_URL) return normalizeBase(env.PASSENGER_WEBAPP_URL);
-  // If WEBAPP_URL already ends with /passenger keep it, else append
-  const base = pickBaseUrl();
-  if (!base) return '';
-  if (base.endsWith('/passenger')) return base;
-  return join(base, '/passenger');
+  const env = normalizeBase(process.env.WEBAPP_URL);
+  if (env) return env;
+  const base = baseFromEnv();
+  if (base) return base + "/passenger";
+  return null;
 }
 
 function getDriverWebAppUrl() {
-  const env = process.env;
-  if (env.DRIVER_WEBAPP_URL) return normalizeBase(env.DRIVER_WEBAPP_URL);
-  const base = pickBaseUrl();
-  if (!base) return '';
-  if (base.endsWith('/driver')) return base;
-  // If user stored passenger URL in WEBAPP_URL, replace
-  if (base.endsWith('/passenger')) return base.replace(/\/passenger$/, '/driver');
-  return join(base, '/driver');
+  const env = normalizeBase(process.env.DRIVER_WEBAPP_URL);
+  if (env) return env;
+  const base = baseFromEnv();
+  if (base) return base + "/driver";
+  return null;
 }
 
 function getAdminWebAppUrl() {
-  const env = process.env;
-  if (env.ADMIN_WEBAPP_URL) return normalizeBase(env.ADMIN_WEBAPP_URL);
-  const base = pickBaseUrl();
-  if (!base) return '';
-  if (base.endsWith('/admin')) return base;
-  return join(base, '/admin');
+  const env = normalizeBase(process.env.ADMIN_WEBAPP_URL);
+  if (env) return env;
+  const base = baseFromEnv();
+  if (base) return base + "/admin";
+  return null;
+}
+
+// Backward compat with older code
+function getWebAppUrl() {
+  return getPassengerWebAppUrl();
 }
 
 module.exports = {
+  getWebAppUrl,
   getPassengerWebAppUrl,
   getDriverWebAppUrl,
   getAdminWebAppUrl,
