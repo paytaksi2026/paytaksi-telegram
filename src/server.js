@@ -87,7 +87,18 @@ app.post('/api/passenger/register', async (req,res)=>{
     const { id, first_name, last_name, phone } = req.body || {};
     if(!id||!first_name||!last_name||!phone) return res.json({ok:false,error:'missing'});
     if(!String(phone).startsWith('+994')) return res.json({ok:false,error:'phone must start with +994'});
-    await q(`UPDATE users SET first_name=$2,last_name=$3,phone=$4 WHERE id=$1`, [id, first_name, last_name, phone]);
+
+    await q(
+      `INSERT INTO users (id, role, first_name, last_name, phone)
+       VALUES ($1,'passenger',$2,$3,$4)
+       ON CONFLICT (id) DO UPDATE SET
+         role='passenger',
+         first_name=EXCLUDED.first_name,
+         last_name=EXCLUDED.last_name,
+         phone=EXCLUDED.phone`,
+      [id, first_name, last_name, phone]
+    );
+
     res.json({ok:true});
   }catch(e){ res.json({ok:false,error:e.message}); }
 });
@@ -112,9 +123,22 @@ app.post('/api/driver/register', async (req,res)=>{
     const { id, first_name, last_name, phone, car_make, car_model, plate } = req.body || {};
     if(!id||!first_name||!last_name||!phone||!car_make||!car_model||!plate) return res.json({ok:false,error:'missing'});
     if(!String(phone).startsWith('+994')) return res.json({ok:false,error:'phone must start with +994'});
-    await q(`UPDATE users SET first_name=$2,last_name=$3,phone=$4 WHERE id=$1`, [id, first_name, last_name, phone]);
+
+    // IMPORTANT: upsert into users first, so drivers.user_id foreign key is always valid
+    await q(
+      `INSERT INTO users (id, role, first_name, last_name, phone)
+       VALUES ($1,'driver',$2,$3,$4)
+       ON CONFLICT (id) DO UPDATE SET
+         role='driver',
+         first_name=EXCLUDED.first_name,
+         last_name=EXCLUDED.last_name,
+         phone=EXCLUDED.phone`,
+      [id, first_name, last_name, phone]
+    );
+
     await q(`INSERT INTO drivers (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING`, [id]);
     await q(`UPDATE drivers SET car_make=$2,car_model=$3,plate=$4,status='pending' WHERE user_id=$1`, [id, car_make, car_model, plate]);
+
     res.json({ok:true});
   }catch(e){ res.json({ok:false,error:e.message}); }
 });
