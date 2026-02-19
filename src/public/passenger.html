@@ -6,8 +6,25 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 </head><body>
 <div class="header"><span class="title">PayTaksi</span><span class="badge">Passenger</span></div>
+
 <div class="wrap">
-  <div class="card">
+  <div class="card" id="regCard" style="display:none">
+    <div class="kpi" style="font-size:18px">Qeydiyyat</div>
+    <p class="small">Sifariş vermək üçün bir dəfə qeydiyyat et.</p>
+    <div class="row">
+      <input class="input" id="fn" placeholder="Ad"/>
+      <input class="input" id="ln" placeholder="Soyad"/>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <input class="input" id="phone" placeholder="+994 XX XXX XX XX" inputmode="tel"/>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button class="btn" id="btnReg">Qeydiyyatı tamamla</button>
+    </div>
+    <div class="small" id="regMsg"></div>
+  </div>
+
+  <div class="card" id="appCard" style="display:none">
     <div class="row">
       <button class="btn" id="btnLocate">Lokasiyanı aç</button>
       <button class="btn secondary" id="btnNew">Yeni sifariş</button>
@@ -25,7 +42,7 @@
     </div>
   </div>
 
-  <div class="card">
+  <div class="card" id="liveCard" style="display:none">
     <div class="kpi" style="font-size:18px">Canlı sürücü</div>
     <div class="small" id="driverInfo">-</div>
   </div>
@@ -43,11 +60,17 @@ let km=0, price=0;
 function setStatus(t){ document.getElementById('status').textContent=t; }
 function setKPI(){ document.getElementById('km').textContent = km ? km.toFixed(2) : '-';
                   document.getElementById('price').textContent = price ? price.toFixed(2) : '-'; }
+function show(id, on){ document.getElementById(id).style.display = on ? 'block':'none'; }
 
 async function upsertPassenger(){
   if(!user) return;
   await fetch('/api/users/upsert', {method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({id:user.id, role:'passenger', first_name:user.first_name, last_name:user.last_name})});
+}
+
+async function getMe(){
+  const r = await fetch('/api/user/me?id='+user.id);
+  return await r.json();
 }
 
 function initMap(){
@@ -72,7 +95,6 @@ function initMap(){
 }
 
 document.getElementById('btnLocate').onclick = ()=>{
-  if(!user) return alert("Bu səhifəni botun içindən (Open) aç.");
   navigator.geolocation.getCurrentPosition((pos)=>{
     pickup = {lat: pos.coords.latitude, lng: pos.coords.longitude};
     if(meMarker) map.removeLayer(meMarker);
@@ -112,8 +134,41 @@ document.getElementById('btnCancel').onclick = async ()=>{
   tripId=null;
 };
 
+document.getElementById('btnReg').onclick = async ()=>{
+  const first_name = document.getElementById('fn').value.trim();
+  const last_name = document.getElementById('ln').value.trim();
+  const phone = document.getElementById('phone').value.trim();
+  if(!first_name || !last_name) return document.getElementById('regMsg').textContent="Ad və soyad yaz.";
+  if(!phone.startsWith('+994')) return document.getElementById('regMsg').textContent="Telefon +994 ilə başlamalıdır.";
+  const r = await fetch('/api/passenger/register', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({id:user.id, first_name, last_name, phone})});
+  const data = await r.json();
+  document.getElementById('regMsg').textContent = data.ok ? "Qeydiyyat tamamlandı ✅" : ("Xəta: "+(data.error||""));
+  if(data.ok){
+    show('regCard', false);
+    show('appCard', true);
+    show('liveCard', true);
+    initMap();
+  }
+};
+
 const socket = io();
-socket.on('connect', upsertPassenger);
+socket.on('connect', async ()=>{
+  if(!user){ alert("Bu səhifəni botun içindən (Open) aç."); return; }
+  await upsertPassenger();
+  const me = await getMe();
+  const needReg = !me.phone;
+  show('regCard', needReg);
+  show('appCard', !needReg);
+  show('liveCard', !needReg);
+  if(needReg){
+    document.getElementById('fn').value = user.first_name||'';
+    document.getElementById('ln').value = user.last_name||'';
+  } else {
+    initMap();
+  }
+});
+
 socket.on('trip:assigned', (p)=>{
   if(p.trip_id !== tripId) return;
   setStatus("Sürücü qəbul etdi. Gəlir...");
@@ -133,7 +188,6 @@ socket.on('driver:location:update', (p)=>{
   }
 });
 
-initMap();
 if(tg) tg.expand();
 </script>
 </body></html>

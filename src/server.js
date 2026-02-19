@@ -19,7 +19,7 @@ const ADMIN_TG_IDS = (process.env.ADMIN_TG_IDS || '').split(',').map(s => s.trim
 const app = express();
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(morgan('tiny'));
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({ limit: '5mb' }));
 
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/p', (_, res)=> res.sendFile(path.join(__dirname,'public','passenger.html')));
@@ -32,7 +32,7 @@ app.use('/uploads', express.static(UPLOAD_DIR));
 
 function isAdminId(tgId){ return ADMIN_TG_IDS.includes(String(tgId)); }
 
-// Pricing
+// pricing
 function haversineKm(a,b){
   const toRad = (d)=> d*Math.PI/180, R=6371;
   const dLat=toRad(b.lat-a.lat), dLng=toRad(b.lng-a.lng);
@@ -46,8 +46,7 @@ function priceFromKm(km){
   if(!km || km<=3) return base;
   return base + (km-3)*0.40;
 }
-
-app.post('/api/pricing/estimate', async (req,res)=>{
+app.post('/api/pricing/estimate', (req,res)=>{
   const { pickup, drop } = req.body || {};
   if(!pickup||!drop) return res.json({ok:false,error:'pickup/drop missing'});
   const distKm = haversineKm(pickup, drop);
@@ -55,7 +54,7 @@ app.post('/api/pricing/estimate', async (req,res)=>{
   res.json({ok:true, distance_km: distKm, price_azn: Number(price.toFixed(2))});
 });
 
-// Users
+// users
 app.post('/api/users/upsert', async (req,res)=>{
   try{
     const { id, role, first_name, last_name, phone } = req.body || {};
@@ -73,18 +72,53 @@ app.post('/api/users/upsert', async (req,res)=>{
   }catch(e){ res.json({ok:false,error:e.message}); }
 });
 
-// Driver
+app.get('/api/user/me', async (req,res)=>{
+  try{
+    const id = req.query.id;
+    if(!id) return res.json({ok:false,error:'id missing'});
+    const r = await q(`SELECT id, role, first_name, last_name, phone FROM users WHERE id=$1`, [id]);
+    if(!r.rowCount) return res.json({ok:true, phone:null});
+    res.json({ok:true, ...r.rows[0]});
+  }catch(e){ res.json({ok:false,error:e.message}); }
+});
+
+app.post('/api/passenger/register', async (req,res)=>{
+  try{
+    const { id, first_name, last_name, phone } = req.body || {};
+    if(!id||!first_name||!last_name||!phone) return res.json({ok:false,error:'missing'});
+    if(!String(phone).startsWith('+994')) return res.json({ok:false,error:'phone must start with +994'});
+    await q(`UPDATE users SET first_name=$2,last_name=$3,phone=$4 WHERE id=$1`, [id, first_name, last_name, phone]);
+    res.json({ok:true});
+  }catch(e){ res.json({ok:false,error:e.message}); }
+});
+
+// driver
 app.get('/api/driver/me', async (req,res)=>{
   try{
     const driver_id = req.query.driver_id;
     if(!driver_id) return res.json({ok:false,error:'driver_id missing'});
-    const r = await q(`SELECT d.* FROM drivers d WHERE d.user_id=$1`, [driver_id]);
+    const r = await q(`SELECT d.*, u.phone FROM drivers d JOIN users u ON u.id=d.user_id WHERE d.user_id=$1`, [driver_id]);
     if(!r.rowCount) return res.json({ok:false,error:'driver not found'});
     const d=r.rows[0];
     const blocked = Number(d.balance) <= -15;
-    res.json({ok:true, status:d.status, balance:d.balance, blocked, block_reason: blocked ? 'Balans -15 AZN-dən aşağıdır. Topup edin.' : null, plate:d.plate});
+    res.json({ok:true, status:d.status, balance:d.balance, blocked,
+      block_reason: blocked ? 'Balans -15 AZN-dən aşağıdır. Topup edin.' : null,
+      phone:d.phone, car_make:d.car_make, car_model:d.car_model, plate:d.plate});
   }catch(e){ res.json({ok:false,error:e.message}); }
 });
+
+app.post('/api/driver/register', async (req,res)=>{
+  try{
+    const { id, first_name, last_name, phone, car_make, car_model, plate } = req.body || {};
+    if(!id||!first_name||!last_name||!phone||!car_make||!car_model||!plate) return res.json({ok:false,error:'missing'});
+    if(!String(phone).startsWith('+994')) return res.json({ok:false,error:'phone must start with +994'});
+    await q(`UPDATE users SET first_name=$2,last_name=$3,phone=$4 WHERE id=$1`, [id, first_name, last_name, phone]);
+    await q(`INSERT INTO drivers (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING`, [id]);
+    await q(`UPDATE drivers SET car_make=$2,car_model=$3,plate=$4,status='pending' WHERE user_id=$1`, [id, car_make, car_model, plate]);
+    res.json({ok:true});
+  }catch(e){ res.json({ok:false,error:e.message}); }
+});
+
 app.post('/api/driver/set_online', async (req,res)=>{
   try{
     const { driver_id, is_online } = req.body || {};
@@ -96,11 +130,57 @@ app.post('/api/driver/set_online', async (req,res)=>{
   }catch(e){ res.json({ok:false,error:e.message}); }
 });
 
-// Trips
+// multipart helper
+function parseMultipart(req){
+  return new Promise((resolve, reject)=>{
+    const ct = req.headers['content-type'] || '';
+    if(!ct.includes('multipart/form-data')) return reject(new Error('multipart required'));
+    const boundary = '--' + ct.split('boundary=')[1];
+    let buf = Buffer.alloc(0);
+    req.on('data', (c)=> buf = Buffer.concat([buf,c]));
+    req.on('end', ()=>{
+      try{
+        const parts = buf.toString('binary').split(boundary).slice(1,-1);
+        const fields={}; let file=null;
+        for(const part of parts){
+          const p = part.replace(/^\r\n/,'').replace(/\r\n$/,'');
+          const [rawH, rawB] = p.split('\r\n\r\n');
+          const cd = (rawH.split('\r\n').find(h=>h.toLowerCase().startsWith('content-disposition'))||'');
+          const nameMatch=/name="([^"]+)"/.exec(cd); if(!nameMatch) continue;
+          const name=nameMatch[1];
+          const fnMatch=/filename="([^"]*)"/.exec(cd);
+          if(fnMatch && fnMatch[1]){
+            const bodyBuf=Buffer.from(rawB,'binary').slice(0,-2);
+            file={name, filename: fnMatch[1], bytes: bodyBuf};
+          } else fields[name]=rawB.replace(/\r\n$/,'');
+        }
+        resolve({fields,file});
+      }catch(e){ reject(e); }
+    });
+  });
+}
+
+app.post('/api/driver/docs/upload', async (req,res)=>{
+  try{
+    const { fields, file } = await parseMultipart(req);
+    const driver_id = fields.driver_id;
+    const doc_type = fields.doc_type;
+    if(!driver_id || !doc_type || !file) return res.json({ok:false,error:'driver_id/doc_type/file required'});
+    const safe = `doc_${driver_id}_${doc_type}_${Date.now()}_${file.filename.replace(/[^a-zA-Z0-9._-]/g,'_')}`;
+    fs.writeFileSync(path.join(UPLOAD_DIR, safe), file.bytes);
+    const fileUrl = `${PUBLIC_BASE_URL}/uploads/${safe}`;
+    await q(`INSERT INTO driver_documents (driver_id, doc_type, file_url) VALUES ($1,$2,$3)`, [driver_id, doc_type, fileUrl]);
+    res.json({ok:true, url:fileUrl});
+  }catch(e){ res.json({ok:false,error:e.message}); }
+});
+
+// trips
 app.post('/api/trips/create', async (req,res)=>{
   try{
     const { passenger_id, pickup, drop } = req.body || {};
     if(!passenger_id || !pickup || !drop) return res.json({ok:false,error:'missing fields'});
+    const me = await q(`SELECT phone FROM users WHERE id=$1`, [passenger_id]);
+    if(!me.rowCount || !me.rows[0].phone) return res.json({ok:false,error:'Passenger qeydiyyatı yoxdur (telefon).'});
     const trip_id = uuidv4();
     const distKm = haversineKm(pickup, drop);
     const price = priceFromKm(distKm);
@@ -117,11 +197,11 @@ app.post('/api/trips/create', async (req,res)=>{
 app.post('/api/trips/accept', async (req,res)=>{
   try{
     const { trip_id, driver_id } = req.body || {};
-    const d = await q(`SELECT balance,status FROM drivers WHERE user_id=$1`, [driver_id]);
+    const d = await q(`SELECT balance,status,car_make,car_model,plate FROM drivers WHERE user_id=$1`, [driver_id]);
     if(!d.rowCount) return res.json({ok:false,error:'driver not found'});
+    if(!d.rows[0].car_make || !d.rows[0].car_model || !d.rows[0].plate) return res.json({ok:false,error:'Driver qeydiyyatı tamam deyil.'});
     if(d.rows[0].status!=='approved') return res.json({ok:false,error:'Sürücü pending-dir. Admin təsdiqləməlidir.'});
     if(Number(d.rows[0].balance) <= -15) return res.json({ok:false,error:'Balans -15 AZN-dən aşağıdır. Sifariş qəbul edilmir.'});
-
     const r = await q(
       `UPDATE trips SET driver_id=$2, status='assigned', accepted_at=now()
        WHERE id=$1 AND status='searching'
@@ -156,7 +236,6 @@ app.post('/api/trips/finish', async (req,res)=>{
     if(!t.rowCount) return res.json({ok:false,error:'trip not found'});
     const price = Number(t.rows[0].price_azn || 0);
     const commission = Number((price * 0.10).toFixed(2));
-
     await q(`UPDATE trips SET status='finished', finished_at=now() WHERE id=$1 AND driver_id=$2`, [trip_id, driver_id]);
     const d = await q(`UPDATE drivers SET balance = balance - $2 WHERE user_id=$1 RETURNING balance`, [driver_id, commission]);
     const bal = d.rowCount ? Number(d.rows[0].balance) : null;
@@ -176,42 +255,22 @@ app.post('/api/trips/cancel', async (req,res)=>{
   }catch(e){ res.json({ok:false,error:e.message}); }
 });
 
-// Topup upload (simple multipart)
+// topup
 app.post('/api/topup/create', async (req,res)=>{
-  const ct = req.headers['content-type'] || '';
-  if(!ct.includes('multipart/form-data')) return res.json({ok:false,error:'multipart required'});
-  const boundary = '--' + ct.split('boundary=')[1];
-  let buf = Buffer.alloc(0);
-  req.on('data', (c)=> buf = Buffer.concat([buf,c]));
-  req.on('end', async ()=>{
-    try{
-      const parts = buf.toString('binary').split(boundary).slice(1,-1);
-      const fields={}; let file=null;
-      for(const part of parts){
-        const p = part.replace(/^\r\n/,'').replace(/\r\n$/,'');
-        const [rawH, rawB] = p.split('\r\n\r\n');
-        const cd = (rawH.split('\r\n').find(h=>h.toLowerCase().startsWith('content-disposition'))||'');
-        const nameMatch=/name="([^"]+)"/.exec(cd); if(!nameMatch) continue;
-        const name=nameMatch[1];
-        const fnMatch=/filename="([^"]*)"/.exec(cd);
-        if(fnMatch && fnMatch[1]){
-          const bodyBuf=Buffer.from(rawB,'binary').slice(0,-2);
-          file={name, filename: fnMatch[1], bytes: bodyBuf};
-        } else fields[name]=rawB.replace(/\r\n$/,'');
-      }
-      const driver_id = fields.driver_id;
-      const amount = Number(fields.amount||0);
-      if(!driver_id || !amount || !file) return res.json({ok:false,error:'driver_id/amount/receipt required'});
-      const safe = `receipt_${driver_id}_${Date.now()}_${file.filename.replace(/[^a-zA-Z0-9._-]/g,'_')}`;
-      fs.writeFileSync(path.join(UPLOAD_DIR, safe), file.bytes);
-      const receiptUrl = `${PUBLIC_BASE_URL}/uploads/${safe}`;
-      await q(`INSERT INTO topup_requests (driver_id, amount, receipt_file_url) VALUES ($1,$2,$3)`, [driver_id, amount, receiptUrl]);
-      res.json({ok:true});
-    }catch(e){ res.json({ok:false,error:e.message}); }
-  });
+  try{
+    const { fields, file } = await parseMultipart(req);
+    const driver_id = fields.driver_id;
+    const amount = Number(fields.amount||0);
+    if(!driver_id || !amount || !file) return res.json({ok:false,error:'driver_id/amount/receipt required'});
+    const safe = `receipt_${driver_id}_${Date.now()}_${file.filename.replace(/[^a-zA-Z0-9._-]/g,'_')}`;
+    fs.writeFileSync(path.join(UPLOAD_DIR, safe), file.bytes);
+    const receiptUrl = `${PUBLIC_BASE_URL}/uploads/${safe}`;
+    await q(`INSERT INTO topup_requests (driver_id, amount, receipt_file_url) VALUES ($1,$2,$3)`, [driver_id, amount, receiptUrl]);
+    res.json({ok:true});
+  }catch(e){ res.json({ok:false,error:e.message}); }
 });
 
-// Admin
+// admin endpoints (unchanged core)
 app.get('/api/admin/pending_drivers', async (req,res)=>{
   try{
     if(!isAdminId(req.query.admin_id)) return res.json({ok:false,error:'not admin'});
@@ -254,7 +313,7 @@ app.post('/api/admin/topup_decide', async (req,res)=>{
   }catch(e){ res.json({ok:false,error:e.message}); }
 });
 
-// Socket
+// socket
 const server=http.createServer(app);
 const io=new Server(server, { cors:{origin:'*'} });
 
@@ -272,18 +331,18 @@ io.on('connection', (socket)=>{
   });
 });
 
-// Telegram bots (webhook)
-function createBot(token, kind){
+// bots
+function createBot(token, kind, webPath){
   if(!token) return null;
   const bot=new Telegraf(token);
   bot.start((ctx)=> ctx.reply(`PayTaksi • ${kind}\n/open yaz və appı aç.`));
-  bot.command('open', (ctx)=> ctx.reply('PayTaksi aç', {reply_markup:{inline_keyboard:[[{text:'Open PayTaksi', web_app:{url: PUBLIC_BASE_URL + (kind==='Passenger'?'/p':kind==='Driver'?'/d':'/a')}}]]}}));
+  bot.command('open', (ctx)=> ctx.reply('PayTaksi aç', {reply_markup:{inline_keyboard:[[{text:'Open PayTaksi', web_app:{url: PUBLIC_BASE_URL + webPath}}]]}}));
   bot.command('id', (ctx)=> ctx.reply('Sənin ID: '+ctx.from.id));
   return bot;
 }
-const passengerBot=createBot(process.env.PASSENGER_BOT_TOKEN,'Passenger');
-const driverBot=createBot(process.env.DRIVER_BOT_TOKEN,'Driver');
-const adminBot=createBot(process.env.ADMIN_BOT_TOKEN,'Admin');
+const passengerBot=createBot(process.env.PASSENGER_BOT_TOKEN,'Passenger','/p');
+const driverBot=createBot(process.env.DRIVER_BOT_TOKEN,'Driver','/d');
+const adminBot=createBot(process.env.ADMIN_BOT_TOKEN,'Admin','/a');
 
 app.post('/tg/passenger', (req,res)=> passengerBot ? passengerBot.handleUpdate(req.body, res) : res.sendStatus(404));
 app.post('/tg/driver', (req,res)=> driverBot ? driverBot.handleUpdate(req.body, res) : res.sendStatus(404));
