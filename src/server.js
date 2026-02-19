@@ -10,6 +10,45 @@ const { Server } = require('socket.io');
 const { v4: uuidv4 } = require('uuid');
 const { Telegraf } = require('telegraf');
 const { q } = require('./db');
+
+// --- schema helpers (cached) ---
+const __colCache = new Map();
+async function userHasColumn(col){
+  const key = 'users.'+col;
+  if(__colCache.has(key)) return __colCache.get(key);
+  try{
+    const r = await q(
+      `SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name=$1 LIMIT 1`,
+      [col]
+    );
+    const ok = (r.rowCount||0) > 0;
+    __colCache.set(key, ok);
+    return ok;
+  }catch(e){
+    __colCache.set(key, false);
+    return false;
+  }
+}
+
+async function upsertUser({id, role, first_name, last_name, phone}){
+  const hasTgId = await userHasColumn('tg_id');
+  if(hasTgId){
+    await q(
+      `INSERT INTO users (id, tg_id, role, first_name, last_name, phone)
+       VALUES ($1,$1,$2,$3,$4,$5)
+       ON CONFLICT (id) DO UPDATE SET
+         tg_id=EXCLUDED.tg_id,
+         role=EXCLUDED.role,
+         first_name=EXCLUDED.first_name,
+         last_name=EXCLUDED.last_name,
+         phone=EXCLUDED.phone`,
+      [id, role, first_name, last_name, phone]
+    );
+  }else{
+    await upsertUser({id, role:'passenger', first_name, last_name, phone});
+
+    }
+}
 const { runMigrations } = require('./migrate');
 
 const PORT = process.env.PORT || 3000;
@@ -59,12 +98,8 @@ app.post('/api/users/upsert', async (req,res)=>{
   try{
     const { id, role, first_name, last_name, phone } = req.body || {};
     if(!id || !role) return res.json({ok:false,error:'id/role missing'});
-    await q(
-      `INSERT INTO users (id, role, first_name, last_name, phone)
-       VALUES ($1,$2,$3,$4,$5)
-       ON CONFLICT (id) DO UPDATE SET role=EXCLUDED.role, first_name=EXCLUDED.first_name, last_name=EXCLUDED.last_name, phone=COALESCE(EXCLUDED.phone, users.phone)`,
-      [id, role, first_name||null, last_name||null, phone||null]
-    );
+    await upsertUser({id, role:'passenger', first_name, last_name, phone});
+
     if(role==='driver'){
       await q(`INSERT INTO drivers (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING`, [id]);
     }
@@ -88,16 +123,7 @@ app.post('/api/passenger/register', async (req,res)=>{
     if(!id||!first_name||!last_name||!phone) return res.json({ok:false,error:'missing'});
     if(!String(phone).startsWith('+994')) return res.json({ok:false,error:'phone must start with +994'});
 
-    await q(
-      `INSERT INTO users (id, role, first_name, last_name, phone)
-       VALUES ($1,'passenger',$2,$3,$4)
-       ON CONFLICT (id) DO UPDATE SET
-         role='passenger',
-         first_name=EXCLUDED.first_name,
-         last_name=EXCLUDED.last_name,
-         phone=EXCLUDED.phone`,
-      [id, first_name, last_name, phone]
-    );
+    await upsertUser({id, role:'passenger', first_name, last_name, phone});
 
     res.json({ok:true});
   }catch(e){ res.json({ok:false,error:e.message}); }
@@ -125,18 +151,8 @@ app.post('/api/driver/register', async (req,res)=>{
     if(!String(phone).startsWith('+994')) return res.json({ok:false,error:'phone must start with +994'});
 
     // IMPORTANT: upsert into users first, so drivers.user_id foreign key is always valid
-    await q(
-      `INSERT INTO users (id, role, first_name, last_name, phone)
-       VALUES ($1,'driver',$2,$3,$4)
-       ON CONFLICT (id) DO UPDATE SET
-         role='driver',
-         first_name=EXCLUDED.first_name,
-         last_name=EXCLUDED.last_name,
-         phone=EXCLUDED.phone`,
-      [id, first_name, last_name, phone]
-    );
+    await upsertUser({id, role:'driver', first_name, last_name, phone});
 
-    await q(`INSERT INTO drivers (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING`, [id]);
     await q(`UPDATE drivers SET car_make=$2,car_model=$3,plate=$4,status='pending' WHERE user_id=$1`, [id, car_make, car_model, plate]);
 
     res.json({ok:true});
