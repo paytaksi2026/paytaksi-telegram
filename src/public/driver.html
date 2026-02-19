@@ -1,0 +1,193 @@
+<!doctype html>
+<html><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>PayTaksi • Driver</title>
+<link rel="stylesheet" href="/style.css"/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+</head><body>
+<div class="header"><span class="title">PayTaksi</span><span class="badge">Driver</span></div>
+<div class="wrap">
+  <div class="card" id="blockCard" style="display:none">
+    <div class="kpi" style="font-size:18px;color:#fecaca">Sifariş bloklandı</div>
+    <p class="small" id="blockReason">-</p>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <button class="btn" id="btnOnline">Online ol</button>
+      <button class="btn secondary" id="btnOffline" disabled>Offline ol</button>
+      <button class="btn secondary" id="btnWaze" disabled>Waze</button>
+    </div>
+    <div class="small">Balans: <b id="bal">-</b> AZN</div>
+    <div class="small">Status: <span id="st">-</span></div>
+    <hr/>
+    <div id="map"></div>
+  </div>
+
+  <div class="card">
+    <div class="kpi" style="font-size:18px">Gələn sifariş</div>
+    <div class="small" id="req">Sifariş gözlənilir...</div>
+    <div class="row" style="margin-top:10px">
+      <button class="btn" id="btnAccept" disabled>Qəbul et</button>
+      <button class="btn secondary" id="btnArrived" disabled>Çatdım</button>
+      <button class="btn secondary" id="btnStart" disabled>Başla</button>
+      <button class="btn danger" id="btnFinish" disabled>Bitir</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="kpi" style="font-size:18px">Balans artır (qəbz)</div>
+    <div class="row">
+      <input class="input" id="topAmount" type="number" step="0.01" placeholder="Məbləğ (AZN)"/>
+      <input class="input" id="topFile" type="file" accept="image/*"/>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button class="btn" id="btnTopup">Qəbzi göndər</button>
+    </div>
+    <div class="small" id="topMsg"></div>
+  </div>
+</div>
+
+<div class="bigPrice" id="bigPrice">
+  <div class="box">
+    <div class="small">Müştəridən alınacaq</div>
+    <div class="amount" id="bigAmount">0.00 AZN</div>
+    <button class="btn" id="btnCloseBig">Bağla</button>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="/socket.io/socket.io.js"></script>
+<script>
+const tg = window.Telegram ? window.Telegram.WebApp : null;
+const user = tg?.initDataUnsafe?.user || null;
+
+let map, meMarker;
+let online=false;
+let currentTripId=null;
+let lastPickup=null;
+let myBalance=0;
+
+function setSt(t){ document.getElementById('st').textContent=t; }
+function setBal(v){ myBalance=v; document.getElementById('bal').textContent = Number(v).toFixed(2); }
+function showBlock(show, reason){
+  document.getElementById('blockCard').style.display = show ? 'block':'none';
+  document.getElementById('blockReason').textContent = reason||'';
+}
+
+async function upsertDriver(){
+  if(!user) return;
+  await fetch('/api/users/upsert', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({id:user.id, role:'driver', first_name:user.first_name, last_name:user.last_name})});
+  const me = await (await fetch('/api/driver/me?driver_id='+user.id)).json();
+  if(me.ok){
+    setBal(me.balance); setSt(me.status);
+    if(me.blocked) showBlock(true, me.block_reason); else showBlock(false,'');
+  }
+}
+
+function initMap(){
+  map = L.map('map').setView([40.4093,49.8671], 13);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 19}).addTo(map);
+}
+
+const socket = io();
+socket.on('connect', upsertDriver);
+
+socket.on('trip:request', (p)=>{
+  if(!online) return;
+  currentTripId = p.trip_id;
+  lastPickup = p.pickup;
+  document.getElementById('req').textContent = `Trip: ${p.trip_id} | sərnişin: ${p.passenger_id}`;
+  document.getElementById('btnAccept').disabled = false;
+});
+
+socket.on('driver:balance:update', (p)=>{
+  if(p.driver_id !== user?.id) return;
+  setBal(p.balance);
+  if(p.blocked) showBlock(true, p.block_reason); else showBlock(false,'');
+});
+
+navigator.geolocation.watchPosition((pos)=>{
+  if(!online || !user) return;
+  const lat=pos.coords.latitude, lng=pos.coords.longitude;
+  if(!meMarker){ meMarker=L.marker([lat,lng]).addTo(map).bindPopup("Sən"); map.setView([lat,lng], 15); }
+  else meMarker.setLatLng([lat,lng]);
+  socket.emit('driver:location', {driver_id:user.id, lat, lng, speed:pos.coords.speed, heading:pos.coords.heading, trip_id: currentTripId});
+}, ()=>{}, {enableHighAccuracy:true, maximumAge:2000});
+
+document.getElementById('btnOnline').onclick = async ()=>{
+  if(!user) return alert("Bu səhifəni botun içindən aç.");
+  const me = await (await fetch('/api/driver/set_online', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({driver_id:user.id, is_online:true})})).json();
+  if(!me.ok) return alert(me.error||'');
+  online=true; setBal(me.balance);
+  document.getElementById('btnOnline').disabled=true;
+  document.getElementById('btnOffline').disabled=false;
+  setSt("online");
+};
+document.getElementById('btnOffline').onclick = async ()=>{
+  if(!user) return;
+  await fetch('/api/driver/set_online', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({driver_id:user.id, is_online:false})});
+  online=false;
+  document.getElementById('btnOnline').disabled=false;
+  document.getElementById('btnOffline').disabled=true;
+  document.getElementById('btnAccept').disabled=true;
+  setSt("offline");
+};
+document.getElementById('btnAccept').onclick = async ()=>{
+  const r = await fetch('/api/trips/accept', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({trip_id:currentTripId, driver_id:user.id})});
+  const data = await r.json();
+  if(!data.ok) return alert(data.error||'');
+  document.getElementById('btnAccept').disabled=true;
+  document.getElementById('btnArrived').disabled=false;
+  document.getElementById('btnWaze').disabled=false;
+  setSt("assigned");
+};
+document.getElementById('btnWaze').onclick = ()=>{
+  if(!lastPickup) return;
+  window.open(`https://waze.com/ul?ll=${lastPickup.lat},${lastPickup.lng}&navigate=yes`, "_blank");
+};
+document.getElementById('btnArrived').onclick = async ()=>{
+  await fetch('/api/trips/status', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({trip_id:currentTripId, driver_id:user.id, status:'arrived'})});
+  document.getElementById('btnArrived').disabled=true;
+  document.getElementById('btnStart').disabled=false;
+  setSt("arrived");
+};
+document.getElementById('btnStart').onclick = async ()=>{
+  await fetch('/api/trips/status', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({trip_id:currentTripId, driver_id:user.id, status:'in_trip'})});
+  document.getElementById('btnStart').disabled=true;
+  document.getElementById('btnFinish').disabled=false;
+  setSt("in_trip");
+};
+document.getElementById('btnFinish').onclick = async ()=>{
+  const r = await fetch('/api/trips/finish', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({trip_id:currentTripId, driver_id:user.id})});
+  const data = await r.json();
+  if(!data.ok) return alert(data.error||'');
+  document.getElementById('bigAmount').textContent = Number(data.price_azn).toFixed(2)+" AZN";
+  document.getElementById('bigPrice').style.display='flex';
+  setBal(data.driver_balance);
+  currentTripId=null;
+  document.getElementById('btnFinish').disabled=true;
+  document.getElementById('btnWaze').disabled=true;
+  setSt("finished");
+  document.getElementById('req').textContent="Sifariş gözlənilir...";
+};
+document.getElementById('btnCloseBig').onclick = ()=> document.getElementById('bigPrice').style.display='none';
+
+document.getElementById('btnTopup').onclick = async ()=>{
+  const amount = Number(document.getElementById('topAmount').value||0);
+  const file = document.getElementById('topFile').files[0];
+  if(!amount || !file) return alert("Məbləğ və qəbz şəkli lazımdır.");
+  const fd=new FormData();
+  fd.append('driver_id', user.id);
+  fd.append('amount', amount);
+  fd.append('receipt', file);
+  const r = await fetch('/api/topup/create', {method:'POST', body: fd});
+  const data = await r.json();
+  document.getElementById('topMsg').textContent = data.ok ? "Göndərildi (pending)." : ("Xəta: "+(data.error||""));
+};
+
+initMap();
+if(tg) tg.expand();
+</script>
+</body></html>

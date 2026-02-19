@@ -1,0 +1,139 @@
+<!doctype html>
+<html><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>PayTaksi • Passenger</title>
+<link rel="stylesheet" href="/style.css"/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+</head><body>
+<div class="header"><span class="title">PayTaksi</span><span class="badge">Passenger</span></div>
+<div class="wrap">
+  <div class="card">
+    <div class="row">
+      <button class="btn" id="btnLocate">Lokasiyanı aç</button>
+      <button class="btn secondary" id="btnNew">Yeni sifariş</button>
+    </div>
+    <p class="small" id="status">Drop üçün xəritəyə klik et.</p>
+    <div id="map"></div>
+    <hr/>
+    <div class="row">
+      <div style="flex:1;min-width:220px"><div class="small">Məsafə (km)</div><div class="kpi" id="km">-</div></div>
+      <div style="flex:1;min-width:220px"><div class="small">Qiymət (AZN)</div><div class="kpi" id="price">-</div></div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button class="btn" id="btnOrder" disabled>Sifariş ver</button>
+      <button class="btn danger" id="btnCancel" disabled>Ləğv et</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="kpi" style="font-size:18px">Canlı sürücü</div>
+    <div class="small" id="driverInfo">-</div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="/socket.io/socket.io.js"></script>
+<script>
+const tg = window.Telegram ? window.Telegram.WebApp : null;
+const user = tg?.initDataUnsafe?.user || null;
+
+let map, meMarker, dropMarker, driverMarker, pickup=null, drop=null, tripId=null;
+let km=0, price=0;
+
+function setStatus(t){ document.getElementById('status').textContent=t; }
+function setKPI(){ document.getElementById('km').textContent = km ? km.toFixed(2) : '-';
+                  document.getElementById('price').textContent = price ? price.toFixed(2) : '-'; }
+
+async function upsertPassenger(){
+  if(!user) return;
+  await fetch('/api/users/upsert', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({id:user.id, role:'passenger', first_name:user.first_name, last_name:user.last_name})});
+}
+
+function initMap(){
+  map = L.map('map').setView([40.4093,49.8671], 13);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 19}).addTo(map);
+
+  map.on('click', async (e)=>{
+    if(!pickup){ setStatus("Əvvəl lokasiyanı aç (pickup)."); return; }
+    drop = {lat:e.latlng.lat, lng:e.latlng.lng};
+    if(dropMarker) map.removeLayer(dropMarker);
+    dropMarker = L.marker([drop.lat, drop.lng]).addTo(map).bindPopup("Drop").openPopup();
+    setStatus("Hesablanır...");
+    const r = await fetch('/api/pricing/estimate', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({pickup, drop})});
+    const data = await r.json();
+    km = data.distance_km || 0;
+    price = data.price_azn || 0;
+    setKPI();
+    document.getElementById('btnOrder').disabled = false;
+    setStatus("Hazırdır. 'Sifariş ver' bas.");
+  });
+}
+
+document.getElementById('btnLocate').onclick = ()=>{
+  if(!user) return alert("Bu səhifəni botun içindən (Open) aç.");
+  navigator.geolocation.getCurrentPosition((pos)=>{
+    pickup = {lat: pos.coords.latitude, lng: pos.coords.longitude};
+    if(meMarker) map.removeLayer(meMarker);
+    meMarker = L.marker([pickup.lat, pickup.lng]).addTo(map).bindPopup("Pickup").openPopup();
+    map.setView([pickup.lat,pickup.lng], 15);
+    setStatus("Drop nöqtəsini xəritədə seç.");
+  }, ()=> setStatus("Lokasiya icazəsi verilmədi."), {enableHighAccuracy:true});
+};
+
+document.getElementById('btnNew').onclick = ()=>{
+  tripId=null; drop=null; km=0; price=0; setKPI();
+  document.getElementById('btnOrder').disabled = true;
+  document.getElementById('btnCancel').disabled = true;
+  document.getElementById('driverInfo').textContent='-';
+  if(dropMarker){ map.removeLayer(dropMarker); dropMarker=null; }
+  if(driverMarker){ map.removeLayer(driverMarker); driverMarker=null; }
+  setStatus("Yeni sifariş: Lokasiyanı aç, sonra drop seç.");
+};
+
+document.getElementById('btnOrder').onclick = async ()=>{
+  const r = await fetch('/api/trips/create', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({passenger_id:user.id, pickup, drop})});
+  const data = await r.json();
+  if(!data.ok){ setStatus("Sifariş alınmadı: "+(data.error||"")); return; }
+  tripId = data.trip_id;
+  document.getElementById('btnCancel').disabled = false;
+  document.getElementById('btnOrder').disabled = true;
+  setStatus("Sürücü axtarılır...");
+  socket.emit('passenger:join_trip', {trip_id: tripId, passenger_id: user.id});
+};
+
+document.getElementById('btnCancel').onclick = async ()=>{
+  if(!tripId) return;
+  await fetch('/api/trips/cancel', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({trip_id:tripId, passenger_id: user?.id})});
+  setStatus("Ləğv edildi.");
+  document.getElementById('btnCancel').disabled = true;
+  tripId=null;
+};
+
+const socket = io();
+socket.on('connect', upsertPassenger);
+socket.on('trip:assigned', (p)=>{
+  if(p.trip_id !== tripId) return;
+  setStatus("Sürücü qəbul etdi. Gəlir...");
+  document.getElementById('driverInfo').textContent = `Sürücü ID: ${p.driver_id}`;
+});
+socket.on('trip:status:update', (p)=>{
+  if(p.trip_id !== tripId) return;
+  setStatus("Status: "+p.status);
+});
+socket.on('driver:location:update', (p)=>{
+  if(!tripId || p.trip_id !== tripId) return;
+  const {lat,lng} = p;
+  if(!driverMarker){
+    driverMarker = L.marker([lat,lng]).addTo(map).bindPopup("Driver");
+  } else {
+    driverMarker.setLatLng([lat,lng]);
+  }
+});
+
+initMap();
+if(tg) tg.expand();
+</script>
+</body></html>
