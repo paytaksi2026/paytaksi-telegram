@@ -5,6 +5,11 @@
 <link rel="stylesheet" href="/style.css"/>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+.suggest{margin-top:8px;border:1px solid rgba(255,255,255,.08);border-radius:14px;overflow:hidden}
+.suggest button{width:100%;text-align:left;background:transparent;border:0;color:#e5e7eb;padding:10px 12px;font-size:14px}
+.suggest button:hover{background:rgba(255,255,255,.06)}
+</style>
 </head><body>
 <div class="header"><span class="title">PayTaksi</span><span class="badge">Passenger</span></div>
 
@@ -26,12 +31,29 @@
   </div>
 
   <div class="card" id="appCard" style="display:none">
+
     <div class="row">
-      <button class="btn" id="btnLocate">Lokasiyanı aç</button>
+      <button class="btn" id="btnLocate">Mənim lokasiyam</button>
       <button class="btn secondary" id="btnNew">Yeni sifariş</button>
     </div>
-    <p class="small" id="status">Drop üçün xəritəyə klik et.</p>
-    <div id="map"></div>
+
+    <div class="card" style="margin-top:12px; background:#0b1220; border:1px solid rgba(255,255,255,.08)">
+      <div class="small">Haradan (pickup)</div>
+      <div class="row" style="margin-top:8px">
+        <input class="input" id="pickupTxt" placeholder="Ünvan yazın (məs: Yasamal, Abbas Mirzə...)"/>
+      </div>
+      <div class="suggest" id="pickupSug" style="display:none"></div>
+
+      <div class="small" style="margin-top:10px">Haraya (drop)</div>
+      <div class="row" style="margin-top:8px">
+        <input class="input" id="dropTxt" placeholder="Ünvan yazın (məs: 34-cü Polis Şöbəsi)"/>
+      </div>
+      <div class="suggest" id="dropSug" style="display:none"></div>
+
+      <div class="small" style="margin-top:10px" id="status">Pickup və Drop seç.</div>
+    </div>
+
+    <div id="map" style="margin-top:12px"></div>
     <hr/>
     <div class="row">
       <div style="flex:1;min-width:220px"><div class="small">Məsafə (km)</div><div class="kpi" id="km">-</div></div>
@@ -41,7 +63,8 @@
       <button class="btn" id="btnOrder" disabled>Sifariş ver</button>
       <button class="btn danger" id="btnCancel" disabled>Ləğv et</button>
     </div>
-  </div>
+
+</div>
 
   <div class="card" id="liveCard" style="display:none">
     <div class="kpi" style="font-size:18px">Canlı sürücü</div>
@@ -58,28 +81,61 @@ const user = tg?.initDataUnsafe?.user || null;
 let map, meMarker, dropMarker, driverMarker, pickup=null, drop=null, tripId=null;
 let km=0, price=0;
 
+
 function setStatus(t){ document.getElementById('status').textContent=t; }
 function setKPI(){ document.getElementById('km').textContent = km ? km.toFixed(2) : '-';
                   document.getElementById('price').textContent = price ? price.toFixed(2) : '-'; }
-function show(id, on){ document.getElementById(id).style.display = on ? 'block':'none'; }
 
-async function upsertPassenger(){
-  if(!user) return;
-  await fetch('/api/users/upsert', {method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({id:user.id, role:'passenger', first_name:user.first_name, last_name:user.last_name})});
+async function geocode(q){
+  const r = await fetch('/api/geocode/search?q='+encodeURIComponent(q));
+  const d = await r.json();
+  return d.items || [];
+}
+function renderSug(el, items, onPick){
+  if(!items.length){ el.style.display='none'; el.innerHTML=''; return; }
+  el.style.display='block';
+  el.innerHTML = items.map((it,i)=>`<button type="button" data-i="${i}">${it.display}</button>`).join('');
+  el.querySelectorAll('button').forEach(b=>{
+    b.onclick = ()=> onPick(items[Number(b.dataset.i)]);
+  });
 }
 
-async function getMe(){
-  const r = await fetch('/api/user/me?id='+user.id);
-  return await r.json();
+async function recalc(){
+  if(!pickup || !drop){ km=0; price=0; setKPI(); document.getElementById('btnOrder').disabled=true; return; }
+  setStatus("Hesablanır...");
+  const r = await fetch('/api/pricing/estimate', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({pickup, drop})});
+  const data = await r.json();
+  km = data.distance_km || 0;
+  price = data.price_azn || 0;
+  setKPI();
+  document.getElementById('btnOrder').disabled=false;
+  setStatus("Hazırdır. 'Sifariş ver' bas.");
+}
+
+function placePickup(){
+  if(!pickup) return;
+  if(meMarker) map.removeLayer(meMarker);
+  meMarker = L.marker([pickup.lat, pickup.lng]).addTo(map).bindPopup("Pickup").openPopup();
+}
+function placeDrop(){
+  if(!drop) return;
+  if(dropMarker) map.removeLayer(dropMarker);
+  dropMarker = L.marker([drop.lat, drop.lng]).addTo(map).bindPopup("Drop").openPopup();
 }
 
 function initMap(){
-  map = L.map('map').setView([40.4093,49.8671], 13);
+  map = L.map('map').setView([40.4093,49.8671], 12);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 19}).addTo(map);
 
   map.on('click', async (e)=>{
-    if(!pickup){ setStatus("Əvvəl lokasiyanı aç (pickup)."); return; }
+    // map click sets DROP by default
+    drop = {lat:e.latlng.lat, lng:e.latlng.lng};
+    placeDrop();
+    await recalc();
+  });
+}
+
     drop = {lat:e.latlng.lat, lng:e.latlng.lng};
     if(dropMarker) map.removeLayer(dropMarker);
     dropMarker = L.marker([drop.lat, drop.lng]).addTo(map).bindPopup("Drop").openPopup();
@@ -96,12 +152,13 @@ function initMap(){
 }
 
 document.getElementById('btnLocate').onclick = ()=>{
-  navigator.geolocation.getCurrentPosition((pos)=>{
+  navigator.geolocation.getCurrentPosition(async (pos)=>{
     pickup = {lat: pos.coords.latitude, lng: pos.coords.longitude};
-    if(meMarker) map.removeLayer(meMarker);
-    meMarker = L.marker([pickup.lat, pickup.lng]).addTo(map).bindPopup("Pickup").openPopup();
+    placePickup();
     map.setView([pickup.lat,pickup.lng], 15);
-    setStatus("Drop nöqtəsini xəritədə seç.");
+    document.getElementById('pickupTxt').value = "Mənim lokasiyam";
+    setStatus("Drop ünvanını yaz və ya xəritədə seç.");
+    await recalc();
   }, ()=> setStatus("Lokasiya icazəsi verilmədi."), {enableHighAccuracy:true});
 };
 
@@ -112,7 +169,7 @@ document.getElementById('btnNew').onclick = ()=>{
   document.getElementById('driverInfo').textContent='-';
   if(dropMarker){ map.removeLayer(dropMarker); dropMarker=null; }
   if(driverMarker){ map.removeLayer(driverMarker); driverMarker=null; }
-  setStatus("Yeni sifariş: Lokasiyanı aç, sonra drop seç.");
+  setStatus("Yeni sifariş: Pickup və Drop ünvanını yaz (və ya xəritədən drop seç).");
 };
 
 document.getElementById('btnOrder').onclick = async ()=>{

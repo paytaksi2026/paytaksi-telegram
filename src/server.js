@@ -337,6 +337,28 @@ app.post('/api/admin/topup_decide', async (req,res)=>{
   }catch(e){ res.json({ok:false,error:e.message}); }
 });
 
+
+// geocode (OpenStreetMap Nominatim) - free
+app.get('/api/geocode/search', async (req,res)=>{
+  try{
+    const qtext = String(req.query.q||'').trim();
+    if(!qtext) return res.json({ok:true, items:[]});
+    // Respect Nominatim usage policy: identify app
+    const url = 'https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=6&q=' + encodeURIComponent(qtext);
+    const r = await fetch(url, { headers: { 'User-Agent': 'PayTaksiTelegram/1.0', 'Accept-Language': 'az,en' }});
+    if(!r.ok) return res.json({ok:false,error:'geocode failed'});
+    const data = await r.json();
+    const items = (data||[]).map(x=>({
+      display: x.display_name,
+      lat: Number(x.lat),
+      lng: Number(x.lon)
+    }));
+    res.json({ok:true, items});
+  }catch(e){
+    res.json({ok:false,error:e.message});
+  }
+});
+
 // socket
 const server=http.createServer(app);
 const io=new Server(server, { cors:{origin:'*'} });
