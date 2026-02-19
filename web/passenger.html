@@ -37,8 +37,19 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
   const qs = new URLSearchParams(location.search);
-  const BACKEND = qs.get("backend") || "http://localhost:3000";
-  const passengerChatId = qs.get("chat_id") || "";
+  // Prefer explicit backend param from bot; otherwise use same origin (Render + Telegram Mini App)
+  const BACKEND = qs.get("backend") || window.location.origin;
+
+  // chat_id may be missing when Mini App is opened from menu button.
+  // Fallback to Telegram WebApp user id (private chat id == user id in most cases).
+  let passengerChatId = qs.get("chat_id") || "";
+  const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
+  if(!passengerChatId && tg && tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.id){
+    passengerChatId = String(tg.initDataUnsafe.user.id);
+  }
+  if(tg && tg.ready){
+    try{ tg.ready(); }catch(e){}
+  }
 
   const map = L.map('map').setView([40.4093, 49.8671], 12);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
@@ -125,35 +136,52 @@
 
   async function maybePrice(){
     if(!pickupPoint || !dropoffPoint) return;
-    const r = await fetch(BACKEND + "/api/price", {
-      method:"POST",
-      headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify({ pickup: pickupPoint, dropoff: dropoffPoint })
-    });
-    const j = await r.json();
-    if(j.ok){
+    try{
+      const r = await fetch(BACKEND + "/api/price", {
+        method:"POST",
+        headers:{ "Content-Type":"application/json" },
+        body: JSON.stringify({ pickup: pickupPoint, dropoff: dropoffPoint })
+      });
+      const j = await r.json().catch(()=>({ok:false,error:"invalid json"}));
       const box = document.getElementById("priceBox");
       box.style.display="block";
-      box.innerHTML = "Məsafə: <b>" + j.distanceKm + " km</b><br/>Qiymət: <b>" + j.price + " ₼</b>";
+      if(j && j.ok){
+        box.innerHTML = "Məsafə: <b>" + j.distanceKm + " km</b><br/>Qiymət: <b>" + j.price + " ₼</b>";
+      }else{
+        box.innerHTML = "Qiymət hesablanmadı. Ünvanları dəqiq seçin.";
+      }
+    }catch(e){
+      console.error(e);
+      const box = document.getElementById("priceBox");
+      box.style.display="block";
+      box.innerHTML = "Serverə qoşulmaq olmadı (qiymət).";
     }
   }
 
   document.getElementById("btnOrder").onclick = async ()=>{
     if(!pickupPoint || !dropoffPoint) return alert("Pickup və Dropoff seçin.");
-    const r = await fetch(BACKEND + "/api/order", {
-      method:"POST",
-      headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify({ pickup: pickupPoint, dropoff: dropoffPoint, passengerChatId })
-    });
-    const j = await r.json();
-    if(j.ok){
+    if(!passengerChatId) return alert("Telegram ID tapılmadı. Mini App-i botun düyməsindən açın.");
+    try{
+      const r = await fetch(BACKEND + "/api/order", {
+        method:"POST",
+        headers:{ "Content-Type":"application/json" },
+        body: JSON.stringify({ pickup: pickupPoint, dropoff: dropoffPoint, passengerChatId })
+      });
+      const j = await r.json().catch(()=>({ok:false,error:"invalid json"}));
+      if(j && j.ok){
       orderId = j.order.orderId;
       const box = document.getElementById("orderBox");
       box.style.display="block";
       box.innerHTML = "Sifariş yaradıldı: <b>#" + orderId + "</b><br/>Sürücü axtarılır...<br/><small>Sürücü qəbul edəndə status yenilənəcək.</small>";
       // show hint for driver to accept
       box.innerHTML += "<br/><small>Sürücü botunda: /accept " + orderId + "</small>";
-    } else alert(j.error || "Xəta");
+      } else {
+        alert((j && j.error) ? j.error : "Xəta");
+      }
+    }catch(e){
+      console.error(e);
+      alert("Server xətası (order)");
+    }
   };
 
   function ensureDriverMarker(driverId, d){
