@@ -1,18 +1,23 @@
-# Render.com üçün sadə deploy (backend + bots)
+# Render quick setup
 
-Render free plan dəyişə bilər, amma ümumi ideya:
+## Backend (Web Service)
+- Root Directory: backend
+- Build Command: npm i
+- Start Command: npm start
+- Env Vars:
+  - PUBLIC_BASE_URL = Render URL
+  - PRICE_PER_KM, BASE_FEE
+  - CORS_ORIGINS = * (test) və ya web host url
 
-1) GitHub-a bu repozitoriyanı push edin.
-2) Render-də 2 servis yaradın:
-   - **Web Service**: `backend` qovluğu
-   - **Worker**(lər): `bots` qovluğu (3 worker və ya 1 servisdə 3 process manager)
-
-### Backend Start Command
-`npm i && npm start`
-
-### Bots Start Command (ayrı servis üçün)
-- Passenger: `npm i && npm run start:passenger`
-- Driver: `npm i && npm run start:driver`
-- Admin: `npm i && npm run start:admin`
-
-ENV dəyişənləri Render-də əlavə edin (tokenlər, BACKEND_URL, WEBAPP_URL).
+## Bots (Background Worker)
+Hər bot üçün ayrı worker:
+- Root Directory: bots
+- Build: npm i
+- Start:
+  - passenger: npm run start:passenger
+  - driver: npm run start:driver
+  - admin: npm run start:admin
+- Env:
+  - BACKEND_URL = backend render url
+  - token-lər
+  - WEBAPP_URL = passenger.html host linki (HTTPS)

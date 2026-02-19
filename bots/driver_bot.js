@@ -1,138 +1,83 @@
-import 'dotenv/config';
-import { Telegraf, Markup } from 'telegraf';
-import { apiClient } from './api.js';
+require("dotenv").config();
+const { Telegraf, Markup } = require("telegraf");
+const { post } = require("./api");
 
-const BOT_TOKEN = process.env.DRIVER_BOT_TOKEN;
-if (!BOT_TOKEN) throw new Error('DRIVER_BOT_TOKEN is missing');
+const token = process.env.DRIVER_BOT_TOKEN;
+if(!token){ console.error("DRIVER_BOT_TOKEN yoxdur"); process.exit(1); }
+const bot = new Telegraf(token);
 
-const api = apiClient();
-const bot = new Telegraf(BOT_TOKEN);
+const state = new Map(); // chatId -> {online, name, car, lastOrderId}
 
-const state = new Map(); // telegram_id -> { online, lat, lon, pollTimer }
-
-function getState(id) {
-  if (!state.has(id)) state.set(id, { online: false, lat: null, lon: null, pollTimer: null });
-  return state.get(id);
+function mainKeyboard(){
+  return Markup.keyboard([
+    ["🟢 Onlayn ol","🔴 Oflayn ol"],
+    ["📍 Yer göndər"],
+    ["ℹ️ Qəbul: /accept ID"]
+  ]).resize();
 }
 
-async function startPolling(ctx) {
-  const telegramId = String(ctx.from.id);
-  const st = getState(telegramId);
-  if (st.pollTimer) return;
-
-  st.pollTimer = setInterval(async () => {
-    try {
-      if (!st.online || st.lat == null || st.lon == null) return;
-      const { data } = await api.get('/api/orders/nearby', { params: { driver_telegram_id: telegramId, radius_km: 5 } });
-      if (!data?.ok) return;
-
-      for (const o of data.orders) {
-        // simple dedupe: only send once per poll run by caching lastSent in memory
-        if (st.lastSentOrderId === o.id) continue;
-        st.lastSentOrderId = o.id;
-
-        const pickup = o.pickup_text ? `📍 ${o.pickup_text}` : `📍 (${o.pickup_lat.toFixed(5)}, ${o.pickup_lon.toFixed(5)})`;
-        const dropoff = o.dropoff_text ? `🏁 ${o.dropoff_text}` : `🏁 (${o.dropoff_lat.toFixed(5)}, ${o.dropoff_lon.toFixed(5)})`;
-
-        await ctx.telegram.sendMessage(
-          telegramId,
-          `🆕 Yeni sifariş #${o.id}\n\n${pickup}\n${dropoff}\n\n📏 ~${o.distance_km?.toFixed(1) || '?'} km | 💰 ${Number(o.price_azn || 0).toFixed(2)} ₼\n\nSizə qədər: ${o.pickup_distance_km.toFixed(1)} km`,
-          Markup.inlineKeyboard([
-            Markup.button.callback(`✅ Qəbul et #${o.id}`, `accept_${o.id}`)
-          ])
-        );
-      }
-    } catch {
-      // ignore
-    }
-  }, 5000);
-}
-
-bot.start(async (ctx) => {
-  const telegramId = String(ctx.from.id);
-  await api.post('/api/register', { telegram_id: telegramId, role: 'driver', full_name: ctx.from.first_name });
-
-  await ctx.reply(
-    '🚖 PayTaksi Sürücü\n\n1) “📍 Yer göndər” edin\n2) “🟢 Onlayn ol” edin\n\nSifariş gələndə “Qəbul et” basın.',
-    Markup.keyboard([
-      [Markup.button.locationRequest('📍 Yer göndər')],
-      ['🟢 Onlayn ol', '🔴 Oflayn ol']
-    ]).resize()
-  );
-
-  startPolling(ctx);
+bot.start((ctx)=>{
+  if(!state.has(ctx.chat.id)) state.set(ctx.chat.id,{online:false,name:ctx.from.first_name||"",car:"Toyota Aqua"});
+  ctx.reply("Sürücü paneli 🚕", mainKeyboard());
 });
 
-bot.hears('🟢 Onlayn ol', async (ctx) => {
-  const telegramId = String(ctx.from.id);
-  const st = getState(telegramId);
-  st.online = true;
-  await api.post('/api/location/update', { telegram_id: telegramId, role: 'driver', lat: st.lat ?? 0, lon: st.lon ?? 0, is_online: true });
-  await ctx.reply('✅ Onlayn oldunuz');
+bot.hears("🟢 Onlayn ol",(ctx)=>{
+  const st=state.get(ctx.chat.id)||{};
+  st.online=true; state.set(ctx.chat.id,st);
+  ctx.reply("Onlayn ✅ İndi location göndər: '📍 Yer göndər'", mainKeyboard());
 });
 
-bot.hears('🔴 Oflayn ol', async (ctx) => {
-  const telegramId = String(ctx.from.id);
-  const st = getState(telegramId);
-  st.online = false;
-  await api.post('/api/location/update', { telegram_id: telegramId, role: 'driver', lat: st.lat ?? 0, lon: st.lon ?? 0, is_online: false });
-  await ctx.reply('✅ Oflayn oldunuz');
+bot.hears("🔴 Oflayn ol",(ctx)=>{
+  const st=state.get(ctx.chat.id)||{};
+  st.online=false; state.set(ctx.chat.id,st);
+  ctx.reply("Oflayn ✅", mainKeyboard());
 });
 
-bot.on('location', async (ctx) => {
-  const telegramId = String(ctx.from.id);
-  const st = getState(telegramId);
-  st.lat = ctx.message.location.latitude;
-  st.lon = ctx.message.location.longitude;
-
-  await api.post('/api/location/update', { telegram_id: telegramId, role: 'driver', lat: st.lat, lon: st.lon });
-  await ctx.reply(`✅ Yer yadda saxlandı: ${st.lat.toFixed(5)}, ${st.lon.toFixed(5)}`);
+bot.hears("📍 Yer göndər",(ctx)=>{
+  ctx.reply("Telegram-da Location göndər (Attach -> Location).");
 });
 
-bot.action(/accept_(\d+)/, async (ctx) => {
-  const telegramId = String(ctx.from.id);
-  const orderId = Number(ctx.match[1]);
-
-  try {
-    const { data } = await api.post('/api/order/accept', { order_id: orderId, driver_telegram_id: telegramId });
-    if (!data?.ok) throw new Error('not_ok');
-
-    const o = data.order;
-    const pickup = o.pickup_text ? o.pickup_text : `${o.pickup_lat},${o.pickup_lon}`;
-    const dropoff = o.dropoff_text ? o.dropoff_text : `${o.dropoff_lat},${o.dropoff_lon}`;
-
-    const wazePickup = `waze://?ll=${o.pickup_lat},${o.pickup_lon}&navigate=yes`;
-    const wazeDropoff = `waze://?ll=${o.dropoff_lat},${o.dropoff_lon}&navigate=yes`;
-
-    await ctx.editMessageText(
-      `✅ Sifariş qəbul edildi #${o.id}\n\n📍 Qarşılama: ${pickup}\n🏁 Gediləcək: ${dropoff}\n\n💬 Chat: sürücüdən yazmaq üçün: #${o.id} mesajınız\n\nNaviqasiya:`,
-      Markup.inlineKeyboard([
-        [Markup.button.url('🧭 Waze - Qarşılama', wazePickup)],
-        [Markup.button.url('🧭 Waze - Gediləcək', wazeDropoff)]
-      ])
-    );
-
-  } catch (e) {
-    await ctx.answerCbQuery('Sifariş qəbul edilə bilmədi (artıq tutulub ola bilər).', { show_alert: true });
-  }
+bot.on("location", async (ctx)=>{
+  const st=state.get(ctx.chat.id)||{online:true,car:"Toyota Aqua"};
+  const lat=ctx.message.location.latitude;
+  const lon=ctx.message.location.longitude;
+  await post("/api/driver/update",{driverId:String(ctx.chat.id),lat,lon,online:!!st.online,name:st.name||ctx.from.first_name||"",car:st.car||"Car"});
+  ctx.reply("Yer yeniləndi ✅");
 });
 
-// Driver chat messages: #45 salam
-bot.on('text', async (ctx) => {
-  const text = ctx.message.text.trim();
-  const m = text.match(/^#(\d+)\s+([\s\S]+)/);
-  if (!m) return;
-
-  const order_id = Number(m[1]);
-  const msg = m[2];
-
-  try {
-    await api.post('/api/chat/send', { order_id, from_role: 'driver', text: msg });
-    await ctx.reply('✅ Göndərildi');
-  } catch {
-    await ctx.reply('❌ Xəta: mesaj göndərilmədi');
-  }
+bot.command("accept", async (ctx)=>{
+  const parts=(ctx.message.text||"").trim().split(" ");
+  const orderId=parts[1];
+  if(!orderId) return ctx.reply("İstifadə: /accept ORDER_ID");
+  const st=state.get(ctx.chat.id)||{car:"Toyota Aqua"};
+  const j=await post("/api/order/"+orderId+"/accept",{driverId:String(ctx.chat.id),name:st.name||ctx.from.first_name||"",car:st.car||"Car"});
+  if(!j.ok) return ctx.reply("Xəta: "+(j.error||""));
+  st.lastOrderId=orderId; state.set(ctx.chat.id,st);
+  const p=j.order.pickup, d=j.order.dropoff;
+  const w1=`waze://?ll=${p.lat},${p.lon}&navigate=yes`;
+  const w2=`waze://?ll=${d.lat},${d.lon}&navigate=yes`;
+  ctx.reply(`Qəbul edildi ✅ #${orderId}\nQiymət: ${j.order.price} ₼\n\nQarşılama Waze: ${w1}\nGediləcək Waze: ${w2}\n\n/status: /arrived /starttrip /endtrip`, mainKeyboard());
 });
 
-bot.launch();
-console.log('✅ Driver bot started');
+bot.command("arrived", async (ctx)=>{
+  const st=state.get(ctx.chat.id)||{};
+  if(!st.lastOrderId) return ctx.reply("Aktiv sifariş yoxdur.");
+  await post("/api/order/"+st.lastOrderId+"/status",{status:"ARRIVED"});
+  ctx.reply("Status: Çatıb ✅");
+});
+bot.command("starttrip", async (ctx)=>{
+  const st=state.get(ctx.chat.id)||{};
+  if(!st.lastOrderId) return ctx.reply("Aktiv sifariş yoxdur.");
+  await post("/api/order/"+st.lastOrderId+"/status",{status:"TRIP_STARTED"});
+  ctx.reply("Status: Gedişə başla ✅");
+});
+bot.command("endtrip", async (ctx)=>{
+  const st=state.get(ctx.chat.id)||{};
+  if(!st.lastOrderId) return ctx.reply("Aktiv sifariş yoxdur.");
+  await post("/api/order/"+st.lastOrderId+"/status",{status:"TRIP_ENDED"});
+  ctx.reply("Status: Gediş bitdi ✅");
+});
+
+bot.launch().then(()=>console.log("Driver bot started"));
+process.once("SIGINT",()=>bot.stop("SIGINT"));
+process.once("SIGTERM",()=>bot.stop("SIGTERM"));
