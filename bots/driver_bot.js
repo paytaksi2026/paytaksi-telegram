@@ -1,30 +1,21 @@
 require("dotenv").config();
 const { Telegraf, Markup } = require("telegraf");
 const { post } = require("./api");
+const { getDriverWebAppUrl } = require("./webapp_url");
 
 const token = process.env.DRIVER_BOT_TOKEN;
 if(!token){ console.error("DRIVER_BOT_TOKEN yoxdur"); process.exit(1); }
 const bot = new Telegraf(token);
 
-// Render / shared hosting-da ən rahat rejim Long Polling-dir.
-// Əgər BotFather və ya başqa yerdə webhook qalıbsa, bot /start-a cavab vermir.
-// Ona görə start zamanı webhook-u silirik.
-async function ensureLongPolling(){
-  try{
-    await bot.telegram.deleteWebhook({ drop_pending_updates: true });
-  }catch(e){
-    console.warn("Driver bot webhook silinmədi (normal ola bilər):", e?.message || e);
-  }
-}
-
 const state = new Map(); // chatId -> {online, name, car, lastOrderId}
 
 function mainKeyboard(){
   return Markup.keyboard([
-    ["🟢 Onlayn ol","🔴 Oflayn ol"],
-    ["📍 Yer göndər"],
-    ["ℹ️ Qəbul: /accept ID"]
-  ]).resize();
+    [ (() => { const url = getDriverWebAppUrl(); return url ? { text: '🗺️ Sürücü paneli (Xəritə)', web_app: { url } } : { text: '🗺️ Sürücü paneli (Xəritə)' }; })() ],
+      ["🟢 Onlayn ol","🔴 Oflayn ol"],
+      ["📍 Yer göndər"],
+      ["ℹ️ Qəbul: /accept ID"]
+    ]).resize();
 }
 
 bot.start((ctx)=>{
@@ -89,9 +80,6 @@ bot.command("endtrip", async (ctx)=>{
   ctx.reply("Status: Gediş bitdi ✅");
 });
 
-ensureLongPolling()
-  .then(()=>bot.launch())
-  .then(()=>console.log("Driver bot started"))
-  .catch((e)=>console.error("Driver bot launch error:", e));
+bot.launch().then(()=>console.log("Driver bot started"));
 process.once("SIGINT",()=>bot.stop("SIGINT"));
 process.once("SIGTERM",()=>bot.stop("SIGTERM"));

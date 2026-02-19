@@ -1,19 +1,11 @@
 require("dotenv").config();
 const { Telegraf } = require("telegraf");
+const { getAdminWebAppUrl } = require("./webapp_url");
 const { get } = require("./api");
 
 const token = process.env.ADMIN_BOT_TOKEN;
 if(!token){ console.error("ADMIN_BOT_TOKEN yoxdur"); process.exit(1); }
 const bot = new Telegraf(token);
-
-// Long Polling istifadə edirik. Webhook qalıbsa bot cavab verməyə bilər.
-async function ensureLongPolling(){
-  try{
-    await bot.telegram.deleteWebhook({ drop_pending_updates: true });
-  }catch(e){
-    console.warn("Admin bot webhook silinmədi (normal ola bilər):", e?.message || e);
-  }
-}
 
 bot.start((ctx)=>ctx.reply("Admin bot 🛠️\n/health\n/drivers"));
 
@@ -32,9 +24,17 @@ bot.command("drivers", async (ctx)=>{
   }catch(e){ ctx.reply("Xəta"); }
 });
 
-ensureLongPolling()
-  .then(()=>bot.launch())
-  .then(()=>console.log("Admin bot started"))
-  .catch((e)=>console.error("Admin bot launch error:", e));
+bot.launch().then(()=>console.log("Admin bot started"));
 process.once("SIGINT",()=>bot.stop("SIGINT"));
 process.once("SIGTERM",()=>bot.stop("SIGTERM"));
+
+
+bot.command('panel', async (ctx) => {
+  const adminWebAppUrl = getAdminWebAppUrl();
+  return ctx.reply('🧰 Admin panelini aç:', {
+    reply_markup: {
+      keyboard: [[{ text: '🧰 Admin Paneli (App)', web_app: { url: adminWebAppUrl } }]],
+      resize_keyboard: true
+    }
+  });
+});
