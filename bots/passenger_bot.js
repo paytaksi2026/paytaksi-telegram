@@ -6,6 +6,15 @@ if(!token){ console.error("PASSENGER_BOT_TOKEN yoxdur"); process.exit(1); }
 
 const bot = new Telegraf(token);
 
+// Long Polling istifadə edirik. Webhook qalıbsa bot cavab verməyə bilər.
+async function ensureLongPolling(){
+  try{
+    await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+  }catch(e){
+    console.warn("Passenger bot webhook silinmədi (normal ola bilər):", e?.message || e);
+  }
+}
+
 function buildWebUrl(ctx){
   // Prefer WEBAPP_URL, fallback to BACKEND_URL + /passenger
   let webUrl = (process.env.WEBAPP_URL || "").trim();
@@ -35,6 +44,9 @@ bot.start(async (ctx)=>{
 });
 
 bot.on("text",(ctx)=>ctx.reply("Xəritə üçün /start yaz."));
-bot.launch().then(()=>console.log("Passenger bot started"));
+ensureLongPolling()
+  .then(()=>bot.launch())
+  .then(()=>console.log("Passenger bot started"))
+  .catch((e)=>console.error("Passenger bot launch error:", e));
 process.once("SIGINT",()=>bot.stop("SIGINT"));
 process.once("SIGTERM",()=>bot.stop("SIGTERM"));
