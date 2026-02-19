@@ -33,8 +33,14 @@ let map, marker;
 function getBase(){
   const saved = localStorage.getItem('PAYTAKSI_API_BASE') || '';
   const el = document.getElementById('api');
-  if(!el.value) el.value = saved;
-  return (el.value || saved || '').replace(/\/$/,'');
+  const def = (window.location && window.location.origin) ? window.location.origin : '';
+
+  // Auto-fill with the current origin so the user doesn't have to type URL in Telegram Mini App.
+  if(!el.value) el.value = saved || def;
+
+  const base = (el.value || saved || def || '').replace(/\/$/,'');
+  if(base) localStorage.setItem('PAYTAKSI_API_BASE', base);
+  return base;
 }
 function init(){
   const base = getBase();
