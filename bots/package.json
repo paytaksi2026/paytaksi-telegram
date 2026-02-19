@@ -1,8 +1,9 @@
 {
   "name": "paytaksi-bots",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "commonjs",
   "scripts": {
+    "start": "node index.js",
     "start:passenger": "node passenger_bot.js",
     "start:driver": "node driver_bot.js",
     "start:admin": "node admin_bot.js"
