@@ -15,3 +15,21 @@ function getWebAppUrl() {
 }
 
 module.exports = { getWebAppUrl };
+
+
+function getDriverWebAppUrl(ctx){
+  const base = process.env.WEBAPP_DRIVER_URL
+    || process.env.DRIVER_WEBAPP_URL
+    || (process.env.WEBAPP_URL ? process.env.WEBAPP_URL.replace(/\/passenger\/?$/,'/driver') : null);
+  return pickUrl(ctx, base || (process.env.WEBAPP_URL ? (process.env.WEBAPP_URL.replace(/\/?$/,'') + '/driver') : null));
+}
+
+function getAdminWebAppUrl(ctx){
+  const base = process.env.WEBAPP_ADMIN_URL
+    || process.env.ADMIN_WEBAPP_URL
+    || (process.env.WEBAPP_URL ? process.env.WEBAPP_URL.replace(/\/passenger\/?$/,'/admin') : null);
+  return pickUrl(ctx, base || (process.env.WEBAPP_URL ? (process.env.WEBAPP_URL.replace(/\/?$/,'') + '/admin') : null));
+}
+
+module.exports.getDriverWebAppUrl = getDriverWebAppUrl;
+module.exports.getAdminWebAppUrl = getAdminWebAppUrl;

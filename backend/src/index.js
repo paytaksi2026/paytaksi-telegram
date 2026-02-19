@@ -46,16 +46,6 @@ app.get("/passenger/", (req, res) => sendPassenger(res));
 app.get("/passenger.html", (req, res) => sendPassenger(res));
 app.get("/passenger/index.html", (req, res) => sendPassenger(res));
 
-
-// Admin WebApp (Mini App)
-function sendAdmin(res) {
-  res.sendFile(path.join(__dirname, "..", "..", "web", "admin.html"));
-}
-app.get("/admin", (req, res) => sendAdmin(res));
-app.get("/admin/", (req, res) => sendAdmin(res));
-app.get("/admin.html", (req, res) => sendAdmin(res));
-app.get("/admin/index.html", (req, res) => sendAdmin(res));
-
 // --- In-memory store (MVP) ---
 const store = {
   drivers: new Map(),
@@ -240,3 +230,12 @@ server.listen(PORT, () => {
     console.error("Bot start xətası:", e && e.message ? e.message : e);
   }
 });
+app.get(['/driver', '/driver/'], (req, res) => {
+  res.sendFile(path.join(WEB_DIR, 'driver.html'));
+});
+
+app.get(['/admin', '/admin/'], (req, res) => {
+  res.sendFile(path.join(WEB_DIR, 'admin.html'));
+});
+
+

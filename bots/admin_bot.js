@@ -26,3 +26,14 @@ bot.command("drivers", async (ctx)=>{
 bot.launch().then(()=>console.log("Admin bot started"));
 process.once("SIGINT",()=>bot.stop("SIGINT"));
 process.once("SIGTERM",()=>bot.stop("SIGTERM"));
+
+
+bot.command('panel', async (ctx) => {
+  const adminWebAppUrl = getAdminWebAppUrl(ctx);
+  return ctx.reply('🧰 Admin panelini aç:', {
+    reply_markup: {
+      keyboard: [[{ text: '🧰 Admin Paneli (App)', web_app: { url: adminWebAppUrl } }]],
+      resize_keyboard: true
+    }
+  });
+});

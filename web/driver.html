@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="az">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>PayTaksi Sürücü Paneli</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;margin:0}
+    #map{height:60vh}
+    .bar{padding:12px;background:#0f172a;color:#e5e7eb}
+    .wrap{padding:12px}
+    input{width:100%;padding:10px;border-radius:10px;border:1px solid #cbd5e1}
+    button{padding:10px 12px;border-radius:10px;border:0;background:#22c55e;color:#052e14;font-weight:700;width:100%}
+    .muted{color:#64748b}
+  </style>
+</head>
+<body>
+  <div class="bar"><b>🚖 Sürücü Paneli</b> <span class="muted">— Mini App</span></div>
+  <div id="map"></div>
+  <div class="wrap">
+    <div class="muted">API BASE URL</div>
+    <input id="api" placeholder="https://paytaksi-telegram-wlig.onrender.com" />
+    <div style="height:10px"></div>
+    <button onclick="init()">Qoşul</button>
+    <div style="height:10px"></div>
+    <div id="info" class="muted">-</div>
+  </div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+let map, marker;
+function getBase(){
+  const saved = localStorage.getItem('PAYTAKSI_API_BASE') || '';
+  const el = document.getElementById('api');
+  if(!el.value) el.value = saved;
+  return (el.value || saved || '').replace(/\/$/,'');
+}
+function init(){
+  const base = getBase();
+  localStorage.setItem('PAYTAKSI_API_BASE', base);
+  if(!base){ document.getElementById('info').textContent='API URL yazın.'; return; }
+
+  if(!map){
+    map = L.map('map').setView([40.4093, 49.8671], 11);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+    marker = L.marker([40.4093, 49.8671]).addTo(map).bindPopup('Sürücü');
+  }
+
+  document.getElementById('info').textContent = 'Qoşuldu ✅ (bu səhifə demo paneldir)';
+}
+init();
+</script>
+</body>
+</html>

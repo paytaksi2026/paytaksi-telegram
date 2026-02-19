@@ -2,133 +2,74 @@
 <html lang="az">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>PayTaksi Admin Panel</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>PayTaksi Admin Paneli</title>
   <style>
-    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;background:#0f172a;color:#e2e8f0}
-    header{padding:14px 16px;background:#111827;position:sticky;top:0;z-index:10;border-bottom:1px solid rgba(255,255,255,.08)}
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;margin:0;background:#0b1220;color:#e5e7eb}
+    header{padding:14px 16px;background:#111827;position:sticky;top:0}
+    .wrap{max-width:980px;margin:0 auto;padding:16px}
+    .card{background:#111827;border:1px solid #1f2937;border-radius:12px;padding:14px;margin:12px 0}
     h1{font-size:18px;margin:0}
-    .wrap{max-width:980px;margin:0 auto;padding:14px 16px}
-    .grid{display:grid;grid-template-columns:1fr;gap:12px}
-    @media(min-width:900px){.grid{grid-template-columns:1fr 1fr}}
-    .card{background:#111827;border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:12px;box-shadow:0 10px 30px rgba(0,0,0,.25)}
-    .row{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}
-    .muted{color:#94a3b8;font-size:12px}
-    button{background:#22c55e;border:0;color:#052e14;padding:10px 12px;border-radius:10px;font-weight:700;cursor:pointer}
-    button.secondary{background:#334155;color:#e2e8f0}
-    table{width:100%;border-collapse:collapse;font-size:14px}
-    th,td{padding:10px;border-bottom:1px solid rgba(255,255,255,.08);text-align:left}
-    code{background:#0b1220;padding:2px 6px;border-radius:8px;border:1px solid rgba(255,255,255,.06)}
-    .pill{display:inline-block;background:#0b1220;border:1px solid rgba(255,255,255,.08);padding:3px 8px;border-radius:999px;font-size:12px;color:#cbd5e1}
-    .ok{color:#22c55e}
-    .warn{color:#f59e0b}
+    small{color:#9ca3af}
+    button{padding:10px 12px;border-radius:10px;border:0;background:#22c55e;color:#052e14;font-weight:700}
+    input{width:100%;padding:10px;border-radius:10px;border:1px solid #374151;background:#0b1220;color:#e5e7eb}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    @media(max-width:720px){.row{grid-template-columns:1fr}}
+    .err{color:#fca5a5}
+    pre{white-space:pre-wrap;word-break:break-word;background:#0b1220;border:1px solid #374151;border-radius:10px;padding:10px}
   </style>
 </head>
 <body>
-  <header>
-    <div class="wrap row">
-      <h1>PayTaksi — Admin Panel</h1>
-      <div class="row" style="gap:8px">
-        <span class="pill" id="status">Yüklənir…</span>
-        <button class="secondary" id="refresh">Yenilə</button>
-      </div>
-    </div>
-  </header>
-
+  <header><div class="wrap"><h1>🧰 PayTaksi Admin Paneli</h1><small>Mini App (Render)</small></div></header>
   <div class="wrap">
-    <div class="grid">
-      <div class="card">
-        <div class="row">
-          <div>
-            <div style="font-weight:800">Onlayn sürücülər</div>
-            <div class="muted">/api/drivers/online</div>
-          </div>
-          <button id="btnDrivers">Yüklə</button>
-        </div>
-        <div style="margin-top:10px;overflow:auto">
-          <table>
-            <thead><tr><th>Driver ID</th><th>Ad</th><th>Telefon</th><th>Son yenilənmə</th></tr></thead>
-            <tbody id="driversBody"><tr><td colspan="4" class="muted">Hələ məlumat yoxdur.</td></tr></tbody>
-          </table>
-        </div>
-      </div>
+    <div class="card">
+      <div><b>API BASE URL</b> (məs: https://paytaksi-telegram-wlig.onrender.com)</div>
+      <input id="api" placeholder="https://..." />
+      <div style="height:10px"></div>
+      <button onclick="load()">Yoxla</button>
+      <div id="out" style="margin-top:10px"></div>
+    </div>
 
+    <div class="row">
       <div class="card">
-        <div class="row">
-          <div>
-            <div style="font-weight:800">Sifarişlər (son 50)</div>
-            <div class="muted">/api/orders/recent</div>
-          </div>
-          <button id="btnOrders">Yüklə</button>
-        </div>
-        <div style="margin-top:10px;overflow:auto">
-          <table>
-            <thead><tr><th>#</th><th>Passenger</th><th>Driver</th><th>Status</th></tr></thead>
-            <tbody id="ordersBody"><tr><td colspan="4" class="muted">Hələ məlumat yoxdur.</td></tr></tbody>
-          </table>
-        </div>
-        <div class="muted" style="margin-top:8px">
-          Qeyd: Bu sadə admin panel MVP-dir. Sonra: filtr, detal, chat log, qiymət tənzimləmə, s.
-        </div>
+        <b>Health</b>
+        <pre id="health">-</pre>
+      </div>
+      <div class="card">
+        <b>Drivers</b>
+        <pre id="drivers">-</pre>
       </div>
     </div>
   </div>
 
 <script>
-  async function j(url){
-    const r = await fetch(url, { credentials: 'same-origin' });
-    if(!r.ok) throw new Error('HTTP '+r.status);
-    return r.json();
+function getBase(){
+  const saved = localStorage.getItem('PAYTAKSI_API_BASE') || '';
+  const el = document.getElementById('api');
+  if(!el.value) el.value = saved;
+  return (el.value || saved || '').replace(/\/$/,'');
+}
+async function load(){
+  const base = getBase();
+  localStorage.setItem('PAYTAKSI_API_BASE', base);
+  const out = document.getElementById('out');
+  out.textContent = '';
+  if(!base){ out.innerHTML = '<div class="err">API URL yazın.</div>'; return; }
+  try{
+    const h = await fetch(base + '/health').then(r=>r.text());
+    document.getElementById('health').textContent = h;
+  }catch(e){
+    document.getElementById('health').textContent = 'Xəta: ' + e;
   }
-
-  function setStatus(text, ok=true){
-    const el = document.getElementById('status');
-    el.textContent = text;
-    el.className = 'pill ' + (ok ? 'ok':'warn');
+  try{
+    const d = await fetch(base + '/api/drivers').then(r=>r.text());
+    document.getElementById('drivers').textContent = d;
+  }catch(e){
+    document.getElementById('drivers').textContent = 'Xəta: ' + e;
   }
-
-  async function loadDrivers(){
-    setStatus('Sürücülər yüklənir…', true);
-    try{
-      const data = await j('/api/drivers/online');
-      const list = data?.drivers || [];
-      const tb = document.getElementById('driversBody');
-      if(!list.length){ tb.innerHTML = '<tr><td colspan="4" class="muted">Onlayn sürücü yoxdur.</td></tr>'; }
-      else{
-        tb.innerHTML = list.map(d => {
-          const ts = d.updated_at ? new Date(d.updated_at).toLocaleString() : '';
-          return `<tr><td><code>${d.driver_id}</code></td><td>${d.name||''}</td><td>${d.phone||''}</td><td>${ts}</td></tr>`;
-        }).join('');
-      }
-      setStatus('Hazır ✅', true);
-    }catch(e){
-      setStatus('Xəta: sürücülər', false);
-      console.error(e);
-    }
-  }
-
-  async function loadOrders(){
-    setStatus('Sifarişlər yüklənir…', true);
-    try{
-      const data = await j('/api/orders/recent');
-      const list = data?.orders || [];
-      const tb = document.getElementById('ordersBody');
-      if(!list.length){ tb.innerHTML = '<tr><td colspan="4" class="muted">Sifariş yoxdur.</td></tr>'; }
-      else{
-        tb.innerHTML = list.map(o => `<tr><td><code>${o.id}</code></td><td>${o.passenger_id||''}</td><td>${o.driver_id||''}</td><td>${o.status||''}</td></tr>`).join('');
-      }
-      setStatus('Hazır ✅', true);
-    }catch(e){
-      setStatus('Xəta: sifarişlər', false);
-      console.error(e);
-    }
-  }
-
-  document.getElementById('btnDrivers').addEventListener('click', loadDrivers);
-  document.getElementById('btnOrders').addEventListener('click', loadOrders);
-  document.getElementById('refresh').addEventListener('click', async ()=>{ await loadDrivers(); await loadOrders(); });
-  loadDrivers();
-  loadOrders();
+  out.innerHTML = '<small>Hazır ✅</small>';
+}
+load();
 </script>
 </body>
 </html>
