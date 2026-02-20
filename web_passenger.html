@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="az">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>PayTaksi Passenger</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <style>
+    body{margin:0;font-family:system-ui,Segoe UI,Arial;}
+    #map{height:58vh;}
+    .panel{padding:12px}
+    input{width:100%;padding:10px;border:1px solid #ddd;border-radius:10px;margin:6px 0}
+    button{width:100%;padding:12px;border:0;border-radius:12px;background:#18a558;color:#fff;font-weight:700}
+    .hint{font-size:12px;color:#666}
+    .box{background:#f7f7f7;border-radius:12px;padding:10px;margin-top:8px}
+    .sugs button{display:block;width:100%;text-align:left;background:#eee;color:#000;border-radius:10px;margin:4px 0;padding:10px}
+  </style>
+</head>
+<body>
+<div id="map"></div>
+<div class="panel">
+  <div class="hint">1) Ünvanı yaz (alternativlər çıxacaq). 2) Haraya gedəcəksən yaz. 3) Qiymət/məsafə çıxacaq.</div>
+
+  <input id="pickup" placeholder="Haradan? (ünvan yaz)"/>
+  <div id="pickupSug" class="sugs"></div>
+
+  <input id="dropoff" placeholder="Haraya? (ünvan yaz)"/>
+  <div id="dropoffSug" class="sugs"></div>
+
+  <div class="box" id="priceBox" style="display:none"></div>
+
+  <button id="btnOrder">Sifariş ver</button>
+
+  <div class="box" id="orderBox" style="display:none"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+  const qs = new URLSearchParams(location.search);
+  const BACKEND = qs.get("backend") || "http://localhost:3000";
+  const passengerChatId = qs.get("chat_id") || "";
+
+  const map = L.map('map').setView([40.4093, 49.8671], 12);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+
+  let meMarker = null;
+  let pickupPoint = null;
+  let dropoffPoint = null;
+  let orderId = null;
+
+  const driverMarkers = new Map(); // driverId -> marker
+
+  function setMe(lat, lon){
+    if(!meMarker){
+      meMarker = L.marker([lat, lon]).addTo(map).bindPopup("Sən");
+      map.setView([lat, lon], 15);
+    } else {
+      meMarker.setLatLng([lat, lon]);
+    }
+  }
+
+  if (navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(pos => {
+      setMe(pos.coords.latitude, pos.coords.longitude);
+      pickupPoint = { lat: pos.coords.latitude, lon: pos.coords.longitude, label: "Cari yer" };
+      document.getElementById("pickup").value = "Cari yer";
+      L.circle([pickupPoint.lat, pickupPoint.lon], { radius: 25 }).addTo(map);
+    }, _ => {}, { enableHighAccuracy:true, timeout:8000 });
+  }
+
+  // Telegram WebView can block direct requests to nominatim.openstreetmap.org.
+  // We proxy through our backend: GET /api/geocode?q=...
+  async function nominatim(q){
+    const url = API_BASE + "/api/geocode?q=" + encodeURIComponent(q);
+    const r = await fetch(url, { headers: { "Accept":"application/json" }});
+    const j = await r.json();
+    return (j && j.ok && Array.isArray(j.results)) ? j.results : [];
+  }
+  function renderSug(el, list, onPick){
+    el.innerHTML = "";
+    list.forEach(item=>{
+      const b=document.createElement("button");
+      b.textContent=item.display_name;
+      b.onclick=()=>onPick(item);
+      el.appendChild(b);
+    });
+  }
+
+  const pickupEl = document.getElementById("pickup");
+  const dropoffEl = document.getElementById("dropoff");
+  const pickupSug = document.getElementById("pickupSug");
+  const dropoffSug = document.getElementById("dropoffSug");
+
+  let t1=null, t2=null;
+  pickupEl.addEventListener("input", ()=>{
+    clearTimeout(t1);
+    const q=pickupEl.value.trim();
+    if(q.length<3){ pickupSug.innerHTML=""; return; }
+    t1=setTimeout(async()=>{
+      const list = await nominatim(q);
+      renderSug(pickupSug, list, (it)=>{
+        pickupPoint={ lat:+it.lat, lon:+it.lon, label:it.display_name };
+        pickupEl.value=it.display_name;
+        pickupSug.innerHTML="";
+        L.marker([pickupPoint.lat, pickupPoint.lon]).addTo(map).bindPopup("Pickup").openPopup();
+        map.setView([pickupPoint.lat, pickupPoint.lon], 15);
+        maybePrice();
+      });
+    }, 300);
+  });
+
+  dropoffEl.addEventListener("input", ()=>{
+    clearTimeout(t2);
+    const q=dropoffEl.value.trim();
+    if(q.length<3){ dropoffSug.innerHTML=""; return; }
+    t2=setTimeout(async()=>{
+      const list = await nominatim(q);
+      renderSug(dropoffSug, list, (it)=>{
+        dropoffPoint={ lat:+it.lat, lon:+it.lon, label:it.display_name };
+        dropoffEl.value=it.display_name;
+        dropoffSug.innerHTML="";
+        L.marker([dropoffPoint.lat, dropoffPoint.lon]).addTo(map).bindPopup("Dropoff").openPopup();
+        map.setView([dropoffPoint.lat, dropoffPoint.lon], 13);
+        maybePrice();
+      });
+    }, 300);
+  });
+
+  async function maybePrice(){
+    if(!pickupPoint || !dropoffPoint) return;
+    const r = await fetch(BACKEND + "/api/price", {
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ pickup: pickupPoint, dropoff: dropoffPoint })
+    });
+    const j = await r.json();
+    if(j.ok){
+      const box = document.getElementById("priceBox");
+      box.style.display="block";
+      box.innerHTML = "Məsafə: <b>" + j.distanceKm + " km</b><br/>Qiymət: <b>" + j.price + " ₼</b>";
+    }
+  }
+
+  document.getElementById("btnOrder").onclick = async ()=>{
+    if(!pickupPoint || !dropoffPoint) return alert("Pickup və Dropoff seçin.");
+    const r = await fetch(BACKEND + "/api/order", {
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ pickup: pickupPoint, dropoff: dropoffPoint, passengerChatId })
+    });
+    const j = await r.json();
+    if(j.ok){
+      orderId = j.order.orderId;
+      const box = document.getElementById("orderBox");
+      box.style.display="block";
+      box.innerHTML = "Sifariş yaradıldı: <b>#" + orderId + "</b><br/>Sürücü axtarılır...<br/><small>Sürücü qəbul edəndə status yenilənəcək.</small>";
+      // show hint for driver to accept
+      box.innerHTML += "<br/><small>Sürücü botunda: /accept " + orderId + "</small>";
+    } else alert(j.error || "Xəta");
+  };
+
+  function ensureDriverMarker(driverId, d){
+    if(!d || typeof d.lat !== "number") return;
+    let m = driverMarkers.get(driverId);
+    const title = (d.name ? d.name : "Sürücü") + " • " + (d.car || "");
+    if(!m){
+      m = L.marker([d.lat, d.lon]).addTo(map).bindPopup(title);
+      driverMarkers.set(driverId, m);
+    } else {
+      m.setLatLng([d.lat, d.lon]);
+      m.setPopupContent(title);
+    }
+  }
+
+  const wsProto = BACKEND.startsWith("https") ? "wss" : "ws";
+  const wsUrl = wsProto + "://" + BACKEND.replace(/^https?:\/\//, "");
+  const ws = new WebSocket(wsUrl);
+  ws.onmessage = (ev)=>{
+    try{
+      const msg = JSON.parse(ev.data);
+      if(msg.type==="drivers_snapshot"){
+        (msg.drivers||[]).forEach(d=>ensureDriverMarker(d.driverId, d));
+      }
+      if(msg.type==="driver"){
+        ensureDriverMarker(msg.driverId, msg.data);
+      }
+      if(msg.type==="order_accepted" && orderId && msg.order && msg.order.orderId===orderId){
+        const box = document.getElementById("orderBox");
+        box.innerHTML = "Sifariş qəbul edildi ✅<br/>Sürücü: <b>" + (msg.order.driverId||"") + "</b><br/>Qiymət: <b>" + msg.order.price + " ₼</b>";
+      }
+      if(msg.type==="order_status" && orderId && msg.orderId===orderId){
+        const box = document.getElementById("orderBox");
+        box.innerHTML += "<br/>Status: <b>" + msg.status + "</b>";
+      }
+    }catch(e){}
+  };
+</script>
+</body>
+</html>
