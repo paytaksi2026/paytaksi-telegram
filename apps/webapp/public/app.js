@@ -82,20 +82,40 @@ function pageRole() {
       <div class="card">
         <div class="h1">PayTaksi</div>
         <div class="p">Rol seç və davam et.</div>
-        <div class="row">
-          <button class="btn btnPrimary" id="p">Müştəri</button>
-          <button class="btn btnSecondary" id="d">Sürücü</button>
+        <div class="row" style="gap:14px;align-items:stretch;">
+          <div class="card" style="flex:1;padding:14px;background:rgba(255,255,255,0.03);">
+            <div class="h1" style="font-size:18px;margin-bottom:6px;">Müştəri</div>
+            <div class="p" style="margin-bottom:10px;">Sifariş et və sürücü çağır.</div>
+            <button class="btn btnPrimary" id="p_login">Daxil ol</button>
+            <div style="height:10px"></div>
+            <button class="btn btnSecondary" id="p_reg">Qeydiyyatdan keç</button>
+          </div>
+          <div class="card" style="flex:1;padding:14px;background:rgba(255,255,255,0.03);">
+            <div class="h1" style="font-size:18px;margin-bottom:6px;">Sürücü</div>
+            <div class="p" style="margin-bottom:10px;">Sənədlər yüklə, təsdiqdən sonra online ol.</div>
+            <button class="btn btnPrimary" id="d_login">Daxil ol</button>
+            <div style="height:10px"></div>
+            <button class="btn btnSecondary" id="d_reg">Qeydiyyatdan keç</button>
+          </div>
         </div>
       </div>
     </div>
   `);
-  node.querySelector('#p').onclick = () => { localStorage.setItem('pickRole','passenger'); nav('#/login'); };
-  node.querySelector('#d').onclick = () => { localStorage.setItem('pickRole','driver'); nav('#/login'); };
+  const go = (role, mode) => {
+    localStorage.setItem('pickRole', role);
+    localStorage.setItem('pickMode', mode);
+    nav('#/login');
+  };
+  node.querySelector('#p_login').onclick = () => go('passenger', 'login');
+  node.querySelector('#p_reg').onclick   = () => go('passenger', 'register');
+  node.querySelector('#d_login').onclick = () => go('driver', 'login');
+  node.querySelector('#d_reg').onclick   = () => go('driver', 'register');
   return node;
 }
 
 function pageLogin() {
   const pickRole = localStorage.getItem('pickRole') || '';
+  const pickMode = localStorage.getItem('pickMode') || 'login';
   const node = el(`
     <div class="container">
       <div class="card">
@@ -107,34 +127,75 @@ function pageLogin() {
           <button class="smallBtn" id="back">←</button>
         </div>
 
+        <div class="row" style="gap:10px;justify-content:flex-start;margin-top:10px;">
+          <button class="btn ${pickMode==='login'?'btnPrimary':'btnSecondary'}" id="tabLogin" style="padding:10px 14px;min-width:120px;">Daxil ol</button>
+          <button class="btn ${pickMode==='register'?'btnPrimary':'btnSecondary'}" id="tabReg" style="padding:10px 14px;min-width:160px;">Qeydiyyatdan keç</button>
+        </div>
+
         <div class="label">Telefon</div>
         <input class="input" id="phone" placeholder="+994..." />
         <div class="label">Şifrə</div>
         <input class="input" id="pass" type="password" placeholder="••••••" />
-        <div class="label">Ad Soyad (yalnız qeydiyyat)</div>
-        <input class="input" id="name" placeholder="Ad Soyad" />
 
-        <div id="driverExtra" style="display:none;">
-          <div class="label">Maşın modeli (sürücü)</div>
-          <input class="input" id="car_model" placeholder="Toyota Prius" />
-          <div class="label">Nömrə nişanı (sürücü)</div>
-          <input class="input" id="car_plate" placeholder="10-AA-123" />
+        <div id="regOnly">
+          <div class="label">Ad Soyad</div>
+          <input class="input" id="name" placeholder="Ad Soyad" />
+
+          <div id="driverExtra" style="display:none;">
+            <div class="label">Maşın modeli (sürücü)</div>
+            <input class="input" id="car_model" placeholder="Toyota Prius" />
+            <div class="label">Nömrə nişanı (sürücü)</div>
+            <input class="input" id="car_plate" placeholder="10-AA-123" />
+          </div>
         </div>
 
         <div style="height:10px"></div>
         <button class="btn btnPrimary" id="loginBtn">Daxil ol</button>
         <div style="height:10px"></div>
-        <button class="btn btnSecondary" id="regBtn">Qeydiyyat</button>
+        <button class="btn btnSecondary" id="regBtn">Qeydiyyatdan keç</button>
       </div>
     </div>
   `);
 
   node.querySelector('#back').onclick = () => nav('#/role');
 
+  const regOnly = node.querySelector('#regOnly');
   const driverExtra = node.querySelector('#driverExtra');
-  if (pickRole === 'driver') driverExtra.style.display = 'block';
 
-  node.querySelector('#loginBtn').onclick = async () => {
+  function setMode(mode) {
+    localStorage.setItem('pickMode', mode);
+    // re-render (hash may not change)
+    if (typeof render === 'function') render();
+  }
+  node.querySelector('#tabLogin').onclick = () => setMode('login');
+  node.querySelector('#tabReg').onclick = () => setMode('register');
+
+  // register-only fields visible only in register mode
+  if (pickMode !== 'register') {
+    regOnly.style.display = 'none';
+  } else {
+    regOnly.style.display = 'block';
+    if (pickRole === 'driver') driverExtra.style.display = 'block';
+  }
+
+  // Main buttons visibility (separate Login vs Register)
+  const loginBtn = node.querySelector('#loginBtn');
+  const regBtn = node.querySelector('#regBtn');
+  if (pickMode === 'register') {
+    loginBtn.style.display = 'none';
+  } else {
+    regBtn.style.display = 'none';
+  }
+
+  function humanError(code) {
+    if (!code) return null;
+    if (code === 'PHONE_EXISTS') return 'Bu telefon artıq qeydiyyatdan keçib. Zəhmət olmasa "Daxil ol" edin.';
+    if (code === 'INVALID_CREDENTIALS') return 'Telefon və ya şifrə yanlışdır.';
+    if (code === 'ROLE_REQUIRED') return 'Rol seçilməyib.';
+    return code;
+  }
+
+  loginBtn.onclick = async () => {
     try {
       const phone = node.querySelector('#phone').value.trim();
       const password = node.querySelector('#pass').value;
@@ -143,11 +204,11 @@ function pageLogin() {
       await bootMe();
       routeAfterLogin();
     } catch (e) {
-      toast(e.data?.error || 'Login xətası');
+      toast(humanError(e.data?.error) || 'Login xətası');
     }
   };
 
-  node.querySelector('#regBtn').onclick = async () => {
+  regBtn.onclick = async () => {
     try {
       const role = localStorage.getItem('pickRole');
       if (!role) return toast('Rol seç');
@@ -157,11 +218,20 @@ function pageLogin() {
       const car_model = node.querySelector('#car_model')?.value?.trim();
       const car_plate = node.querySelector('#car_plate')?.value?.trim();
       const out = await api('/api/auth/register', { method:'POST', body: JSON.stringify({ role, name, phone, password, car_model, car_plate }) });
-      setAuth(out.token, out.user.role);
-      await bootMe();
-      routeAfterLogin();
+
+      // Registration success message (user requested)
+      const who = (name || out.user?.name || '').trim();
+      const title = who ? `Hörmətli ${who},` : 'Təbriklər!';
+      toast(`${title} siz qeydiyyatdan keçdiniz. Login: ${phone}  Şifrə: ${password}`);
+
+      // After register -> go to Login (separate flow)
+      localStorage.setItem('pickMode', 'login');
+      // keep phone filled, clear password for safety
+      setTimeout(() => {
+        if (typeof render === 'function') render();
+      }, 600);
     } catch (e) {
-      toast(e.data?.error || 'Register xətası');
+      toast(humanError(e.data?.error) || 'Register xətası');
     }
   };
 
