@@ -1,243 +1,390 @@
-// PayTaksi - single-service MVP (0 AZN)
-// NOTE: Render free instances can restart and memory will reset. For real persistence use external DB (Supabase/Neon).
-
-const path = require("path");
-const fs = require("fs");
-const express = require("express");
+const express = require('express');
+const sqlite3 = require('sqlite3').verbose();
+const bodyParser = require('body-parser');
+const path = require('path');
+const crypto = require('crypto');
 
 const app = express();
-app.disable("x-powered-by");
+const db = new sqlite3.Database('./database.sqlite');
 
-app.use(express.json({ limit: "1mb" }));
-app.use(express.urlencoded({ extended: true }));
+app.use(bodyParser.json({ limit: '1mb' }));
+app.use(express.static(path.join(__dirname, 'public')));
 
-// ---- Simple cookie helpers (no extra deps) ----
+// ---------------- DB init + lightweight migrations
+function ensureColumn(table, column, ddl) {
+  return new Promise((resolve) => {
+    db.all(`PRAGMA table_info(${table})`, [], (err, rows) => {
+      if (err) return resolve(false);
+      const exists = (rows || []).some(r => r.name === column);
+      if (exists) return resolve(true);
+      db.run(`ALTER TABLE ${table} ADD COLUMN ${ddl}`, () => resolve(true));
+    });
+  });
+}
+
+db.serialize(() => {
+  db.run(`CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    phone TEXT NOT NULL,
+    password TEXT NOT NULL,
+    role TEXT NOT NULL,              -- passenger | driver
+    name TEXT,
+    approved INTEGER DEFAULT 0,      -- driver: 0 pending, 1 approved
+    is_online INTEGER DEFAULT 0,     -- driver presence: 0/1
+    UNIQUE(phone, role)
+  )`);
+
+  // Ensure columns if older DB exists
+  ensureColumn('users', 'approved', 'approved INTEGER DEFAULT 0');
+  ensureColumn('users', 'is_online', 'is_online INTEGER DEFAULT 0');
+
+  db.run(`CREATE TABLE IF NOT EXISTS orders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    passenger_phone TEXT NOT NULL,
+    pickup_text TEXT,
+    pickup_lat REAL,
+    pickup_lon REAL,
+    dropoff_text TEXT,
+    dropoff_lat REAL,
+    dropoff_lon REAL,
+    status TEXT NOT NULL DEFAULT 'new',
+    created_at INTEGER NOT NULL
+  )`);
+});
+
+// ---------------- Helpers
+function normRole(role) {
+  role = String(role || '').toLowerCase().trim();
+  return (role === 'driver') ? 'driver' : 'passenger';
+}
+function normPhone(phone) {
+  return String(phone || '').trim();
+}
+function nowMs() { return Date.now(); }
+
+function adminCreds() {
+  return {
+    user: process.env.ADMIN_USER || 'Ratik',
+    pass: process.env.ADMIN_PASS || 'Sevenler1984',
+  };
+}
+
+const ADMIN_COOKIE = 'pt_admin';
+const ADMIN_SECRET = process.env.ADMIN_SECRET || 'change_me_admin_secret';
+
+function signAdmin(value) {
+  const h = crypto.createHmac('sha256', ADMIN_SECRET).update(value).digest('hex');
+  return `${value}.${h}`;
+}
+function verifyAdmin(signed) {
+  if (!signed || typeof signed !== 'string') return false;
+  const idx = signed.lastIndexOf('.');
+  if (idx <= 0) return false;
+  const value = signed.slice(0, idx);
+  const sig = signed.slice(idx + 1);
+  const h = crypto.createHmac('sha256', ADMIN_SECRET).update(value).digest('hex');
+  try {
+    return crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(h));
+  } catch (_) {
+    return false;
+  }
+}
+
 function parseCookies(req) {
-  const header = req.headers.cookie || "";
+  const header = req.headers.cookie || '';
   const out = {};
-  header.split(";").forEach((part) => {
+  header.split(';').forEach(part => {
     const p = part.trim();
     if (!p) return;
-    const i = p.indexOf("=");
-    const k = p.slice(0, i);
-    const v = decodeURIComponent(p.slice(i + 1));
-    out[k] = v;
+    const eq = p.indexOf('=');
+    if (eq < 0) return;
+    const k = p.slice(0, eq).trim();
+    const v = p.slice(eq + 1).trim();
+    out[k] = decodeURIComponent(v);
   });
   return out;
 }
-function setCookie(res, name, value, opts = {}) {
-  const parts = [`${name}=${encodeURIComponent(value)}`];
-  if (opts.httpOnly) parts.push("HttpOnly");
-  if (opts.sameSite) parts.push(`SameSite=${opts.sameSite}`);
-  if (opts.path) parts.push(`Path=${opts.path}`);
-  if (opts.maxAge != null) parts.push(`Max-Age=${opts.maxAge}`);
-  // On Render we are HTTPS, so it's safe to set Secure
-  parts.push("Secure");
-  res.setHeader("Set-Cookie", parts.join("; "));
-}
 
-// ---- In-memory stores (demo) ----
-const users = new Map(); // key: `${role}:${phone}` -> { id, role, phone, name, passHash, status, createdAt }
-let userAutoId = 1;
-
-const sessions = new Map(); // token -> { role, phone, createdAt }
-const adminSessions = new Map(); // token -> { createdAt }
-
-function sha256(s) {
-  return require("crypto").createHash("sha256").update(String(s)).digest("hex");
-}
-function cleanPhone(phone) {
-  return String(phone || "").trim();
-}
-function cleanRole(role) {
-  role = String(role || "").trim().toLowerCase();
-  if (role === "passenger" || role === "musteri" || role === "müştəri") return "passenger";
-  if (role === "driver" || role === "surucu" || role === "sürücü") return "driver";
-  return "";
-}
-
-function userKey(role, phone) {
-  return `${role}:${phone}`;
-}
-
-// Seed: keep working even if ENV missing
-const ADMIN_USER = process.env.ADMIN_USER || "Ratik";
-const ADMIN_PASS = process.env.ADMIN_PASS || "Sevenler1984";
-
-// ---- Static files ----
-const PUBLIC_DIR = path.join(__dirname, "public");
-app.use(express.static(PUBLIC_DIR, { extensions: ["html"] }));
-
-// ---- Health ----
-app.get("/health", (req, res) => res.type("text").send("OK"));
-
-// ---- Auth API ----
-app.post("/api/register", (req, res) => {
-  const role = cleanRole(req.body.role);
-  const phone = cleanPhone(req.body.phone);
-  const password = String(req.body.password || "");
-  const name = String(req.body.name || "").trim();
-
-  if (!role) return res.status(400).json({ ok: false, code: "ROLE_REQUIRED" });
-  if (!phone) return res.status(400).json({ ok: false, code: "PHONE_REQUIRED" });
-  if (!password) return res.status(400).json({ ok: false, code: "PASSWORD_REQUIRED" });
-  if (!name) return res.status(400).json({ ok: false, code: "NAME_REQUIRED" });
-
-  const key = userKey(role, phone);
-  if (users.has(key)) return res.status(409).json({ ok: false, code: "PHONE_EXISTS" });
-
-  const status = role === "driver" ? "pending" : "approved";
-
-  const u = {
-    id: userAutoId++,
-    role,
-    phone,
-    name,
-    passHash: sha256(password),
-    status,
-    createdAt: Date.now(),
-  };
-  users.set(key, u);
-
-  return res.json({
-    ok: true,
-    code: "REGISTERED",
-    user: { id: u.id, role: u.role, phone: u.phone, name: u.name, status: u.status },
-    message:
-      role === "driver"
-        ? "Qeydiyyat uğurlu oldu. Sürücü üçün admin təsdiqi gözlənilir (pending)."
-        : "Qeydiyyat uğurlu oldu. Müştəri hesabı aktivdir.",
-  });
-});
-
-app.post("/api/login", (req, res) => {
-  const role = cleanRole(req.body.role);
-  const phone = cleanPhone(req.body.phone);
-  const password = String(req.body.password || "");
-
-  if (!role) return res.status(400).json({ ok: false, code: "ROLE_REQUIRED" });
-  if (!phone) return res.status(400).json({ ok: false, code: "PHONE_REQUIRED" });
-  if (!password) return res.status(400).json({ ok: false, code: "PASSWORD_REQUIRED" });
-
-  const key = userKey(role, phone);
-  const u = users.get(key);
-  if (!u) return res.status(401).json({ ok: false, code: "INVALID_CREDENTIALS" });
-
-  if (u.passHash !== sha256(password)) return res.status(401).json({ ok: false, code: "INVALID_CREDENTIALS" });
-
-  // Driver must be approved
-  if (u.role === "driver" && u.status !== "approved") {
-    return res.status(403).json({
-      ok: false,
-      code: "DRIVER_PENDING",
-      message: "Sürücü hesabı admin təsdiqini gözləyir (pending).",
-    });
-  }
-
-  const token = "u_" + require("crypto").randomBytes(24).toString("hex");
-  sessions.set(token, { role: u.role, phone: u.phone, createdAt: Date.now() });
-
-  setCookie(res, "pt_session", token, { httpOnly: true, sameSite: "Lax", path: "/", maxAge: 60 * 60 * 24 * 7 });
-
-  return res.json({
-    ok: true,
-    code: "LOGIN_OK",
-    user: { id: u.id, role: u.role, phone: u.phone, name: u.name, status: u.status },
-  });
-});
-
-app.post("/api/logout", (req, res) => {
-  const cookies = parseCookies(req);
-  const token = cookies.pt_session;
-  if (token) sessions.delete(token);
-  setCookie(res, "pt_session", "", { httpOnly: true, sameSite: "Lax", path: "/", maxAge: 0 });
-  return res.json({ ok: true });
-});
-
-app.get("/api/me", (req, res) => {
-  const cookies = parseCookies(req);
-  const token = cookies.pt_session;
-  const sess = token ? sessions.get(token) : null;
-  if (!sess) return res.status(401).json({ ok: false, code: "NO_SESSION" });
-
-  const u = users.get(userKey(sess.role, sess.phone));
-  if (!u) return res.status(401).json({ ok: false, code: "NO_SESSION" });
-
-  return res.json({ ok: true, user: { id: u.id, role: u.role, phone: u.phone, name: u.name, status: u.status } });
-});
-
-// ---- Admin API ----
 function requireAdmin(req, res, next) {
   const cookies = parseCookies(req);
-  const token = cookies.pt_admin;
-  if (!token || !adminSessions.has(token)) return res.status(401).json({ ok: false, code: "ADMIN_NO_SESSION" });
+  const token = cookies[ADMIN_COOKIE];
+  if (!verifyAdmin(token)) return res.status(401).json({ error: 'ADMIN_REQUIRED' });
+
+  try {
+    const value = token.slice(0, token.lastIndexOf('.'));
+    const payload = JSON.parse(Buffer.from(value, 'base64').toString('utf8'));
+    if (payload && payload.exp && Date.now() > payload.exp) {
+      return res.status(401).json({ error: 'ADMIN_EXPIRED' });
+    }
+  } catch (_) {}
   next();
 }
 
-app.post("/api/admin/login", (req, res) => {
-  const username = String(req.body.username || "").trim();
-  const password = String(req.body.password || "");
+// Basic credential check for passenger/driver API calls (MVP)
+function authUser(phone, password, role) {
+  return new Promise((resolve) => {
+    phone = normPhone(phone);
+    password = String(password || '');
+    role = normRole(role);
+    if (!phone || !password) return resolve(null);
 
-  if (!username || !password) return res.status(400).json({ ok: false, code: "REQUIRED" });
+    db.get(
+      "SELECT id, phone, role, name, approved, is_online FROM users WHERE phone=? AND password=? AND role=?",
+      [phone, password, role],
+      (err, row) => {
+        if (err || !row) return resolve(null);
+        resolve(row);
+      }
+    );
+  });
+}
 
-  if (username !== ADMIN_USER || password !== ADMIN_PASS) {
-    return res.status(401).json({ ok: false, code: "LOGIN_ERROR" });
+// ---------------- Auth (user)
+app.post('/api/register', (req, res) => {
+  const phone = normPhone(req.body.phone);
+  const password = String(req.body.password || '');
+  const role = normRole(req.body.role);
+  const name = String(req.body.name || '');
+
+  if (!phone || !password) return res.json({ error: "MISSING_FIELDS" });
+  if (password.length < 4) return res.json({ error: "WEAK_PASSWORD" });
+
+  const approved = (role === 'driver') ? 0 : 1; // passengers active by default
+  const is_online = 0;
+
+  db.run(
+    "INSERT INTO users (phone, password, role, name, approved, is_online) VALUES (?, ?, ?, ?, ?, ?)",
+    [phone, password, role, name, approved, is_online],
+    function (err) {
+      if (err) return res.json({ error: "PHONE_ROLE_EXISTS" });
+      res.json({ success: true, role, approved });
+    }
+  );
+});
+
+app.post('/api/login', (req, res) => {
+  const phone = normPhone(req.body.phone);
+  const password = String(req.body.password || '');
+  const role = normRole(req.body.role);
+
+  if (!phone || !password) return res.json({ error: "MISSING_FIELDS" });
+
+  db.get(
+    "SELECT * FROM users WHERE phone=? AND password=? AND role=?",
+    [phone, password, role],
+    (err, row) => {
+      if (err) return res.json({ error: "DB_ERROR" });
+      if (!row) return res.json({ error: "INVALID_CREDENTIALS" });
+
+      const approved = parseInt(row.approved, 10) || 0;
+      const is_online = parseInt(row.is_online, 10) || 0;
+
+      if (role === "driver" && approved === 0) {
+        return res.json({ pending: true, name: row.name || "", role });
+      }
+
+      return res.json({ success: true, name: row.name || "", role, is_online });
+    }
+  );
+});
+
+// ---------------- Driver presence (approved drivers only)
+app.post('/api/driver/online', async (req, res) => {
+  const user = await authUser(req.body.phone, req.body.password, 'driver');
+  if (!user) return res.json({ error: "INVALID_CREDENTIALS" });
+
+  const approved = parseInt(user.approved, 10) || 0;
+  if (approved === 0) return res.json({ error: "DRIVER_NOT_APPROVED" });
+
+  db.run("UPDATE users SET is_online=1 WHERE id=?", [user.id], function(e2){
+    if (e2) return res.json({ error: "DB_ERROR" });
+    res.json({ success: true, is_online: 1 });
+  });
+});
+
+app.post('/api/driver/offline', async (req, res) => {
+  const user = await authUser(req.body.phone, req.body.password, 'driver');
+  if (!user) return res.json({ error: "INVALID_CREDENTIALS" });
+
+  db.run("UPDATE users SET is_online=0 WHERE id=?", [user.id], function(e2){
+    if (e2) return res.json({ error: "DB_ERROR" });
+    res.json({ success: true, is_online: 0 });
+  });
+});
+
+app.post('/api/driver/status', async (req, res) => {
+  const user = await authUser(req.body.phone, req.body.password, 'driver');
+  if (!user) return res.json({ error: "INVALID_CREDENTIALS" });
+  res.json({
+    success: true,
+    approved: parseInt(user.approved,10) || 0,
+    is_online: parseInt(user.is_online,10) || 0,
+    name: user.name || ''
+  });
+});
+
+// ---------------- Orders (MVP)
+app.post('/api/orders/create', async (req, res) => {
+  // Passenger auth via phone+password (MVP)
+  const passenger = await authUser(req.body.phone, req.body.password, 'passenger');
+  if (!passenger) return res.json({ error: 'INVALID_CREDENTIALS' });
+
+  const pickup = req.body.pickup || {};
+  const dropoff = req.body.dropoff || {};
+
+  const pickup_text = String(pickup.text || '').slice(0, 255);
+  const dropoff_text = String(dropoff.text || '').slice(0, 255);
+  const pickup_lat = Number(pickup.lat);
+  const pickup_lon = Number(pickup.lon);
+  const dropoff_lat = Number(dropoff.lat);
+  const dropoff_lon = Number(dropoff.lon);
+
+  if (!pickup_text || !dropoff_text) return res.json({ error: 'MISSING_ADDRESSES' });
+  if (!Number.isFinite(pickup_lat) || !Number.isFinite(pickup_lon) || !Number.isFinite(dropoff_lat) || !Number.isFinite(dropoff_lon)) {
+    return res.json({ error: 'MISSING_COORDS' });
   }
 
-  const token = "a_" + require("crypto").randomBytes(24).toString("hex");
-  adminSessions.set(token, { createdAt: Date.now() });
-
-  setCookie(res, "pt_admin", token, { httpOnly: true, sameSite: "Lax", path: "/", maxAge: 60 * 60 * 24 * 7 });
-  return res.json({ ok: true });
+  const created_at = nowMs();
+  db.run(
+    `INSERT INTO orders (passenger_phone, pickup_text, pickup_lat, pickup_lon, dropoff_text, dropoff_lat, dropoff_lon, status, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'new', ?)`,
+    [passenger.phone, pickup_text, pickup_lat, pickup_lon, dropoff_text, dropoff_lat, dropoff_lon, created_at],
+    function(err){
+      if (err) return res.json({ error: 'DB_ERROR' });
+      res.json({ success: true, order_id: this.lastID });
+    }
+  );
 });
 
-app.post("/api/admin/logout", (req, res) => {
-  const cookies = parseCookies(req);
-  const token = cookies.pt_admin;
-  if (token) adminSessions.delete(token);
-  setCookie(res, "pt_admin", "", { httpOnly: true, sameSite: "Lax", path: "/", maxAge: 0 });
-  return res.json({ ok: true });
+app.get('/api/orders/my', async (req, res) => {
+  const phone = normPhone(req.query.phone);
+  const password = String(req.query.password || '');
+  const passenger = await authUser(phone, password, 'passenger');
+  if (!passenger) return res.status(401).json({ error: 'INVALID_CREDENTIALS' });
+
+  db.all(
+    "SELECT id, pickup_text, dropoff_text, status, created_at FROM orders WHERE passenger_phone=? ORDER BY id DESC LIMIT 20",
+    [passenger.phone],
+    (err, rows) => {
+      if (err) return res.status(500).json({ error: 'DB_ERROR' });
+      res.json({ success: true, orders: rows || [] });
+    }
+  );
 });
 
-app.get("/api/admin/drivers", requireAdmin, (req, res) => {
-  const status = String(req.query.status || "all").toLowerCase();
-  const out = [];
-  for (const u of users.values()) {
-    if (u.role !== "driver") continue;
-    if (status !== "all" && u.status !== status) continue;
-    out.push({ id: u.id, name: u.name, phone: u.phone, status: u.status });
+// ---------------- Admin: login/logout + driver management
+app.post('/api/admin/login', (req, res) => {
+  const u = String(req.body.username || '');
+  const p = String(req.body.password || '');
+  const creds = adminCreds();
+
+  if (u !== creds.user || p !== creds.pass) {
+    return res.status(401).json({ error: 'INVALID_ADMIN' });
   }
-  out.sort((a, b) => a.id - b.id);
-  res.json({ ok: true, drivers: out });
+
+  const payload = {
+    u: creds.user,
+    iat: Date.now(),
+    exp: Date.now() + (1000 * 60 * 60 * 24 * 7) // 7 days
+  };
+  const value = Buffer.from(JSON.stringify(payload)).toString('base64');
+  const token = signAdmin(value);
+
+  res.setHeader('Set-Cookie', `${ADMIN_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax`);
+  res.json({ success: true });
 });
 
-app.post("/api/admin/approve", requireAdmin, (req, res) => {
-  const phone = cleanPhone(req.body.phone);
-  if (!phone) return res.status(400).json({ ok: false, code: "PHONE_REQUIRED" });
-
-  const key = userKey("driver", phone);
-  const u = users.get(key);
-  if (!u) return res.status(404).json({ ok: false, code: "NOT_FOUND" });
-
-  u.status = "approved";
-  users.set(key, u);
-  res.json({ ok: true });
+app.post('/api/admin/logout', (req, res) => {
+  res.setHeader('Set-Cookie', `${ADMIN_COOKIE}=; Path=/; HttpOnly; Max-Age=0; SameSite=Lax`);
+  res.json({ success: true });
 });
 
-app.post("/api/admin/delete", requireAdmin, (req, res) => {
-  const phone = cleanPhone(req.body.phone);
-  if (!phone) return res.status(400).json({ ok: false, code: "PHONE_REQUIRED" });
-  users.delete(userKey("driver", phone));
-  res.json({ ok: true });
+app.get('/api/admin/drivers', requireAdmin, (req, res) => {
+  const status = String(req.query.status || 'all'); // pending|approved|all
+  let where = "role='driver'";
+  if (status === 'pending') where += " AND approved=0";
+  if (status === 'approved') where += " AND approved=1";
+
+  db.all(`SELECT id, phone, name, approved, is_online FROM users WHERE ${where} ORDER BY approved ASC, is_online DESC, id DESC`, [], (err, rows) => {
+    if (err) return res.status(500).json({ error: 'DB_ERROR' });
+    res.json({ success: true, drivers: rows || [] });
+  });
 });
 
-// ---- App pages (simple placeholders) ----
-app.get("/app/passenger", (req, res) => res.sendFile(path.join(PUBLIC_DIR, "app", "passenger.html")));
-app.get("/app/driver", (req, res) => res.sendFile(path.join(PUBLIC_DIR, "app", "driver.html")));
-app.get("/admin", (req, res) => res.sendFile(path.join(PUBLIC_DIR, "admin", "index.html")));
+app.post('/api/admin/approve', requireAdmin, (req, res) => {
+  const id = parseInt(req.body.id, 10);
+  const phone = normPhone(req.body.phone);
+  if (!id && !phone) return res.json({ error: "MISSING_ID_OR_PHONE" });
 
-// fallback to index
-app.get("*", (req, res) => res.sendFile(path.join(PUBLIC_DIR, "index.html")));
+  const q = id ? "UPDATE users SET approved=1 WHERE id=? AND role='driver'" : "UPDATE users SET approved=1 WHERE phone=? AND role='driver'";
+  const params = id ? [id] : [phone];
+
+  db.run(q, params, function(err) {
+    if (err) return res.status(500).json({ error: "DB_ERROR" });
+    res.json({ success: true, changes: this.changes });
+  });
+});
+
+app.post('/api/admin/delete-driver', requireAdmin, (req, res) => {
+  const id = parseInt(req.body.id, 10);
+  if (!id) return res.json({ error: "MISSING_ID" });
+
+  db.run("DELETE FROM users WHERE id=? AND role='driver'", [id], function(err) {
+    if (err) return res.status(500).json({ error: "DB_ERROR" });
+    res.json({ success: true, changes: this.changes });
+  });
+});
+
+app.get('/admin', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'admin', 'index.html'));
+});
+
+// ---------------- Reset DB (DANGEROUS) - protected by env key
+app.get('/admin/reset-db', (req, res) => {
+  const key = String(req.query.key || '');
+  const expected = process.env.ADMIN_RESET_KEY || '';
+  if (!expected || key !== expected) {
+    return res.status(403).send("FORBIDDEN");
+  }
+
+  db.serialize(() => {
+    db.run("DROP TABLE IF EXISTS users", (err) => {
+      if (err) return res.status(500).send("DB_ERROR");
+      db.run("DROP TABLE IF EXISTS orders", (err3) => {
+        if (err3) return res.status(500).send("DB_ERROR");
+        db.run(`CREATE TABLE IF NOT EXISTS users (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          phone TEXT NOT NULL,
+          password TEXT NOT NULL,
+          role TEXT NOT NULL,
+          name TEXT,
+          approved INTEGER DEFAULT 0,
+          is_online INTEGER DEFAULT 0,
+          UNIQUE(phone, role)
+        )`, (err2) => {
+          if (err2) return res.status(500).send("DB_ERROR");
+          db.run(`CREATE TABLE IF NOT EXISTS orders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            passenger_phone TEXT NOT NULL,
+            pickup_text TEXT,
+            pickup_lat REAL,
+            pickup_lon REAL,
+            dropoff_text TEXT,
+            dropoff_lat REAL,
+            dropoff_lon REAL,
+            status TEXT NOT NULL DEFAULT 'new',
+            created_at INTEGER NOT NULL
+          )`, (err4) => {
+            if (err4) return res.status(500).send("DB_ERROR");
+            res.send("OK_RESET");
+          });
+        });
+      });
+    });
+  });
+});
+
+app.get('/health', (req, res) => res.send("OK"));
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("PayTaksi server listening on", PORT));
+app.listen(PORT, () => console.log("Server started on", PORT));

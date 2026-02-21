@@ -1,27 +1,69 @@
 <!doctype html>
-<html lang="az"><head>
-<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Sürücü paneli - PayTaksi</title>
+<html lang="az">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sürücü Paneli - PayTaksi</title>
 <style>
-  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
-    background:linear-gradient(180deg,#050a14,#07233f);color:#e9eef7;font-family:system-ui}
-  .card{width:min(640px,92vw);padding:24px;border-radius:18px;background:rgba(255,255,255,.06);
-    border:1px solid rgba(255,255,255,.09);box-shadow:0 18px 40px rgba(0,0,0,.45);}
-  .title{font-size:26px;margin:0 0 8px;text-align:center}
-  .muted{color:#aab6cc;text-align:center;margin:0 0 18px}
-  .btn{width:100%;border:0;border-radius:12px;padding:12px 14px;font-weight:700;cursor:pointer;background:#334155;color:#e9eef7}
+  body{margin:0;background:#0b1220;color:#e5e7eb;font-family:Arial,Helvetica,sans-serif}
+  .wrap{max-width:980px;margin:0 auto;padding:18px}
+  .card{background:rgba(15,23,42,.75);border:1px solid rgba(148,163,184,.2);border-radius:14px;padding:16px;box-shadow:0 10px 30px rgba(0,0,0,.35)}
+  button{padding:10px 12px;border-radius:10px;border:none;background:#22c55e;color:#081014;font-weight:700;cursor:pointer}
+  button.secondary{background:rgba(148,163,184,.15);color:#e5e7eb;border:1px solid rgba(148,163,184,.25)}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .badge{display:inline-block;padding:4px 10px;border-radius:999px;border:1px solid rgba(148,163,184,.25);background:rgba(148,163,184,.10);font-size:12px}
+  .msg{min-height:22px;margin-top:10px}
 </style>
 </head>
 <body>
-<div class="card">
-  <h1 class="title">Sürücü paneli</h1>
-  <p class="muted">Növbəti mərhələdə: online/offline + sifariş qəbul et.</p>
-  <button class="btn" id="logout">Çıxış</button>
+<div class="wrap">
+  <div class="card">
+    <div class="row" style="justify-content:space-between">
+      <div>
+        <h2 style="margin:0">Sürücü Paneli</h2>
+        <div style="opacity:.85" id="who"></div>
+      </div>
+      <div class="row">
+        <button class="secondary" onclick="logout()">Çıxış</button>
+      </div>
+    </div>
+
+    <p style="margin-top:14px">Status: <span class="badge" id="st">OFFLINE</span></p>
+    <div class="row">
+      <button onclick="goOnline()">Online ol</button>
+      <button class="secondary" onclick="goOffline()">Offline ol</button>
+      <a href="/admin" class="badge" style="text-decoration:none;color:#e5e7eb">Admin Panel</a>
+    </div>
+    <div class="msg" id="msg"></div>
+  </div>
 </div>
+
 <script>
-document.getElementById("logout").onclick = async ()=>{
-  await fetch("/api/logout",{method:"POST"}).catch(()=>{});
-  location.href="/";
-};
+function getSession(){ try{ return JSON.parse(localStorage.getItem('pt_session')||'null'); }catch(e){ return null; } }
+function logout(){ localStorage.removeItem('pt_session'); location.href='/'; }
+function setMsg(t){ document.getElementById('msg').textContent = t||''; }
+function setSt(on){ const el=document.getElementById('st'); el.textContent = on? 'ONLINE':'OFFLINE'; }
+
+const s = getSession();
+if(!s || s.role !== 'driver'){ location.href='/'; }
+document.getElementById('who').textContent = 'Hörmətli ' + (s.name||'') + ' (' + (s.phone||'') + ')';
+setSt(!!s.is_online);
+
+async function goOnline(){
+  setMsg('...');
+  const res = await fetch('/api/driver/online', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password })});
+  const data = await res.json();
+  if(data.success){ s.is_online=1; localStorage.setItem('pt_session', JSON.stringify(s)); setSt(true); setMsg('Online oldunuz.'); }
+  else if(data.error==='DRIVER_NOT_APPROVED'){ setMsg('Admin təsdiqi yoxdur.'); }
+  else setMsg(data.error||'ERROR');
+}
+async function goOffline(){
+  setMsg('...');
+  const res = await fetch('/api/driver/offline', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password })});
+  const data = await res.json();
+  if(data.success){ s.is_online=0; localStorage.setItem('pt_session', JSON.stringify(s)); setSt(false); setMsg('Offline oldunuz.'); }
+  else setMsg(data.error||'ERROR');
+}
 </script>
-</body></html>
+</body>
+</html>

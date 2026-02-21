@@ -1,151 +1,176 @@
 <!doctype html>
-<html lang="az"><head>
-<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>PayTaksi Admin</title>
-<style>
-  :root{--bg1:#060b16;--bg2:#071e3a;--card:rgba(255,255,255,.06);--bd:rgba(255,255,255,.09);--txt:#e9eef7;--muted:#aab6cc;--green:#22c55e;--red:#ef4444;}
-  *{box-sizing:border-box;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial}
-  body{margin:0;min-height:100vh;display:flex;align-items:flex-start;justify-content:center;
-    padding:22px;background:linear-gradient(180deg,var(--bg1),var(--bg2));color:var(--txt);}
-  .wrap{width:min(980px,95vw);}
-  h1{margin:0 0 14px;font-size:34px;}
-  .card{padding:16px;border-radius:18px;background:var(--card);border:1px solid var(--bd);box-shadow:0 18px 40px rgba(0,0,0,.45);}
-  .row{display:grid;grid-template-columns: 1fr 1fr auto; gap:10px; align-items:center;}
-  input,select{width:100%;padding:12px 12px;border-radius:12px;border:1px solid var(--bd);background:rgba(255,255,255,.08);color:var(--txt);outline:none;}
-  button{border:0;padding:11px 14px;border-radius:12px;cursor:pointer;font-weight:800;}
-  .btn-green{background:var(--green);color:#05210f;}
-  .btn-red{background:var(--red);color:#240606;}
-  .btn-dark{background:rgba(255,255,255,.10);color:var(--txt);border:1px solid var(--bd);}
-  .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;}
-  .tabs{display:flex;gap:10px;}
-  .msg{margin-top:10px;color:var(--muted);}
-  table{width:100%;border-collapse:collapse;margin-top:12px;}
-  th,td{padding:10px;border-bottom:1px solid rgba(255,255,255,.10);text-align:left;font-size:14px;}
-  .pill{display:inline-block;padding:4px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.07);}
-  .pill.approved{border-color:rgba(34,197,94,.35);}
-  .pill.pending{border-color:rgba(250,204,21,.35);}
-</style></head>
+<html lang="az">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>PayTaksi Admin</title>
+  <style>
+    body{margin:0;background:#0b1220;color:#e5e7eb;font-family:Arial,Helvetica,sans-serif}
+    .wrap{max-width:980px;margin:0 auto;padding:22px}
+    .card{background:rgba(15,23,42,.75);border:1px solid rgba(148,163,184,.2);border-radius:14px;padding:16px;box-shadow:0 10px 30px rgba(0,0,0,.35)}
+    h1{margin:0 0 10px 0}
+    .row{display:flex;gap:10px;flex-wrap:wrap}
+    input,select,button{padding:10px 12px;border-radius:10px;border:1px solid rgba(148,163,184,.25);background:rgba(2,6,23,.55);color:#e5e7eb}
+    button{cursor:pointer;border:none;background:#22c55e;color:#081014;font-weight:700}
+    button.secondary{background:rgba(148,163,184,.15);color:#e5e7eb;border:1px solid rgba(148,163,184,.25)}
+    button.danger{background:#ef4444;color:#fff}
+    .msg{margin-top:10px;min-height:22px}
+    table{width:100%;border-collapse:collapse;margin-top:12px}
+    th,td{padding:10px;border-bottom:1px solid rgba(148,163,184,.15);text-align:left;font-size:14px}
+    th{opacity:.85}
+    .badge{display:inline-block;padding:4px 10px;border-radius:999px;font-size:12px;border:1px solid rgba(148,163,184,.25)}
+    .pending{background:rgba(234,179,8,.15)}
+    .approved{background:rgba(34,197,94,.15)}
+    .topbar{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+    .hidden{display:none}
+  </style>
+</head>
 <body>
-<div class="wrap">
-  <div class="top">
-    <h1>PayTaksi Admin</h1>
-    <div class="tabs">
-      <button class="btn-dark" data-status="pending">Pending</button>
-      <button class="btn-dark" data-status="approved">Approved</button>
-      <button class="btn-dark" data-status="all">All</button>
-      <button class="btn-red" id="logout">Çıxış</button>
+  <div class="wrap">
+    <div class="card">
+      <div class="topbar">
+        <h1>PayTaksi Admin</h1>
+        <div class="row">
+          <button class="secondary" onclick="loadDrivers('pending')">Pending</button>
+          <button class="secondary" onclick="loadDrivers('approved')">Approved</button>
+          <button class="secondary" onclick="loadDrivers('all')">All</button>
+          <button class="danger" onclick="logout()">Çıxış</button>
+        </div>
+      </div>
+
+      <div id="loginBox" class="card" style="margin-top:14px;background:rgba(2,6,23,.35)">
+        <h3 style="margin:0 0 10px 0">Admin giriş</h3>
+        <div class="row">
+          <input id="u" placeholder="username" />
+          <input id="p" placeholder="password" type="password" />
+          <button onclick="login()">Daxil ol</button>
+        </div>
+        <div class="msg" id="loginMsg"></div>
+      </div>
+
+      <div id="panelBox" class="hidden" style="margin-top:14px">
+        <div class="row">
+          <input id="quickPhone" placeholder="Telefon ilə təsdiqlə (+994...)" style="flex:1" />
+          <button onclick="approveByPhone()">Approve</button>
+        </div>
+        <div class="msg" id="msg"></div>
+
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Ad</th>
+              <th>Telefon</th>
+              <th>Status</th>
+              <th>Online</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
     </div>
   </div>
-
-  <div class="card" id="loginCard">
-    <div class="row">
-      <input id="u" placeholder="username" />
-      <input id="p" placeholder="password" type="password" />
-      <button class="btn-green" id="login">Daxil ol</button>
-    </div>
-    <div class="msg" id="loginMsg">Yalnız sürücü təsdiqi üçün.</div>
-  </div>
-
-  <div class="card" id="panelCard" style="display:none;">
-    <div class="row" style="grid-template-columns: 1fr auto;">
-      <input id="approvePhone" placeholder="Telefon ilə təsdiqlə (+994...)" />
-      <button class="btn-green" id="approveBtn">Approve</button>
-    </div>
-
-    <div class="msg" id="panelMsg">Drivers: <span id="count">0</span></div>
-
-    <table>
-      <thead><tr><th>ID</th><th>Ad</th><th>Telefon</th><th>Status</th><th>Action</th></tr></thead>
-      <tbody id="tbody"></tbody>
-    </table>
-  </div>
-</div>
 
 <script>
-const $=(id)=>document.getElementById(id);
-let status="pending";
-
-async function post(url, body){
-  const r = await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-  const d = await r.json().catch(()=>({ok:false,code:"BAD_JSON"}));
-  if(!r.ok) throw d;
-  return d;
+async function api(url, body){
+  const res = await fetch(url, {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: body ? JSON.stringify(body) : '{}'
+  });
+  const data = await res.json().catch(()=> ({}));
+  if(!res.ok) throw data;
+  return data;
 }
-async function get(url){
-  const r = await fetch(url);
-  const d = await r.json().catch(()=>({ok:false,code:"BAD_JSON"}));
-  if(!r.ok) throw d;
-  return d;
-}
+function setText(id, t){ document.getElementById(id).textContent = t || ''; }
 
-async function load(){
-  const d = await get("/api/admin/drivers?status="+status);
-  const list = d.drivers || [];
-  $("count").textContent = list.length;
-  const tb = $("tbody");
-  tb.innerHTML = "";
-  for(const x of list){
-    const tr=document.createElement("tr");
+async function login(){
+  setText('loginMsg','...');
+  try{
+    await api('/api/admin/login', { username: u.value, password: p.value });
+    setText('loginMsg','OK');
+    loginBox.classList.add('hidden');
+    panelBox.classList.remove('hidden');
+    loadDrivers('pending');
+  }catch(e){
+    setText('loginMsg', (e && e.error) ? e.error : 'LOGIN_ERROR');
+  }
+}
+async function logout(){
+  try{ await api('/api/admin/logout', {}); }catch(e){}
+  panelBox.classList.add('hidden');
+  loginBox.classList.remove('hidden');
+  setText('msg','');
+  setText('loginMsg','Çıxış edildi.');
+}
+async function loadDrivers(status){
+  setText('msg','...');
+  const res = await fetch('/api/admin/drivers?status=' + encodeURIComponent(status || 'all'));
+  const data = await res.json().catch(()=> ({}));
+  if(!res.ok){
+    panelBox.classList.add('hidden');
+    loginBox.classList.remove('hidden');
+    setText('loginMsg', (data && data.error) ? data.error : 'ADMIN_REQUIRED');
+    setText('msg','');
+    return;
+  }
+  const list = (data && data.drivers) ? data.drivers : [];
+  const tb = document.getElementById('tbody');
+  tb.innerHTML = '';
+  for(const d of list){
+    const tr = document.createElement('tr');
+    const statusText = d.approved ? 'Approved' : 'Pending';
+    const badgeClass = d.approved ? 'badge approved' : 'badge pending';
+    const onlineText = d.is_online ? 'ONLINE' : 'OFFLINE';
     tr.innerHTML = `
-      <td>${x.id}</td>
-      <td>${x.name||""}</td>
-      <td>${x.phone||""}</td>
-      <td><span class="pill ${x.status}">${x.status}</span></td>
+      <td>${d.id}</td>
+      <td>${(d.name||'')}</td>
+      <td>${d.phone}</td>
+      <td><span class="${badgeClass}">${statusText}</span></td>
+      <td>${onlineText}</td>
       <td>
-        <button class="btn-green" data-approve="${x.phone}" style="padding:6px 10px;">Approve</button>
-        <button class="btn-red" data-del="${x.phone}" style="padding:6px 10px;margin-left:8px;">Sil</button>
-      </td>`;
+        ${d.approved ? '' : `<button onclick="approve(${d.id})">Approve</button>`}
+        <button class="danger" onclick="delDriver(${d.id})">Sil</button>
+      </td>
+    `;
     tb.appendChild(tr);
   }
-
-  tb.querySelectorAll("[data-approve]").forEach(btn=>{
-    btn.onclick = async ()=>{
-      await post("/api/admin/approve",{phone:btn.getAttribute("data-approve")});
-      $("panelMsg").textContent="Təsdiqləndi.";
-      await load();
-    };
-  });
-  tb.querySelectorAll("[data-del]").forEach(btn=>{
-    btn.onclick = async ()=>{
-      await post("/api/admin/delete",{phone:btn.getAttribute("data-del")});
-      $("panelMsg").textContent="Silindi.";
-      await load();
-    };
-  });
+  setText('msg', 'Drivers: ' + list.length);
 }
-
-$("login").onclick = async ()=>{
-  $("loginMsg").textContent="Yoxlanılır...";
+async function approve(id){
+  setText('msg','...');
   try{
-    await post("/api/admin/login",{username:$("u").value.trim(), password:$("p").value});
-    $("loginCard").style.display="none";
-    $("panelCard").style.display="block";
-    await load();
+    const r = await api('/api/admin/approve', { id });
+    setText('msg','Approved: ' + (r.changes||0));
+    loadDrivers('pending');
   }catch(e){
-    $("loginMsg").textContent = (e.code||"LOGIN_ERROR");
+    setText('msg', (e && e.error) ? e.error : 'ERROR');
   }
-};
-
-$("logout").onclick = async ()=>{
-  await post("/api/admin/logout",{}).catch(()=>{});
-  location.reload();
-};
-
-document.querySelectorAll("[data-status]").forEach(b=>{
-  b.onclick = async ()=>{
-    status = b.getAttribute("data-status");
-    if($("panelCard").style.display!=="none"){
-      await load().catch(()=>{});
-    }
-  };
-});
-
-$("approveBtn").onclick = async ()=>{
-  const phone=$("approvePhone").value.trim();
-  if(!phone){ $("panelMsg").textContent="Telefon yazın."; return; }
-  await post("/api/admin/approve",{phone});
-  $("panelMsg").textContent="Təsdiqləndi.";
-  await load();
-};
+}
+async function approveByPhone(){
+  const phone = quickPhone.value.trim();
+  if(!phone){ setText('msg','Telefon yaz'); return; }
+  setText('msg','...');
+  try{
+    const r = await api('/api/admin/approve', { phone });
+    setText('msg','Approved: ' + (r.changes||0));
+    loadDrivers('pending');
+  }catch(e){
+    setText('msg', (e && e.error) ? e.error : 'ERROR');
+  }
+}
+async function delDriver(id){
+  if(!confirm('Sürücü silinsin?')) return;
+  setText('msg','...');
+  try{
+    const r = await api('/api/admin/delete-driver', { id });
+    setText('msg','Deleted: ' + (r.changes||0));
+    loadDrivers('all');
+  }catch(e){
+    setText('msg', (e && e.error) ? e.error : 'ERROR');
+  }
+}
 </script>
-</body></html>
+</body>
+</html>
