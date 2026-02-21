@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="az">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PayTaksi • Admin</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<header>
+  <h1>PayTaksi • Admin</h1>
+  <span class="badge">API: <span id="apiBase"></span></span>
+</header>
+
+<div class="container">
+  <div class="card" id="authBox" style="display:none">
+    <h2 style="margin:0 0 10px">Admin Login</h2>
+    <label>Telefon</label>
+    <input id="loginPhone" placeholder="0000" />
+    <label>Şifrə</label>
+    <input id="loginPass" type="password" placeholder="admin1234" />
+    <button class="primary" id="btnLogin">Giriş</button>
+    <p class="small" id="authStatus"></p>
+    <p class="small">Default admin: <b>0000 / admin1234</b></p>
+  </div>
+
+  <div id="userBox" style="display:none">
+    <div class="row" style="align-items:center;justify-content:space-between">
+      <div class="badge">Panel</div>
+      <button class="secondary" id="btnLogout" style="max-width:160px">Çıxış</button>
+    </div>
+
+    <hr />
+
+    <div class="card">
+      <h3 style="margin:0 0 10px">Sürücülər</h3>
+      <div id="drivers"></div>
+    </div>
+
+    <hr />
+
+    <div class="card">
+      <h3 style="margin:0 0 10px">Son sifarişlər</h3>
+      <div id="rides"></div>
+    </div>
+  </div>
+
+  <p class="small footerlinks" style="margin-top:14px">
+    <a href="passenger.html">Müştəri paneli</a> • <a href="driver.html">Sürücü paneli</a>
+  </p>
+</div>
+
+<script type="module">
+  import { mountAuth } from './app.js';
+
+  document.getElementById('apiBase').textContent = (localStorage.getItem('API_BASE')||location.origin);
+
+  // custom admin login using same auth page structure
+  const token=localStorage.getItem('token')||'';
+  const API=(localStorage.getItem('API_BASE')||'').trim()||location.origin.replace(/\/$/,'');
+
+  function show(){
+    const has=!!localStorage.getItem('token');
+    document.getElementById('authBox').style.display = has ? 'none':'block';
+    document.getElementById('userBox').style.display = has ? 'block':'none';
+  }
+  show();
+
+  document.getElementById('btnLogout').addEventListener('click',()=>{localStorage.removeItem('token');location.reload();});
+
+  async function api(path, opts={}){
+    const r=await fetch(API+path,{...opts,headers:{'Content-Type':'application/json','Authorization':'Bearer '+(localStorage.getItem('token')||''),...(opts.headers||{})}});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(d.error||'request_failed');
+    return d;
+  }
+
+  document.getElementById('btnLogin').addEventListener('click', async ()=>{
+    const st=document.getElementById('authStatus');
+    st.textContent='...';
+    try{
+      const phone=document.getElementById('loginPhone').value.trim();
+      const password=document.getElementById('loginPass').value;
+      const r=await fetch(API+'/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone,password})});
+      const d=await r.json();
+      if(!r.ok) throw new Error(d.error||'bad_credentials');
+      if(d.user.role!=='admin') throw new Error('not_admin');
+      localStorage.setItem('token', d.token);
+      location.reload();
+    }catch(e){st.textContent='Xəta: '+e.message;}
+  });
+
+  async function render(){
+    if(!localStorage.getItem('token')) return;
+    try{
+      const drv=await api('/api/admin/drivers',{method:'GET'});
+      const box=document.getElementById('drivers');
+      box.innerHTML='';
+      drv.drivers.forEach(d=>{
+        const row=document.createElement('div');
+        row.className='card';
+        row.style.background='rgba(2,6,23,.35)';
+        row.style.margin='10px 0';
+        row.innerHTML = `
+          <div><b>${d.full_name||'-'}</b> • ${d.phone}</div>
+          <div class="small">${d.car_model||''} ${d.car_number||''}</div>
+          <div class="small">Online: ${d.is_online} • Approved: ${d.is_approved}</div>
+          <div class="row" style="margin-top:10px">
+            <button class="primary">Approve</button>
+            <button class="danger">Reject</button>
+          </div>
+        `;
+        const [bA,bR]=row.querySelectorAll('button');
+        bA.onclick=async()=>{await api(`/api/admin/drivers/${d.id}/approve`,{method:'POST',body:JSON.stringify({approved:true})}); await render();};
+        bR.onclick=async()=>{await api(`/api/admin/drivers/${d.id}/approve`,{method:'POST',body:JSON.stringify({approved:false})}); await render();};
+        box.appendChild(row);
+      });
+
+      const rides=await api('/api/admin/rides',{method:'GET'});
+      const rb=document.getElementById('rides');
+      rb.innerHTML='';
+      rides.rides.slice(0,50).forEach(r=>{
+        const row=document.createElement('div');
+        row.className='card';
+        row.style.background='rgba(2,6,23,.35)';
+        row.style.margin='10px 0';
+        row.innerHTML = `<div><b>${r.status}</b> • ${r.price_azn} AZN • ${Number(r.distance_km).toFixed(2)} km</div>
+          <div class="small">Müştəri: ${r.passenger_name||''} • Sürücü: ${r.driver_name||'-'}</div>`;
+        rb.appendChild(row);
+      });
+
+    }catch(e){
+      // probably not admin
+      console.log(e);
+    }
+  }
+
+  render();
+  setInterval(render, 5000);
+</script>
+</body>
+</html>
