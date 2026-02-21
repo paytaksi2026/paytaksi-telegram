@@ -10,7 +10,18 @@ const db = new sqlite3.Database('./database.sqlite');
 app.use(bodyParser.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ---------------- DB init
+// ---------------- DB init + lightweight migrations
+function ensureColumn(table, column, ddl) {
+  return new Promise((resolve) => {
+    db.all(`PRAGMA table_info(${table})`, [], (err, rows) => {
+      if (err) return resolve(false);
+      const exists = (rows || []).some(r => r.name === column);
+      if (exists) return resolve(true);
+      db.run(`ALTER TABLE ${table} ADD COLUMN ${ddl}`, () => resolve(true));
+    });
+  });
+}
+
 db.serialize(() => {
   db.run(`CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -19,8 +30,12 @@ db.serialize(() => {
     role TEXT NOT NULL,              -- passenger | driver
     name TEXT,
     approved INTEGER DEFAULT 0,      -- driver: 0 pending, 1 approved
+    is_online INTEGER DEFAULT 0,     -- driver presence: 0/1
     UNIQUE(phone, role)
   )`);
+
+  // In case table existed before is_online was added:
+  ensureColumn('users', 'is_online', 'is_online INTEGER DEFAULT 0');
 });
 
 // ---------------- Helpers
@@ -33,8 +48,6 @@ function normPhone(phone) {
 }
 
 function adminCreds() {
-  // You can override from Render Environment Variables:
-  // ADMIN_USER, ADMIN_PASS
   return {
     user: process.env.ADMIN_USER || 'Ratik',
     pass: process.env.ADMIN_PASS || 'Sevenler1984',
@@ -55,7 +68,11 @@ function verifyAdmin(signed) {
   const value = signed.slice(0, idx);
   const sig = signed.slice(idx + 1);
   const h = crypto.createHmac('sha256', ADMIN_SECRET).update(value).digest('hex');
-  return crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(h));
+  try {
+    return crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(h));
+  } catch (_) {
+    return false;
+  }
 }
 
 function parseCookies(req) {
@@ -78,7 +95,6 @@ function requireAdmin(req, res, next) {
   const token = cookies[ADMIN_COOKIE];
   if (!verifyAdmin(token)) return res.status(401).json({ error: 'ADMIN_REQUIRED' });
 
-  // Optional expiry check (value is base64 JSON)
   try {
     const value = token.slice(0, token.lastIndexOf('.'));
     const payload = JSON.parse(Buffer.from(value, 'base64').toString('utf8'));
@@ -99,11 +115,12 @@ app.post('/api/register', (req, res) => {
   if (!phone || !password) return res.json({ error: "MISSING_FIELDS" });
   if (password.length < 4) return res.json({ error: "WEAK_PASSWORD" });
 
-  const approved = (role === 'driver') ? 0 : 1; // passengers are active by default
+  const approved = (role === 'driver') ? 0 : 1; // passengers active by default
+  const is_online = 0;
 
   db.run(
-    "INSERT INTO users (phone, password, role, name, approved) VALUES (?, ?, ?, ?, ?)",
-    [phone, password, role, name, approved],
+    "INSERT INTO users (phone, password, role, name, approved, is_online) VALUES (?, ?, ?, ?, ?, ?)",
+    [phone, password, role, name, approved, is_online],
     function (err) {
       if (err) return res.json({ error: "PHONE_ROLE_EXISTS" });
       res.json({ success: true, role, approved });
@@ -126,14 +143,65 @@ app.post('/api/login', (req, res) => {
       if (!row) return res.json({ error: "INVALID_CREDENTIALS" });
 
       const approved = parseInt(row.approved, 10) || 0;
+      const is_online = parseInt(row.is_online, 10) || 0;
 
       if (role === "driver" && approved === 0) {
         return res.json({ pending: true, name: row.name || "", role });
       }
 
-      return res.json({ success: true, name: row.name || "", role });
+      return res.json({ success: true, name: row.name || "", role, is_online });
     }
   );
+});
+
+// ---------------- Driver presence (approved drivers only)
+app.post('/api/driver/online', (req, res) => {
+  const phone = normPhone(req.body.phone);
+  const password = String(req.body.password || '');
+  const role = 'driver';
+
+  if (!phone || !password) return res.json({ error: "MISSING_FIELDS" });
+
+  db.get("SELECT * FROM users WHERE phone=? AND password=? AND role='driver'", [phone, password], (err, row) => {
+    if (err) return res.json({ error: "DB_ERROR" });
+    if (!row) return res.json({ error: "INVALID_CREDENTIALS" });
+
+    const approved = parseInt(row.approved, 10) || 0;
+    if (approved === 0) return res.json({ error: "DRIVER_NOT_APPROVED" });
+
+    db.run("UPDATE users SET is_online=1 WHERE id=?", [row.id], function(e2){
+      if (e2) return res.json({ error: "DB_ERROR" });
+      res.json({ success: true, is_online: 1 });
+    });
+  });
+});
+
+app.post('/api/driver/offline', (req, res) => {
+  const phone = normPhone(req.body.phone);
+  const password = String(req.body.password || '');
+  if (!phone || !password) return res.json({ error: "MISSING_FIELDS" });
+
+  db.get("SELECT * FROM users WHERE phone=? AND password=? AND role='driver'", [phone, password], (err, row) => {
+    if (err) return res.json({ error: "DB_ERROR" });
+    if (!row) return res.json({ error: "INVALID_CREDENTIALS" });
+
+    db.run("UPDATE users SET is_online=0 WHERE id=?", [row.id], function(e2){
+      if (e2) return res.json({ error: "DB_ERROR" });
+      res.json({ success: true, is_online: 0 });
+    });
+  });
+});
+
+app.post('/api/driver/status', (req, res) => {
+  const phone = normPhone(req.body.phone);
+  const password = String(req.body.password || '');
+  if (!phone || !password) return res.json({ error: "MISSING_FIELDS" });
+
+  db.get("SELECT approved, is_online, name FROM users WHERE phone=? AND password=? AND role='driver'", [phone, password], (err, row) => {
+    if (err) return res.json({ error: "DB_ERROR" });
+    if (!row) return res.json({ error: "INVALID_CREDENTIALS" });
+    res.json({ success: true, approved: (parseInt(row.approved,10)||0), is_online: (parseInt(row.is_online,10)||0), name: row.name||'' });
+  });
 });
 
 // ---------------- Admin: login/logout + driver management
@@ -169,7 +237,7 @@ app.get('/api/admin/drivers', requireAdmin, (req, res) => {
   if (status === 'pending') where += " AND approved=0";
   if (status === 'approved') where += " AND approved=1";
 
-  db.all(`SELECT id, phone, name, approved FROM users WHERE ${where} ORDER BY approved ASC, id DESC`, [], (err, rows) => {
+  db.all(`SELECT id, phone, name, approved, is_online FROM users WHERE ${where} ORDER BY approved ASC, is_online DESC, id DESC`, [], (err, rows) => {
     if (err) return res.status(500).json({ error: 'DB_ERROR' });
     res.json({ success: true, drivers: rows || [] });
   });
@@ -199,7 +267,6 @@ app.post('/api/admin/delete-driver', requireAdmin, (req, res) => {
   });
 });
 
-// Admin panel page shortcut (static file)
 app.get('/admin', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'admin', 'index.html'));
 });
@@ -222,6 +289,7 @@ app.get('/admin/reset-db', (req, res) => {
         role TEXT NOT NULL,
         name TEXT,
         approved INTEGER DEFAULT 0,
+        is_online INTEGER DEFAULT 0,
         UNIQUE(phone, role)
       )`, (err2) => {
         if (err2) return res.status(500).send("DB_ERROR");
