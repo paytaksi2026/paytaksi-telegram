@@ -109,7 +109,10 @@ function normRole(role) {
 function normPhone(phone) {
   return String(phone || '').trim();
 }
-function nowMs() { return Date.now(); 
+function nowMs() {
+  return Date.now();
+}
+
 async function getSetting(key, defVal){
   return await new Promise((resolve)=>{
     db.get("SELECT value FROM settings WHERE key=?", [key], (err, row)=>{
@@ -152,7 +155,6 @@ async function osrmRouteMeta(pickup_lon, pickup_lat, dropoff_lon, dropoff_lat){
   return null;
 }
 
-}
 
 function adminCreds() {
   return {
