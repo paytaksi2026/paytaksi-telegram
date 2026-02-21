@@ -26,17 +26,12 @@
   .pill{display:inline-block;padding:4px 10px;border-radius:999px;border:1px solid rgba(148,163,184,.25);background:rgba(148,163,184,.10);font-size:12px}
   .est{margin-top:10px;display:flex;gap:8px;flex-wrap:wrap}
 
-  .statusBox{margin-top:12px;padding:12px;border-radius:14px;border:1px solid rgba(148,163,184,.22);background:rgba(2,6,23,.55)}
-  .statusBox.hidden{display:none}
-  .statusTop{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
-  .statusTitle{font-weight:800}
-  .soundToggle{font-size:12px;opacity:.9;display:flex;align-items:center;gap:6px}
-  .soundToggle input{width:auto}
-  .statusLine{margin-top:8px;font-size:14px}
-  .progressWrap{margin-top:10px;height:10px;border-radius:999px;background:rgba(148,163,184,.18);overflow:hidden}
-  .progressBar{height:100%;width:0%}
-  .statusMeta{margin-top:8px;font-size:12px;opacity:.85}
-
+  /* status + toast */
+  .status{margin:10px 0 0 0;padding:12px;border-radius:14px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10)}
+  .status .title{display:inline-block;padding:6px 10px;border-radius:999px;font-weight:700;font-size:13px;background:rgba(34,197,94,.18);border:1px solid rgba(34,197,94,.35)}
+  .status .sub{margin-top:6px;opacity:.9;font-size:12px}
+  .hidden{display:none}
+  .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:18px;padding:10px 12px;border-radius:12px;background:rgba(0,0,0,.75);border:1px solid rgba(255,255,255,.15);z-index:9999;font-size:13px;max-width:90vw}
 </style>
 </head>
 <body>
@@ -52,6 +47,11 @@
   <div class="card">
     <div id="map"></div>
     <div class="pad">
+
+      <div id="statusBox" class="status hidden">
+        <div class="title" id="statusTitle">...</div>
+        <div class="sub" id="statusSub"></div>
+      </div>
       <div class="row">
         <button class="secondary" onclick="useMyLocation()">Cari yer</button>
         <button class="secondary" onclick="swap()">↕ Dəyiş</button>
@@ -84,6 +84,8 @@
   </div>
 </div>
 
+<div id="toast" class="toast hidden"></div>
+
 <script>
 const NOMINATIM = 'https://nominatim.openstreetmap.org';
 // Estimate defaults (final fare is computed on server at completion)
@@ -96,6 +98,24 @@ let pickup = null;
 let dropoff = null;
 let debounceT = null;
 let pollTimer = null;
+let lastOrderStatus = null;
+
+function showToast(t){
+  const el = document.getElementById('toast');
+  el.textContent = t;
+  el.classList.remove('hidden');
+  clearTimeout(window.__ptToastT);
+  window.__ptToastT = setTimeout(()=>el.classList.add('hidden'), 2400);
+}
+
+function statusText(st){
+  if(st==='accepted') return {t:'Sürücü yaxınlaşır', s:'Sürücü sifarişi qəbul etdi, sizə doğru gəlir.'};
+  if(st==='arrived') return {t:'Sürücü gəldi', s:'Sürücü pickup nöqtəsinə çatdı.'};
+  if(st==='in_progress') return {t:'Ride başladı', s:'Gediş başladı. Marşrut real GPS ilə ölçülür.'};
+  if(st==='completed') return {t:'Ride tamamlandı', s:'Sifariş tamamlandı.'};
+  if(st==='pending') return {t:'Sürücü axtarılır', s:'Uyğun sürücü tapılır...'};
+  return {t:st||'', s:''};
+}
 
 function getSession(){ try{ return JSON.parse(localStorage.getItem('pt_session')||'null'); }catch(e){ return null; } }
 const s = getSession();
@@ -275,239 +295,69 @@ async function loadMyOrders(){
   box.innerHTML = data.orders.map(o => {
     const dt = new Date(o.created_at).toLocaleString();
     const driverLine = o.driver_phone ? `<div style="opacity:.9;margin-top:4px"><b>Sürücü:</b> ${o.driver_phone}</div>` : '';
-    const finalLine = (o.final_fare != null) ? `<div style="opacity:.9;margin-top:4px"><b>Yekun:</b> ${Number(o.final_fare).toFixed(2)} AZN</div>` : '';
+    const finalLine = (o.final_fare != null && Number(o.final_fare) > 0) ? `<div style="opacity:.9;margin-top:4px"><b>Yekun:</b> ${Number(o.final_fare).toFixed(2)} AZN</div>` : '';
     const estLine = (o.est_fare != null) ? `<div style="opacity:.9;margin-top:4px"><b>Təxmini:</b> ${Number(o.est_km||0).toFixed(1)} km • ${o.est_fare} AZN</div>` : '';
+    const liveLine = (o.status==='in_progress') ? `<div style="opacity:.9;margin-top:4px"><b>Real:</b> ${Number(o.real_km||0).toFixed(2)} km • ${Number(o.real_minutes||0)} dəq</div>` : '';
     return `<div style="padding:10px 0;border-bottom:1px solid rgba(148,163,184,.12)">
       <div><b>#${o.id}</b> <span class="pill">${o.status}</span></div>
       <div style="opacity:.9;margin-top:4px"><b>Haradan:</b> ${o.pickup_text}</div>
       <div style="opacity:.9;margin-top:4px"><b>Haraya:</b> ${o.dropoff_text}</div>
       ${estLine}
+      ${liveLine}
       ${finalLine}
       ${driverLine}
       <div style="opacity:.65;margin-top:4px">${dt}</div>
     </div>`;
   }).join('');
 
+  // Status banner & live tracking
+  const activeAny = data.orders.find(o => ['pending','accepted','arrived','in_progress'].includes(o.status));
+  const sb = document.getElementById('statusBox');
+  const stTitle = document.getElementById('statusTitle');
+  const stSub = document.getElementById('statusSub');
+  if(activeAny){
+    const st = statusText(activeAny.status);
+    stTitle.textContent = st.t;
+    let extra = st.s;
+    if(activeAny.status==='in_progress'){
+      const km = Number(activeAny.real_km || 0);
+      const mins = Number(activeAny.real_minutes || 0);
+      if(km>0) extra += ` | Gedilən: ${km.toFixed(2)} km`;
+      if(mins>0) extra += ` | ${mins} dəq`;
+    }
+    stSub.textContent = extra;
+    sb.classList.remove('hidden');
+
+    if(lastOrderStatus !== activeAny.status){
+      lastOrderStatus = activeAny.status;
+      if(st.t) showToast(st.t);
+    }
+  } else {
+    sb.classList.add('hidden');
+    lastOrderStatus = null;
+  }
+
   const active = data.orders.find(o => ['accepted','arrived','in_progress'].includes(o.status) && o.driver_phone);
-  if(active) setActiveOrder(active);
-  else setActiveOrder(null);
+  if(active) trackDriverByOrder(active.id);
+  else { if(driverMarker){ map.removeLayer(driverMarker); driverMarker=null; } }
 }
 
-async function speak(text){
-  try{
-    if(!document.getElementById('soundToggle')?.checked) return;
-    if(!('speechSynthesis' in window)) return;
-    window.speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text);
-    u.lang = 'az-AZ';
-    window.speechSynthesis.speak(u);
-  }catch(e){}
-}
-
-function statusToUi(status){
-  // returns {label, pct}
-  const map = {
-    'new': { label:'Sifariş yaradıldı (sürücü axtarılır)', pct: 20 },
-    'accepted': { label:'Sürücü yaxınlaşır', pct: 45 },
-    'arrived': { label:'Sürücü gəldi', pct: 60 },
-    'started': { label:'Ride başladı', pct: 75 },
-    'completed': { label:'Ride tamamlandı', pct: 100 },
-    'cancelled': { label:'Ləğv edildi', pct: 0 }
-  };
-  return map[status] || { label: 'Status: ' + status, pct: 10 };
-}
-
-function setStatusBoxVisible(show){
-  const box = document.getElementById('statusBox');
-  if(!box) return;
-  box.classList.toggle('hidden', !show);
-}
-
-function setStatusUi(order, extra){
-  const ui = statusToUi(order.status);
-  const line = document.getElementById('statusLine');
-  const bar = document.getElementById('statusProgress');
-  const meta = document.getElementById('statusMeta');
-
-  if(line) line.textContent = ui.label;
-  if(bar){
-    bar.style.width = Math.max(0, Math.min(100, ui.pct)) + '%';
-    // simple coloring without hardcoding: use css variable-ish by class
-    bar.style.background = (order.status === 'completed') ? 'rgba(34,197,94,.9)' : 'rgba(59,130,246,.9)';
-  }
-  if(meta){
-    let parts = [];
-    if(order.driver_phone) parts.push('Sürücü: ' + order.driver_phone);
-    if(order.final_fare != null && order.status === 'completed') parts.push('Ödəniş: ' + order.final_fare + ' AZN');
-    if(extra && extra.note) parts.push(extra.note);
-    meta.textContent = parts.join(' • ');
-  }
-}
-
-function distMeters(a,b){
-  const R=6371000;
-  const toRad=x=>x*Math.PI/180;
-  const dLat=toRad(b.lat-a.lat);
-  const dLng=toRad(b.lng-a.lng);
-  const lat1=toRad(a.lat), lat2=toRad(b.lat);
-  const h=Math.sin(dLat/2)**2 + Math.cos(lat1)*Math.cos(lat2)*Math.sin(dLng/2)**2;
-  return 2*R*Math.asin(Math.sqrt(h));
-}
-
-function animateMarkerTo(marker, newLatLng, durationMs){
-  if(!marker) return;
-  const start = marker.getLatLng();
-  const end = L.latLng(newLatLng.lat, newLatLng.lng);
-  const startTime = performance.now();
-
-  function step(now){
-    const t = Math.min(1, (now - startTime) / durationMs);
-    const lat = start.lat + (end.lat - start.lat) * t;
-    const lng = start.lng + (end.lng - start.lng) * t;
-    marker.setLatLng([lat,lng]);
-    if(t < 1) requestAnimationFrame(step);
-  }
-  requestAnimationFrame(step);
-}
-
-async function updateDriverRoute(order, driverPos){
-  try{
-    if(!order || !driverPos) return;
-
-    // choose target point: pickup before start, dropoff after start
-    let toLat=null,toLng=null;
-    if(order.status === 'accepted' || order.status === 'arrived' || order.status === 'new'){
-      toLat = order.pickup_lat; toLng = order.pickup_lng;
-    }else if(order.status === 'started'){
-      toLat = order.dropoff_lat; toLng = order.dropoff_lng;
-    }else{
-      // completed/cancelled => remove line
-      if(driverRouteLine){ map.removeLayer(driverRouteLine); driverRouteLine=null; }
-      lastRouteKey='';
-      return;
-    }
-
-    if(!Number.isFinite(toLat) || !Number.isFinite(toLng)) return;
-
-    // avoid spamming OSRM
-    const key = `${order.id}:${order.status}:${Math.round(driverPos.lat*10000)}:${Math.round(driverPos.lng*10000)}:${Math.round(toLat*10000)}:${Math.round(toLng*10000)}`;
-    if(key === lastRouteKey) return;
-    lastRouteKey = key;
-
-    const url = `/api/osrm/route_line?from_lat=${encodeURIComponent(driverPos.lat)}&from_lng=${encodeURIComponent(driverPos.lng)}&to_lat=${encodeURIComponent(toLat)}&to_lng=${encodeURIComponent(toLng)}`;
-    const r = await fetch(url);
-    if(!r.ok) return;
-    const j = await r.json();
-    if(!j || !j.ok || !Array.isArray(j.polyline) || j.polyline.length < 2) return;
-
-    if(driverRouteLine) map.removeLayer(driverRouteLine);
-    driverRouteLine = L.polyline(j.polyline, { weight: 5, opacity: 0.85 }).addTo(map);
-  }catch(e){}
-}
-
-function clearActiveTimers(){
-  if(driverPollTimer){ clearInterval(driverPollTimer); driverPollTimer=null; }
-  if(statusPollTimer){ clearInterval(statusPollTimer); statusPollTimer=null; }
-}
-
-async function pollDriverLocation(){
-  if(!activeOrderId) return;
-  try{
-    const url = '/api/orders/driver_location?phone=' + encodeURIComponent(s.phone) + '&password=' + encodeURIComponent(s.password) + '&order_id=' + encodeURIComponent(activeOrderId);
-    const r = await fetch(url);
-    if(!r.ok) return;
-    const j = await r.json();
-    if(!j || j.error) return;
-    if(j.lat==null || j.lng==null) return;
-    const pos = { lat: parseFloat(j.lat), lng: parseFloat(j.lng) };
-    if(!Number.isFinite(pos.lat) || !Number.isFinite(pos.lng)) return;
-
-    if(!driverMarker){
-      driverMarker = L.marker([pos.lat,pos.lng]).addTo(map);
-      driverMarker.bindPopup('Sürücü');
-      lastDriverPos = pos;
-    }else{
-      // smooth move
-      animateMarkerTo(driverMarker, pos, 800);
-      lastDriverPos = pos;
-    }
-
-    // update line route sometimes (only if moved enough)
-    if(window.__activeOrderObj){
-      const moved = !window.__lastRouteDriverPos ? 9999 : distMeters(window.__lastRouteDriverPos, pos);
-      if(moved > 50){
-        window.__lastRouteDriverPos = pos;
-        updateDriverRoute(window.__activeOrderObj, pos);
-      }
-    }
-  }catch(e){}
-}
-
-async function pollOrderStatus(){
-  if(!activeOrderId) return;
-  try{
-    const url = '/api/orders/status?phone=' + encodeURIComponent(s.phone) + '&password=' + encodeURIComponent(s.password) + '&order_id=' + encodeURIComponent(activeOrderId);
-    const r = await fetch(url);
-    if(!r.ok) return;
-    const j = await r.json();
-    if(j && j.order){
-      const prev = window.__activeOrderObj?.status;
-      window.__activeOrderObj = j.order;
-      setStatusUi(j.order, null);
-
-      if(prev && prev !== j.order.status){
-        const ui = statusToUi(j.order.status);
-        speak(ui.label);
-      }
-
-      // if completed/cancelled => stop polling after a short delay
-      if(j.order.status === 'completed' || j.order.status === 'cancelled'){
-        setTimeout(()=>{ clearActiveTimers(); }, 2000);
-      }
-    }
-  }catch(e){}
-}
-
-function setActiveOrder(order){
-  if(!order){ 
-    activeOrderId=null;
-    window.__activeOrderObj=null;
-    window.__lastRouteDriverPos=null;
-    setStatusBoxVisible(false);
-    clearActiveTimers();
-    if(driverMarker){ map.removeLayer(driverMarker); driverMarker=null; }
-    if(driverRouteLine){ map.removeLayer(driverRouteLine); driverRouteLine=null; }
-    lastRouteKey='';
-    return;
-  }
-
-  // keep a full object for route targets
-  window.__activeOrderObj = order;
-  setStatusBoxVisible(true);
-  setStatusUi(order, null);
-
-  if(activeOrderId === order.id) return;
-
-  activeOrderId = order.id;
-  window.__lastRouteDriverPos=null;
-  lastRouteKey='';
-  clearActiveTimers();
-
-  // poll faster for "live" feeling
-  driverPollTimer = setInterval(pollDriverLocation, 2000);
-  statusPollTimer = setInterval(pollOrderStatus, 2000);
-
-  // do immediate first poll
-  pollDriverLocation();
-  pollOrderStatus();
-}
-
-// Backward-compatible wrapper (old code called this with orderId)
 async function trackDriverByOrder(orderId){
-  if(!orderId){ setActiveOrder(null); return; }
-  // if we don't have coords yet, status poll will fill later; keep current object
-  setActiveOrder(window.__activeOrderObj && window.__activeOrderObj.id===orderId ? window.__activeOrderObj : { id: orderId, status: 'accepted' });
+  try{
+    const url = '/api/orders/driver_location?phone=' + encodeURIComponent(s.phone) + '&password=' + encodeURIComponent(s.password) + '&order_id=' + encodeURIComponent(orderId);
+    const res = await fetch(url);
+    const data = await res.json().catch(()=> ({}));
+    if(!data.success || !data.location) return;
+    const lat = Number(data.location.lat);
+    const lon = Number(data.location.lng ?? data.location.lon);
+    if(!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+
+    // smooth marker
+    if(!driverMarker) driverMarker = L.marker([lat, lon]).addTo(map).bindPopup('Sürücü');
+    else driverMarker.setLatLng([lat, lon]);
+  }catch(e){}
 }
+
 function startPolling(){
   if(pollTimer) return;
   pollTimer = setInterval(loadMyOrders, 5000);
