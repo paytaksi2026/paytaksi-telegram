@@ -24,6 +24,7 @@
   .suggest button:hover{background:rgba(148,163,184,.12)}
   .topbar{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
   .pill{display:inline-block;padding:4px 10px;border-radius:999px;border:1px solid rgba(148,163,184,.25);background:rgba(148,163,184,.10);font-size:12px}
+  .est{margin-top:10px;display:flex;gap:8px;flex-wrap:wrap}
 </style>
 </head>
 <body>
@@ -54,6 +55,11 @@
       <input id="to" placeholder="Ünvan yaz..." />
       <div id="toSug" class="suggest" style="display:none"></div>
 
+      <div class="est" id="estBox" style="display:none">
+        <span class="pill" id="estKm"></span>
+        <span class="pill" id="estFare"></span>
+      </div>
+
       <div style="height:12px"></div>
       <button onclick="createOrder()">Sifariş et</button>
 
@@ -69,8 +75,8 @@
 <script>
 const NOMINATIM = 'https://nominatim.openstreetmap.org';
 let map, meMarker, fromMarker, toMarker, driverMarker;
-let pickup = null;   // {lat,lon,text}
-let dropoff = null;  // {lat,lon,text}
+let pickup = null;
+let dropoff = null;
 let debounceT = null;
 let pollTimer = null;
 
@@ -80,6 +86,25 @@ if(!s || s.role !== 'passenger'){ location.href='/'; }
 document.getElementById('who').textContent = 'Müştəri: ' + (s.name||'') + ' • ' + (s.phone||'');
 
 function setMsg(t){ document.getElementById('msg').textContent = t || ''; }
+
+function havKm(lat1, lon1, lat2, lon2){
+  const toRad = d => (d*Math.PI)/180;
+  const R = 6371;
+  const dLat = toRad(lat2-lat1);
+  const dLon = toRad(lon2-lon1);
+  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+  const c = 2*Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return R*c;
+}
+function showEstimate(){
+  if(!pickup || !dropoff){ estBox.style.display='none'; return; }
+  const km = havKm(pickup.lat, pickup.lon, dropoff.lat, dropoff.lon);
+  const base = 1.0, per = 0.6, min = 2.0;
+  const fare = Math.max(min, base + per*km);
+  estBox.style.display='flex';
+  estKm.textContent = km.toFixed(1) + ' km (təxmini)';
+  estFare.textContent = fare.toFixed(2) + ' AZN (təxmini)';
+}
 
 function initMap(lat=40.4093, lon=49.8671){
   map = L.map('map').setView([lat, lon], 13);
@@ -93,12 +118,14 @@ function setPickup(lat, lon, text){
   if(fromMarker) map.removeLayer(fromMarker);
   fromMarker = L.marker([lat, lon]).addTo(map).bindPopup('Haradan').openPopup();
   map.setView([lat, lon], 14);
+  showEstimate();
 }
 function setDropoff(lat, lon, text){
   dropoff = {lat, lon, text};
   to.value = text || '';
   if(toMarker) map.removeLayer(toMarker);
   toMarker = L.marker([lat, lon]).addTo(map).bindPopup('Haraya').openPopup();
+  showEstimate();
 }
 
 async function reverse(lat, lon){
@@ -152,9 +179,7 @@ function hookAutocomplete(input, sugEl, setter){
           setter(it.lat, it.lon, it.text);
           sugEl.style.display='none';
         });
-      }catch(e){
-        sugEl.style.display='none';
-      }
+      }catch(e){ sugEl.style.display='none'; }
     }, 700);
   });
 }
@@ -179,11 +204,9 @@ async function createOrder(){
   });
   const data = await res.json();
   if(data.success){
-    setMsg('Sifariş yaradıldı. ID: ' + data.order_id);
+    setMsg('Sifariş yaradıldı. ID: ' + data.order_id + ' • ' + (data.est_fare ?? '') + ' AZN (təxmini)');
     loadMyOrders();
-  } else {
-    setMsg(data.error || 'ERROR');
-  }
+  } else setMsg(data.error || 'ERROR');
 }
 
 async function loadMyOrders(){
@@ -196,22 +219,20 @@ async function loadMyOrders(){
   box.innerHTML = data.orders.map(o => {
     const dt = new Date(o.created_at).toLocaleString();
     const driverLine = o.driver_phone ? `<div style="opacity:.9;margin-top:4px"><b>Sürücü:</b> ${o.driver_phone}</div>` : '';
+    const estLine = (o.est_fare != null) ? `<div style="opacity:.9;margin-top:4px"><b>Təxmini:</b> ${Number(o.est_km||0).toFixed(1)} km • ${o.est_fare} AZN</div>` : '';
     return `<div style="padding:10px 0;border-bottom:1px solid rgba(148,163,184,.12)">
       <div><b>#${o.id}</b> <span class="pill">${o.status}</span></div>
       <div style="opacity:.9;margin-top:4px"><b>Haradan:</b> ${o.pickup_text}</div>
       <div style="opacity:.9;margin-top:4px"><b>Haraya:</b> ${o.dropoff_text}</div>
+      ${estLine}
       ${driverLine}
       <div style="opacity:.65;margin-top:4px">${dt}</div>
     </div>`;
   }).join('');
 
-  // Track latest active order with driver
   const active = data.orders.find(o => ['accepted','arrived','started'].includes(o.status) && o.driver_phone);
-  if(active) {
-    trackDriver(active.driver_phone);
-  } else {
-    if(driverMarker){ map.removeLayer(driverMarker); driverMarker=null; }
-  }
+  if(active) trackDriver(active.driver_phone);
+  else { if(driverMarker){ map.removeLayer(driverMarker); driverMarker=null; } }
 }
 
 async function trackDriver(driverPhone){
@@ -221,11 +242,8 @@ async function trackDriver(driverPhone){
     if(!data.success || !data.location) return;
     const {lat, lon} = data.location;
     if(!Number.isFinite(lat) || !Number.isFinite(lon)) return;
-    if(!driverMarker){
-      driverMarker = L.marker([lat, lon]).addTo(map).bindPopup('Sürücü');
-    } else {
-      driverMarker.setLatLng([lat, lon]);
-    }
+    if(!driverMarker) driverMarker = L.marker([lat, lon]).addTo(map).bindPopup('Sürücü');
+    else driverMarker.setLatLng([lat, lon]);
   }catch(e){}
 }
 
@@ -234,7 +252,6 @@ function startPolling(){
   pollTimer = setInterval(loadMyOrders, 5000);
 }
 
-// Boot
 initMap();
 useMyLocation();
 loadMyOrders();

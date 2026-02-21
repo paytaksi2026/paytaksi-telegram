@@ -33,15 +33,23 @@
       </div>
     </div>
 
-    <p style="margin-top:14px">Status: <span class="badge" id="st">OFFLINE</span> <span class="badge" id="gps">GPS: OFF</span></p>
+    <p style="margin-top:14px">
+      Status: <span class="badge" id="st">OFFLINE</span>
+      <span class="badge" id="gps">GPS: OFF</span>
+      <span class="badge">Radius: <span id="rad">10</span> km</span>
+    </p>
+
     <div class="row">
       <button onclick="goOnline()">Online ol</button>
       <button class="secondary" onclick="goOffline()">Offline ol</button>
+      <button class="secondary" onclick="setRadius(5)">5 km</button>
+      <button class="secondary" onclick="setRadius(10)">10 km</button>
+      <button class="secondary" onclick="setRadius(20)">20 km</button>
     </div>
     <div class="msg" id="msg"></div>
 
     <div class="list" style="margin-top:18px">
-      <div class="badge">Yeni sifarişlər</div>
+      <div class="badge">Yaxın yeni sifarişlər</div>
       <div id="orders" class="muted" style="margin-top:8px">Yüklənir...</div>
     </div>
 
@@ -68,6 +76,9 @@ setSt(!!s.is_online);
 let pollTimer = null;
 let watchId = null;
 let lastSent = 0;
+let radiusKm = 10;
+
+function setRadius(v){ radiusKm = v; document.getElementById('rad').textContent = String(v); loadAvailable(); }
 
 async function apiGet(url){
   const r = await fetch(url);
@@ -84,7 +95,6 @@ function startGps(){
   if(!navigator.geolocation){ setMsg('GPS dəstəklənmir'); return; }
   setGps(true);
   watchId = navigator.geolocation.watchPosition(async (pos)=>{
-    // throttle to ~5s
     const now = Date.now();
     if(now - lastSent < 5000) return;
     lastSent = now;
@@ -92,15 +102,10 @@ function startGps(){
     const lat = pos.coords.latitude;
     const lon = pos.coords.longitude;
     await apiPost('/api/driver/location/update', { phone: s.phone, password: s.password, lat, lon });
-  }, (err)=>{
-    setGps(false);
-  }, { enableHighAccuracy:true, maximumAge:5000, timeout:10000 });
+  }, ()=>{ setGps(false); }, { enableHighAccuracy:true, maximumAge:5000, timeout:10000 });
 }
 function stopGps(){
-  if(watchId){
-    navigator.geolocation.clearWatch(watchId);
-    watchId = null;
-  }
+  if(watchId){ navigator.geolocation.clearWatch(watchId); watchId = null; }
   setGps(false);
 }
 
@@ -112,10 +117,8 @@ async function goOnline(){
     setSt(true);
     setMsg('Online oldunuz.');
     startPolling();
-    startGps(); // GPS ON when online
-  } else {
-    setMsg(data.error || 'ERROR');
-  }
+    startGps();
+  } else setMsg(data.error || 'ERROR');
 }
 
 async function goOffline(){
@@ -126,25 +129,26 @@ async function goOffline(){
     setSt(false);
     setMsg('Offline oldunuz.');
     stopGps();
-  } else {
-    setMsg(data.error || 'ERROR');
-  }
+  } else setMsg(data.error || 'ERROR');
 }
 
 async function loadAvailable(){
-  const data = await apiGet('/api/orders/available?phone=' + encodeURIComponent(s.phone) + '&password=' + encodeURIComponent(s.password));
+  const data = await apiGet('/api/orders/available?phone=' + encodeURIComponent(s.phone) + '&password=' + encodeURIComponent(s.password) + '&radius_km=' + encodeURIComponent(radiusKm));
   const box = document.getElementById('orders');
   if(!data.success){ box.textContent = (data.error || 'ERROR'); return; }
   const list = data.orders || [];
   if(!list.length){ box.textContent = 'Yeni sifariş yoxdur.'; return; }
-  box.innerHTML = list.map(o => `
+  box.innerHTML = list.map(o => {
+    const dist = (o.pickup_distance_km != null) ? ` • <span class="badge">${o.pickup_distance_km} km</span>` : '';
+    const fare = (o.est_fare != null) ? ` • <span class="badge">${o.est_fare} AZN</span>` : '';
+    return `
     <div class="item">
-      <div><b>#${o.id}</b> <span class="badge">${o.status}</span></div>
+      <div><b>#${o.id}</b> <span class="badge">${o.status}</span>${dist}${fare}</div>
       <div><b>Haradan:</b> ${o.pickup_text}</div>
       <div><b>Haraya:</b> ${o.dropoff_text}</div>
       <div style="margin-top:8px"><button onclick="accept(${o.id})">Qəbul et</button></div>
-    </div>
-  `).join('');
+    </div>`;
+  }).join('');
 }
 
 async function accept(id){
@@ -154,9 +158,7 @@ async function accept(id){
     setMsg('Sifariş qəbul edildi.');
     loadAvailable();
     loadActive();
-  } else {
-    setMsg(data.error || 'ERROR');
-  }
+  } else setMsg(data.error || 'ERROR');
 }
 
 async function loadActive(){
@@ -172,9 +174,12 @@ async function loadActive(){
   if(o.status === 'started') buttons.push(`<button class="danger" onclick="complete(${o.id})">Bitir</button>`);
   if(o.status === 'accepted' || o.status === 'arrived') buttons.push(`<button class="danger" onclick="complete(${o.id})">Ləğv/Bitir</button>`);
 
+  const fare = (o.est_fare != null) ? `<span class="badge">${o.est_fare} AZN</span>` : '';
+  const km = (o.est_km != null) ? `<span class="badge">${Number(o.est_km).toFixed(1)} km</span>` : '';
+
   box.innerHTML = `
     <div class="item">
-      <div><b>#${o.id}</b> <span class="badge">${o.status}</span></div>
+      <div><b>#${o.id}</b> <span class="badge">${o.status}</span> ${km} ${fare}</div>
       <div><b>Haradan:</b> ${o.pickup_text}</div>
       <div><b>Haraya:</b> ${o.dropoff_text}</div>
       <div class="muted" style="margin-top:6px">Sərnişin: ${o.passenger_phone}</div>
@@ -186,33 +191,25 @@ async function loadActive(){
 async function arrived(id){
   setMsg('...');
   const data = await apiPost('/api/orders/arrived', { phone: s.phone, password: s.password, order_id: id });
-  if(data.success){ setMsg('Gəldim ✅'); loadActive(); }
-  else setMsg(data.error||'ERROR');
+  if(data.success){ setMsg('Gəldim ✅'); loadActive(); } else setMsg(data.error||'ERROR');
 }
 async function startRide(id){
   setMsg('...');
   const data = await apiPost('/api/orders/start', { phone: s.phone, password: s.password, order_id: id });
-  if(data.success){ setMsg('Səfər başladı ▶️'); loadActive(); }
-  else setMsg(data.error||'ERROR');
+  if(data.success){ setMsg('Səfər başladı ▶️'); loadActive(); } else setMsg(data.error||'ERROR');
 }
 async function complete(id){
   setMsg('...');
   const data = await apiPost('/api/orders/complete', { phone: s.phone, password: s.password, order_id: id });
-  if(data.success){ setMsg('Bitdi ✅'); loadActive(); loadAvailable(); }
-  else setMsg(data.error||'ERROR');
+  if(data.success){ setMsg('Bitdi ✅'); loadActive(); loadAvailable(); } else setMsg(data.error||'ERROR');
 }
 
 function startPolling(){
   if(pollTimer) return;
-  pollTimer = setInterval(()=>{
-    loadAvailable();
-    loadActive();
-  }, 5000);
+  pollTimer = setInterval(()=>{ loadAvailable(); loadActive(); }, 5000);
 }
 function boot(){
-  loadAvailable();
-  loadActive();
-  startPolling();
+  loadAvailable(); loadActive(); startPolling();
   if(s.is_online){ startGps(); }
 }
 boot();
