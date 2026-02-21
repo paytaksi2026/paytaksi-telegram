@@ -208,6 +208,32 @@ function metersBetween(a,b){
   return 2*R*Math.asin(Math.sqrt(s));
 }
 
+// Smooth marker animation (for live driver movement)
+const _markerAnim = { raf: null };
+function animateMarkerTo(marker, toLatLng, durationMs){
+  try{
+    if (!marker || !toLatLng) return;
+    const from = marker.getLatLng();
+    if(!from){ marker.setLatLng(toLatLng); return; }
+    if (_markerAnim.raf) cancelAnimationFrame(_markerAnim.raf);
+    const start = { lat: from.lat, lng: from.lng };
+    const end = { lat: toLatLng.lat, lng: toLatLng.lng };
+    const t0 = performance.now();
+    const dur = Math.max(250, Math.min(2000, durationMs || 900));
+    const step = (now)=>{
+      const t = Math.min(1, (now - t0)/dur);
+      const e = t < 0.5 ? 2*t*t : 1 - Math.pow(-2*t + 2, 2)/2;
+      const lat = start.lat + (end.lat - start.lat)*e;
+      const lng = start.lng + (end.lng - start.lng)*e;
+      marker.setLatLng([lat,lng]);
+      if (t < 1) _markerAnim.raf = requestAnimationFrame(step);
+    };
+    _markerAnim.raf = requestAnimationFrame(step);
+  }catch(e){
+    try{ marker.setLatLng(toLatLng); }catch(_e){}
+  }
+}
+
 async function updateOSRMLine(from, to, opts, existingLine){
   if(!from||!to) return existingLine;
   try{
@@ -441,8 +467,16 @@ async function refreshDriverLocation(){
     const llObj = { lat: data.location.lat, lng: data.location.lng };
     if(!Number.isFinite(llObj.lat) || !Number.isFinite(llObj.lng)) return;
 
-    if(!driverMarker) driverMarker = L.marker([llObj.lat, llObj.lng]).addTo(map).bindPopup('Sürücü');
-    else driverMarker.setLatLng([llObj.lat, llObj.lng]);
+    // how much driver moved since last tick (meters)
+    const movedNow = metersBetween(lastDriverPos, llObj);
+
+    if(!driverMarker){
+      driverMarker = L.marker([llObj.lat, llObj.lng]).addTo(map).bindPopup('Sürücü');
+    } else {
+      // Smooth movement for nicer live tracking
+      if (movedNow > 1) animateMarkerTo(driverMarker, llObj, 900);
+      else driverMarker.setLatLng([llObj.lat, llObj.lng]);
+    }
 
     const fb = document.getElementById('focusDriverBtn');
     if (fb){
@@ -464,9 +498,9 @@ async function refreshDriverLocation(){
           dest = { lat: activeOrderObj.dropoff_lat, lng: activeOrderObj.dropoff_lon };
         }
       }
-      const moved = metersBetween(lastDriverPos, llObj);
+      // keep lastDriverPos in sync
       lastDriverPos = llObj;
-      if (dest && (moved > 25 || !driverRouteLine)){
+      if (dest && (movedNow > 25 || !driverRouteLine)){
         driverRouteLine = await updateOSRMLine(llObj, dest, { weight: 5, opacity: 0.9, dashArray: '8 10' }, driverRouteLine);
       }
     }
