@@ -75,3 +75,16 @@ a{color:inherit}
   border:1px solid rgba(234,179,8,.24);
   font-size:12px;font-weight:900;
 }
+
+/* === Readability fixes (Telegram WebApp over map) === */
+.card{backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);}
+.input, .btn, .kpi .box, .item, .reviewBox textarea{backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);}
+.input{background: rgba(15,18,30,0.92) !important;}
+.reviewBox textarea{background: rgba(15,18,30,0.92) !important;}
+.kpi .box{background: rgba(15,18,30,0.90) !important;}
+.item{background: rgba(15,18,30,0.90) !important;}
+/* suggestion dropdowns */
+.suggest{background: rgba(15,18,30,0.98) !important; border: 1px solid rgba(255,255,255,.12) !important; box-shadow: 0 14px 44px rgba(0,0,0,.65) !important;}
+.suggest div{border-bottom: 1px solid rgba(255,255,255,.08) !important;}
+.suggest div:last-child{border-bottom: 0 !important;}
+.suggest div:active{filter: brightness(1.08);}

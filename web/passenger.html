@@ -1,132 +1,307 @@
-<!doctype html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
-<title>Passenger</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js">let selectedPayMethod=null;
-let selectedStars=0;
+<!doctype html>
+<html lang="az">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>PayTaksi • Sifariş ver</title>
 
-function buildStars(){
-  const wrap=document.getElementById('ratingStars');
-  if(!wrap) return;
-  wrap.innerHTML='';
-  for(let i=1;i<=5;i++){
-    const b=document.createElement('button');
-    b.type='button';
-    b.className='starBtn';
-    b.innerHTML='<svg viewBox="0 0 24 24" fill="none"><path d="M12 17.3l-5.2 2.8 1-5.9-4.2-4.1 6-0.9L12 3.8l2.4 5.4 6 .9-4.2 4.1 1 5.9z" stroke="rgba(255,255,255,.92)" stroke-width="1.6" /></svg>';
-    b.onclick=()=>{
-      selectedStars=i;
-      [...wrap.children].forEach((x,idx)=>x.classList.toggle('on', idx < i));
-      haptic('light');
-    };
-    wrap.appendChild(b);
+  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <style>
+    /* ensure map fills */
+    #map{position:fixed; inset:0;}
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <div class="sheet">
+    <div class="card">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+        <div>
+          <h2 style="margin:0;">PayTaksi Sifariş ver</h2>
+          <div style="opacity:.92; font-size:12.5px; margin-top:2px;">Başlanğıc və gedəcəyiniz ünvanı seçin</div>
+        </div>
+        <div class="pill" id="gpsStatus">GPS: gözləyir…</div>
+      </div>
+
+      <div style="margin-top:12px; display:grid; gap:10px;">
+        <div style="position:relative;">
+          <input id="pickup" class="input" placeholder="Başlanğıc nöqtə (GPS ilə doldur)" autocomplete="off" />
+          <div id="pickupList" class="suggest" style="display:none;"></div>
+        </div>
+        <div style="position:relative;">
+          <input id="drop" class="input" placeholder="Gedəcəyin yer" autocomplete="off" />
+          <div id="dropList" class="suggest" style="display:none;"></div>
+        </div>
+
+        <div style="display:flex; gap:10px;">
+          <button id="btnLocate" class="btn" type="button" style="flex:1; background:#2b7cff;">📍 Yerimi tap (GPS)</button>
+          <button id="btnClear" class="btn" type="button" style="flex:1; background:#3a3f55;">Təmizlə</button>
+        </div>
+
+        <div class="kpi">
+          <div class="box"><div class="label">Məsafə</div><div class="value" id="dist">— km</div></div>
+          <div class="box"><div class="label">Qiymət</div><div class="value" id="price">— AZN</div></div>
+          <div class="box"><div class="label">Vaxt</div><div class="value" id="eta">— dəq</div></div>
+        </div>
+
+        <div style="display:flex; gap:10px;">
+          <button id="calcBtn" class="btn" type="button" style="flex:1; background:#2b7cff;">Qiyməti hesabla</button>
+          <button id="orderBtn" class="btn" type="button" style="flex:1; background:#27b35a;">Sifarişi təsdiqlə</button>
+        </div>
+
+        <div id="hint" style="font-size:12.5px; opacity:.92; line-height:1.35;"></div>
+      </div>
+    </div>
+  </div>
+
+<script>
+(() => {
+  const tg = window.Telegram?.WebApp;
+  try { tg?.ready?.(); tg?.expand?.(); } catch(e) {}
+
+  const $ = (id) => document.getElementById(id);
+
+  const pickupEl = $('pickup');
+  const dropEl   = $('drop');
+  const pickupList = $('pickupList');
+  const dropList   = $('dropList');
+  const gpsStatus  = $('gpsStatus');
+  const hintEl     = $('hint');
+
+  // User id (Telegram WebApp preferred, otherwise uid query param)
+  const qs = new URLSearchParams(location.search);
+  const uid = qs.get('uid') || tg?.initDataUnsafe?.user?.id || '';
+
+  const OPEN_FEE = 3.50;
+  const PER_KM   = 0.40;
+
+  let map, pickupMarker, dropMarker, routeLine;
+  let pickup = null; // {lat, lon, text}
+  let drop   = null;
+
+  // Init map (Baku default)
+  map = L.map('map', { zoomControl: false }).setView([40.4093, 49.8671], 13);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+
+  const setGpsPill = (text, ok=false) => {
+    gpsStatus.textContent = text;
+    gpsStatus.style.background = ok ? 'rgba(39,179,90,.22)' : 'rgba(255,255,255,.10)';
+    gpsStatus.style.borderColor = ok ? 'rgba(39,179,90,.35)' : 'rgba(255,255,255,.14)';
+  };
+
+  const toast = (msg) => { hintEl.textContent = msg; };
+
+  function setMarker(which, lat, lon, text){
+    const ll = [lat, lon];
+    if(which === 'pickup'){
+      pickup = {lat, lon, text: text || ''};
+      if(!pickupMarker){ pickupMarker = L.marker(ll).addTo(map); }
+      else pickupMarker.setLatLng(ll);
+      if(text) pickupEl.value = text;
+    } else {
+      drop = {lat, lon, text: text || ''};
+      if(!dropMarker){ dropMarker = L.marker(ll).addTo(map); }
+      else dropMarker.setLatLng(ll);
+      if(text) dropEl.value = text;
+    }
   }
-}
-buildStars();
 
-btnPay && (btnPay.onclick=async()=>{
-  // Stripe Checkout (real payment)
-  try{
-    const r0 = await fetch(`${BACKEND}/api/pay/checkout`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({orderId: currentOrderId})});
-    const j0 = await r0.json();
-    if(j0.ok && j0.url){
-      toast('Ödəniş','Ödəniş səhifəsi açılır...','success');
-      haptic('light');
-      window.open(j0.url, '_blank');
-      selectedPayMethod='PAY';
+  async function nominatimSearch(q){
+    const url = `https://nominatim.openstreetmap.org/search?format=json&limit=6&addressdetails=1&q=${encodeURIComponent(q)}`;
+    const r = await fetch(url, { headers: { 'Accept': 'application/json' } });
+    if(!r.ok) return [];
+    const j = await r.json();
+    return (j || []).map(x => ({
+      lat: Number(x.lat),
+      lon: Number(x.lon),
+      label: x.display_name
+    }));
+  }
+
+  async function nominatimReverse(lat, lon){
+    const url = `https://nominatim.openstreetmap.org/reverse?format=json&zoom=18&addressdetails=1&lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}`;
+    const r = await fetch(url, { headers: { 'Accept': 'application/json' } });
+    if(!r.ok) return '';
+    const j = await r.json();
+    return j?.display_name || '';
+  }
+
+  function renderSuggest(box, items, onPick){
+    if(!items.length){ box.style.display='none'; box.innerHTML=''; return; }
+    box.innerHTML = '';
+    items.forEach(it => {
+      const d = document.createElement('div');
+      d.textContent = it.label;
+      d.style.padding = '10px 12px';
+      d.style.cursor = 'pointer';
+      d.onclick = () => onPick(it);
+      box.appendChild(d);
+    });
+    box.style.display = 'block';
+  }
+
+  function debounce(fn, ms){
+    let t; return (...args) => { clearTimeout(t); t=setTimeout(()=>fn(...args), ms); };
+  }
+
+  const doPickupSuggest = debounce(async () => {
+    const q = pickupEl.value.trim();
+    if(q.length < 3){ renderSuggest(pickupList, [], ()=>{}); return; }
+    try{
+      const items = await nominatimSearch(q);
+      renderSuggest(pickupList, items, async (it) => {
+        renderSuggest(pickupList, [], ()=>{});
+        setMarker('pickup', it.lat, it.lon, it.label);
+        map.setView([it.lat,it.lon], 16);
+        toast('Başlanğıc nöqtə seçildi. İndi gedəcəyiniz ünvanı seçin.');
+      });
+    }catch(e){ renderSuggest(pickupList, [], ()=>{}); }
+  }, 220);
+
+  const doDropSuggest = debounce(async () => {
+    const q = dropEl.value.trim();
+    if(q.length < 3){ renderSuggest(dropList, [], ()=>{}); return; }
+    try{
+      const items = await nominatimSearch(q);
+      renderSuggest(dropList, items, async (it) => {
+        renderSuggest(dropList, [], ()=>{});
+        setMarker('drop', it.lat, it.lon, it.label);
+        map.setView([it.lat,it.lon], 16);
+        toast('Gedəcəyiniz yer seçildi. İndi “Qiyməti hesabla” basın.');
+      });
+    }catch(e){ renderSuggest(dropList, [], ()=>{}); }
+  }, 220);
+
+  pickupEl.addEventListener('input', doPickupSuggest);
+  dropEl.addEventListener('input', doDropSuggest);
+  pickupEl.addEventListener('focus', doPickupSuggest);
+  dropEl.addEventListener('focus', doDropSuggest);
+
+  document.addEventListener('click', (e) => {
+    if(!pickupList.contains(e.target) && e.target !== pickupEl) pickupList.style.display='none';
+    if(!dropList.contains(e.target) && e.target !== dropEl) dropList.style.display='none';
+  });
+
+  async function locate(){
+    if(!navigator.geolocation){ setGpsPill('GPS: dəstəklənmir'); toast('Bu cihaz GPS dəstəkləmir. Ünvanı əl ilə yazın.'); return; }
+
+    setGpsPill('GPS: icazə soruşulur…');
+    toast('Telefon icazə istəyərsə “Allow/İcazə ver” seçin.');
+
+    navigator.geolocation.getCurrentPosition(async (pos) => {
+      const lat = pos.coords.latitude;
+      const lon = pos.coords.longitude;
+      setGpsPill('GPS: tapıldı', true);
+
+      map.setView([lat, lon], 16);
+      setMarker('pickup', lat, lon, pickupEl.value);
+
+      try{
+        const name = await nominatimReverse(lat, lon);
+        if(name){
+          pickupEl.value = name;
+          pickup.text = name;
+        }
+      }catch(e){}
+
+      toast('GPS ilə başlanğıc ünvan dolduruldu. Gedəcəyiniz ünvanı yazın.');
+    }, (err) => {
+      setGpsPill('GPS: icazə yoxdur');
+      toast('GPS icazəsi verilmədi. Telegram/telefon ayarlarından Location icazəsini açın və “Yerimi tap” düyməsini yenidən basın.');
+    }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
+  }
+
+  $('btnLocate').onclick = locate;
+  $('btnClear').onclick = () => {
+    pickup = null; drop = null;
+    pickupEl.value=''; dropEl.value='';
+    $('dist').textContent='— km'; $('price').textContent='— AZN'; $('eta').textContent='— dəq';
+    if(pickupMarker){ map.removeLayer(pickupMarker); pickupMarker=null; }
+    if(dropMarker){ map.removeLayer(dropMarker); dropMarker=null; }
+    if(routeLine){ map.removeLayer(routeLine); routeLine=null; }
+    toast('Təmizləndi. İstəsəniz “Yerimi tap” basın.');
+  };
+
+  async function calcRouteAndPrice(){
+    if(!pickup || !drop){ toast('Zəhmət olmasa həm başlanğıc, həm də gedəcəyiniz ünvanı seçin.'); return; }
+
+    // Try OSRM route (more accurate)
+    const osrm = `https://router.project-osrm.org/route/v1/driving/${pickup.lon},${pickup.lat};${drop.lon},${drop.lat}?overview=full&geometries=geojson`;
+    try{
+      const r = await fetch(osrm, { headers: { 'Accept': 'application/json' } });
+      if(!r.ok) throw new Error('osrm');
+      const j = await r.json();
+      const route = j?.routes?.[0];
+      if(!route) throw new Error('no route');
+
+      const distKm = route.distance / 1000;
+      const etaMin = route.duration / 60;
+      const price = Math.max(OPEN_FEE, OPEN_FEE + distKm * PER_KM);
+
+      $('dist').textContent  = distKm.toFixed(2) + ' km';
+      $('eta').textContent   = Math.max(1, Math.round(etaMin)) + ' dəq';
+      $('price').textContent = price.toFixed(2) + ' AZN';
+
+      if(routeLine) map.removeLayer(routeLine);
+      routeLine = L.geoJSON(route.geometry, { style: { weight: 4, opacity: 0.9 } }).addTo(map);
+      map.fitBounds(routeLine.getBounds(), { padding: [24, 24] });
+
+      toast(`Tarif: Açılış ${OPEN_FEE.toFixed(2)} AZN + ${PER_KM.toFixed(2)} AZN/km`);
+    } catch(e){
+      // Fallback: haversine approx
+      const R = 6371;
+      const dLat = (drop.lat - pickup.lat) * Math.PI/180;
+      const dLon = (drop.lon - pickup.lon) * Math.PI/180;
+      const a = Math.sin(dLat/2)**2 + Math.cos(pickup.lat*Math.PI/180)*Math.cos(drop.lat*Math.PI/180)*Math.sin(dLon/2)**2;
+      const c = 2*Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+      const distKm = R*c;
+      const price = Math.max(OPEN_FEE, OPEN_FEE + distKm * PER_KM);
+
+      $('dist').textContent  = distKm.toFixed(2) + ' km';
+      $('eta').textContent   = '—';
+      $('price').textContent = price.toFixed(2) + ' AZN';
+      toast('Marşrut servisi açılmadı (OSRM). Qiymət təxmini hesablandı.');
+    }
+  }
+
+  $('calcBtn').onclick = calcRouteAndPrice;
+
+  $('orderBtn').onclick = async () => {
+    if(!uid){
+      // user opened outside bot
+      alert('Zəhmət olmasa PayTaksi botundan “WebApp” düyməsi ilə açın.');
       return;
     }
-  }catch(e){}
+    if(!pickup || !drop){ toast('Əvvəlcə başlanğıc və gedəcəyiniz ünvanı seçin.'); return; }
+    await calcRouteAndPrice();
 
-  if(!currentOrderId) return;
-  selectedPayMethod='PAY';
-  toast('Pay seçildi','Kart/online ödəniş','success');
-  haptic('light');
-  try{ await fetch(`${BACKEND}/api/order/${currentOrderId}/paymethod`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({method:'PAY'})}); }catch(e){}
-});
-btnCash && (btnCash.onclick=async()=>{
-  if(!currentOrderId) return;
-  selectedPayMethod='CASH';
-  toast('Cash seçildi','Nağd ödəniş','success');
-  haptic('light');
-  try{ await fetch(`${BACKEND}/api/order/${currentOrderId}/paymethod`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({method:'CASH'})}); }catch(e){}
-});
+    // send data to bot (if Telegram WebApp)
+    const payload = {
+      uid,
+      pickup,
+      drop,
+      price_text: $('price').textContent,
+      distance_text: $('dist').textContent,
+      eta_text: $('eta').textContent,
+      ts: Date.now()
+    };
 
-btnRate && (btnRate.onclick=async()=>{
-  if(!currentOrderId){ payModal.classList.remove('on'); return; }
-  if(selectedStars < 1){ toast('Qiymətləndir','Zəhmət olmasa 1-5 ulduz seç',''); haptic('light'); return; }
-  setBtnLoading(btnRate,true);
-  try{
-    const review = (reviewText && reviewText.value) ? reviewText.value : '';
-    const r = await fetch(`${BACKEND}/api/order/${currentOrderId}/rate`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({stars:selectedStars, review})});
-    const j = await r.json();
-    if(!j.ok){ toast('Xəta', j.error||'Göndərilmədi'); return; }
-    toast('Təşəkkürlər','Rəy qeydə alındı','success');
-    haptic('medium');
-    payModal.classList.remove('on');
-  }catch(e){
-    toast('Xəta','Göndərilmədi'); 
-  }finally{
-    setBtnLoading(btnRate,false,'Göndərildi');
-  }
-});
+    try{
+      tg?.sendData?.(JSON.stringify(payload));
+      toast('Sifariş göndərildi. Botda təsdiq mesajı gözləyin.');
+    }catch(e){
+      toast('Sifariş göndərmək alınmadı. Telegram WebApp ilə açdığınıza əmin olun.');
+    }
+  };
+
+  // First hint
+  toast('İpucu: Əgər ünvanlar “şəffaf” görünürdüsə, bu versiyada kontrast artırıldı.');
+
+})();
 </script>
-<link rel="stylesheet" href="/web/style.css"/></head>
-<body>
-<div class="topbar"><div class="wrap"><div class="brand"><div class="logo"></div><div><div style="font-weight:900">PayTaksi</div><div class="sub">Müştəri • Uber/Bolt</div></div></div><div class="pill" id="conn">🟡 connecting</div></div></div>
-<div id="map" class="map"></div>
-<div class="sheet card"><div class="col">
-<div class="row" style="justify-content:space-between"><div class="h">Sifariş</div><div class="small" id="uidBox">ID: —</div></div>
-<input class="input" id="pickup" placeholder="Götürüləcək yer (axtar)..."/><div id="pickupList" class="list" style="display:none"></div>
-<input class="input" id="dropoff" placeholder="Gedəcəyiniz yer (axtar)..."/><div id="dropList" class="list" style="display:none"></div>
-<div class="kpi"><div class="box"><div class="v" id="dist">—</div><div class="l">km</div></div><div class="box"><div class="v" id="price">—</div><div class="l">AZN</div></div><div class="box"><div class="v" id="eta">—</div><div class="l">dəq</div></div></div>
-<div class="row"><button class="btn btn-blue" id="calcBtn" style="flex:1">Qiymət <span class="badgeSurge" id="surgeBadge" style="display:none">SURGE ×<span id="surgeMult">1.0</span></span>i hesabla</button><button class="btn btn-green" id="orderBtn" style="flex:1">Sifarişi təsdiqlə</button></div>
-<div id="orderBox" class="item" style="display:none"><div class="t" id="orderTitle"></div><div class="d" id="orderDesc"></div><div class="hr"></div><div class="small" id="orderStatus"></div></div>
-</div></div>
-<script>
-const qs=new URLSearchParams(location.search);
-const uid=qs.get("uid")||"";
-uidBox.textContent="ID: "+(uid||"—");
-const BACKEND=location.origin;
-
-let currentOrderId=null;
-const conn=document.getElementById("conn");
-let ws;
-function connectWS(){const proto=location.protocol==="https:"?"wss":"ws";ws=new WebSocket(`${proto}://${location.host}`);
-ws.onopen=()=>conn.textContent="🟢 live";
-ws.onclose=()=>{conn.textContent="🟡 reconnect";setTimeout(connectWS,1500)};
-ws.onmessage=(ev)=>{try{const msg=JSON.parse(ev.data);
-if(msg.type==="order_status" && currentOrderId===msg.orderId) showStatus(msg.status);
-if(msg.type==="order_accepted" && currentOrderId===msg.order.orderId) showStatus("ACCEPTED");
-}catch(e){}}}
-connectWS();
-
-const map=L.map("map",{zoomControl:false}).setView([40.4093,49.8671],12);
-L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19}).addTo(map);
-navigator.geolocation.getCurrentPosition(p=>{map.setView([p.coords.latitude,p.coords.longitude],15);},()=>{});
-
-let pickupSel=null, dropSel=null;
-async function geocode(q){const r=await fetch(`${BACKEND}/api/geocode?q=`+encodeURIComponent(q));const j=await r.json();return j.ok?j.results:[];}
-function renderList(el,items,onPick){el.style.display=items.length?"block":"none";el.innerHTML="";
-items.forEach(it=>{const d=document.createElement("div");d.className="item";
-d.innerHTML=`<div class="t">${it.display.split(",")[0]}</div><div class="d">${it.display}</div>`;
-d.onclick=()=>onPick(it);el.appendChild(d);});}
-let t1,t2;
-pickup.oninput=()=>{clearTimeout(t1);const v=pickup.value.trim();if(v.length<3){pickupList.style.display="none";return;}
-t1=setTimeout(async()=>{renderList(pickupList,await geocode(v),(it)=>{pickupSel={lat:it.lat,lon:it.lon,display:it.display};pickup.value=it.display;pickupList.style.display="none";map.setView([it.lat,it.lon],16);});},350);};
-dropoff.oninput=()=>{clearTimeout(t2);const v=dropoff.value.trim();if(v.length<3){dropList.style.display="none";return;}
-t2=setTimeout(async()=>{renderList(dropList,await geocode(v),(it)=>{dropSel={lat:it.lat,lon:it.lon,display:it.display};dropoff.value=it.display;dropList.style.display="none";map.setView([it.lat,it.lon],16);});},350);};
-
-async function calc(){if(!pickupSel||!dropSel){alert("Pickup və Dropoff seçin.");return null;}
-const r=await fetch(`${BACKEND}/api/route`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({pickup:pickupSel,dropoff:dropSel})});
-const j=await r.json();if(!j.ok){alert("Hesablama xətası");return null;}
-dist.textContent=j.distanceKm.toFixed(2);price.textContent=j.price.toFixed(2);eta.textContent=String(j.durationMin);return j;}
-calcBtn.onclick=calc;
-
-function showOrder(o){currentOrderId=o.orderId;orderBox.style.display="block";orderTitle.textContent="Sifariş #"+o.orderId;orderDesc.textContent=`${o.distanceKm} km • ${o.price} AZN`;showStatus(o.status);}
-function showStatus(st){orderStatus.textContent="Status: "+st;}
-
-orderBtn.onclick=async()=>{if(!uid){alert("Botdan WebApp düyməsi ilə açın.");return;}if(!pickupSel||!dropSel){alert("Pickup və Dropoff seçin.");return;}
-await calc();const r=await fetch(`${BACKEND}/api/order`,{method:"POST",headers:{"content-type":"application/json"},
-body:JSON.stringify({passengerId:uid,pickup:pickupSel,dropoff:dropSel,note:""})});
-const j=await r.json();if(!j.ok){alert(j.error||"Sifariş xətası");return;}showOrder(j.order);};
-</script>
-</body></html>
+</body>
+</html>
