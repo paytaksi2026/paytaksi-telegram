@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>PayTaksi</title>
+<style>
+body { background:#0f172a; color:white; font-family:Arial; text-align:center; padding-top:50px;}
+input, select, button { padding:10px; margin:5px; width:250px;}
+button { background:#22c55e; color:white; border:none;}
+</style>
+</head>
+<body>
+
+<h2>PayTaksi Login / Register</h2>
+
+<select id="role">
+<option value="passenger">Passenger</option>
+<option value="driver">Driver</option>
+</select><br>
+
+<input id="phone" placeholder="Phone"><br>
+<input id="password" type="password" placeholder="Password"><br>
+<input id="name" placeholder="Name (register only)"><br>
+
+<button onclick="register()">Register</button>
+<button onclick="login()">Login</button>
+
+<p id="msg"></p>
+
+<script>
+async function register() {
+  const res = await fetch('/api/register', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({
+      phone:phone.value,
+      password:password.value,
+      role:role.value,
+      name:name.value
+    })
+  });
+  const data = await res.json();
+  msg.innerText = data.error ? data.error : "Registered successfully";
+}
+
+async function login() {
+  const res = await fetch('/api/login', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({
+      phone:phone.value,
+      password:password.value,
+      role:role.value
+    })
+  });
+  const data = await res.json();
+  if(data.pending) {
+    msg.innerText = "Driver pending approval";
+  } else if(data.success) {
+    msg.innerText = "Login success";
+  } else {
+    msg.innerText = data.error;
+  }
+}
+</script>
+
+</body>
+</html>
