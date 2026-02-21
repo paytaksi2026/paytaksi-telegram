@@ -10,7 +10,7 @@ const db = new sqlite3.Database('./database.sqlite');
 app.use(bodyParser.json({ limit: '1mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ---------------- DB init + lightweight migrations
+// ---------------- DB init + lightweight migrations (SQLite)
 function ensureColumn(table, column, ddl) {
   return new Promise((resolve) => {
     db.all(`PRAGMA table_info(${table})`, [], (err, rows) => {
@@ -34,10 +34,10 @@ db.serialize(() => {
     UNIQUE(phone, role)
   )`);
 
-  // Ensure columns if older DB exists
   ensureColumn('users', 'approved', 'approved INTEGER DEFAULT 0');
   ensureColumn('users', 'is_online', 'is_online INTEGER DEFAULT 0');
 
+  // Orders table (may already exist from previous patches)
   db.run(`CREATE TABLE IF NOT EXISTS orders (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     passenger_phone TEXT NOT NULL,
@@ -47,14 +47,22 @@ db.serialize(() => {
     dropoff_text TEXT,
     dropoff_lat REAL,
     dropoff_lon REAL,
-    status TEXT NOT NULL DEFAULT 'new',
-    created_at INTEGER NOT NULL
+    status TEXT NOT NULL DEFAULT 'new',   -- new|accepted|arrived|started|completed|cancelled
+    driver_phone TEXT,                   -- assigned driver
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER
   )`);
 
-  // Additive columns for order lifecycle
   ensureColumn('orders', 'driver_phone', 'driver_phone TEXT');
-  ensureColumn('orders', 'accepted_at', 'accepted_at INTEGER');
-  ensureColumn('orders', 'completed_at', 'completed_at INTEGER');
+  ensureColumn('orders', 'updated_at', 'updated_at INTEGER');
+
+  // Driver live location table
+  db.run(`CREATE TABLE IF NOT EXISTS driver_locations (
+    driver_phone TEXT PRIMARY KEY,
+    lat REAL NOT NULL,
+    lon REAL NOT NULL,
+    updated_at INTEGER NOT NULL
+  )`);
 });
 
 // ---------------- Helpers
@@ -217,20 +225,45 @@ app.post('/api/driver/offline', async (req, res) => {
   });
 });
 
-app.post('/api/driver/status', async (req, res) => {
+// Driver live location update (GPS tracking)
+app.post('/api/driver/location/update', async (req, res) => {
   const user = await authUser(req.body.phone, req.body.password, 'driver');
   if (!user) return res.json({ error: "INVALID_CREDENTIALS" });
-  res.json({
-    success: true,
-    approved: parseInt(user.approved,10) || 0,
-    is_online: parseInt(user.is_online,10) || 0,
-    name: user.name || ''
+
+  const approved = parseInt(user.approved, 10) || 0;
+  if (approved === 0) return res.json({ error: "DRIVER_NOT_APPROVED" });
+
+  const lat = Number(req.body.lat);
+  const lon = Number(req.body.lon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return res.json({ error: "BAD_COORDS" });
+
+  const updated_at = nowMs();
+  db.run(
+    `INSERT INTO driver_locations (driver_phone, lat, lon, updated_at)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(driver_phone) DO UPDATE SET lat=excluded.lat, lon=excluded.lon, updated_at=excluded.updated_at`,
+    [user.phone, lat, lon, updated_at],
+    function(err){
+      if (err) return res.json({ error: "DB_ERROR" });
+      res.json({ success: true, updated_at });
+    }
+  );
+});
+
+// Get driver location (for passenger)
+app.get('/api/driver/location/get', (req, res) => {
+  const driver_phone = normPhone(req.query.driver_phone);
+  if (!driver_phone) return res.status(400).json({ error: "MISSING_DRIVER" });
+
+  db.get("SELECT driver_phone, lat, lon, updated_at FROM driver_locations WHERE driver_phone=?", [driver_phone], (err, row) => {
+    if (err) return res.status(500).json({ error: "DB_ERROR" });
+    if (!row) return res.json({ success: true, location: null });
+    res.json({ success: true, location: row });
   });
 });
 
 // ---------------- Orders (MVP)
 app.post('/api/orders/create', async (req, res) => {
-  // Passenger auth via phone+password (MVP)
   const passenger = await authUser(req.body.phone, req.body.password, 'passenger');
   if (!passenger) return res.json({ error: 'INVALID_CREDENTIALS' });
 
@@ -251,9 +284,9 @@ app.post('/api/orders/create', async (req, res) => {
 
   const created_at = nowMs();
   db.run(
-    `INSERT INTO orders (passenger_phone, pickup_text, pickup_lat, pickup_lon, dropoff_text, dropoff_lat, dropoff_lon, status, created_at, driver_phone, accepted_at, completed_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'new', ?, NULL, NULL, NULL)`,
-    [passenger.phone, pickup_text, pickup_lat, pickup_lon, dropoff_text, dropoff_lat, dropoff_lon, created_at],
+    `INSERT INTO orders (passenger_phone, pickup_text, pickup_lat, pickup_lon, dropoff_text, dropoff_lat, dropoff_lon, status, driver_phone, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'new', NULL, ?, ?)`,
+    [passenger.phone, pickup_text, pickup_lat, pickup_lon, dropoff_text, dropoff_lat, dropoff_lon, created_at, created_at],
     function(err){
       if (err) return res.json({ error: 'DB_ERROR' });
       res.json({ success: true, order_id: this.lastID });
@@ -262,13 +295,11 @@ app.post('/api/orders/create', async (req, res) => {
 });
 
 app.get('/api/orders/my', async (req, res) => {
-  const phone = normPhone(req.query.phone);
-  const password = String(req.query.password || '');
-  const passenger = await authUser(phone, password, 'passenger');
+  const passenger = await authUser(req.query.phone, req.query.password, 'passenger');
   if (!passenger) return res.status(401).json({ error: 'INVALID_CREDENTIALS' });
 
   db.all(
-    "SELECT id, pickup_text, dropoff_text, status, driver_phone, accepted_at, created_at FROM orders WHERE passenger_phone=? ORDER BY id DESC LIMIT 20",
+    "SELECT id, pickup_text, dropoff_text, status, driver_phone, created_at, updated_at FROM orders WHERE passenger_phone=? ORDER BY id DESC LIMIT 20",
     [passenger.phone],
     (err, rows) => {
       if (err) return res.status(500).json({ error: 'DB_ERROR' });
@@ -277,16 +308,15 @@ app.get('/api/orders/my', async (req, res) => {
   );
 });
 
-// Driver: new orders feed
-app.get('/api/orders/feed', async (req, res) => {
-  const phone = normPhone(req.query.phone);
-  const password = String(req.query.password || '');
-  const driver = await authUser(phone, password, 'driver');
+// Available orders for drivers (only new)
+app.get('/api/orders/available', async (req, res) => {
+  const driver = await authUser(req.query.phone, req.query.password, 'driver');
   if (!driver) return res.status(401).json({ error: 'INVALID_CREDENTIALS' });
-  if (parseInt(driver.approved, 10) !== 1) return res.status(403).json({ error: 'DRIVER_PENDING' });
+  if ((parseInt(driver.approved,10)||0) === 0) return res.status(403).json({ error: 'DRIVER_NOT_APPROVED' });
+  if ((parseInt(driver.is_online,10)||0) === 0) return res.json({ success: true, orders: [] });
 
   db.all(
-    "SELECT id, passenger_phone, pickup_text, dropoff_text, pickup_lat, pickup_lon, dropoff_lat, dropoff_lon, status, created_at FROM orders WHERE status='new' ORDER BY id DESC LIMIT 30",
+    "SELECT id, pickup_text, dropoff_text, status, created_at FROM orders WHERE status='new' ORDER BY id ASC LIMIT 20",
     [],
     (err, rows) => {
       if (err) return res.status(500).json({ error: 'DB_ERROR' });
@@ -295,43 +325,82 @@ app.get('/api/orders/feed', async (req, res) => {
   );
 });
 
-// Driver: accept order (first come first served)
+// Driver accepts an order
 app.post('/api/orders/accept', async (req, res) => {
-  const phone = normPhone(req.body.phone);
-  const password = String(req.body.password || '');
-  const driver = await authUser(phone, password, 'driver');
+  const driver = await authUser(req.body.phone, req.body.password, 'driver');
   if (!driver) return res.status(401).json({ error: 'INVALID_CREDENTIALS' });
-  if (parseInt(driver.approved, 10) !== 1) return res.status(403).json({ error: 'DRIVER_PENDING' });
+  if ((parseInt(driver.approved,10)||0) === 0) return res.status(403).json({ error: 'DRIVER_NOT_APPROVED' });
 
   const order_id = parseInt(req.body.order_id, 10);
-  if (!order_id) return res.status(400).json({ error: 'ORDER_ID_REQUIRED' });
+  if (!order_id) return res.json({ error: 'MISSING_ORDER' });
 
-  const accepted_at = nowMs();
+  const t = nowMs();
+  // Atomic-ish update: accept only if still 'new'
   db.run(
-    "UPDATE orders SET status='accepted', driver_phone=?, accepted_at=? WHERE id=? AND status='new'",
-    [driver.phone, accepted_at, order_id],
+    "UPDATE orders SET status='accepted', driver_phone=?, updated_at=? WHERE id=? AND status='new'",
+    [driver.phone, t, order_id],
     function(err){
       if (err) return res.status(500).json({ error: 'DB_ERROR' });
-      if (this.changes === 0) return res.status(409).json({ error: 'NOT_AVAILABLE' });
+      if (this.changes === 0) return res.json({ error: 'ORDER_NOT_AVAILABLE' });
       res.json({ success: true });
     }
   );
 });
 
-// Driver: my accepted/completed orders
-app.get('/api/orders/driver/my', async (req, res) => {
-  const phone = normPhone(req.query.phone);
-  const password = String(req.query.password || '');
-  const driver = await authUser(phone, password, 'driver');
+// Driver gets their active order (accepted/arrived/started)
+app.get('/api/orders/driver-active', async (req, res) => {
+  const driver = await authUser(req.query.phone, req.query.password, 'driver');
   if (!driver) return res.status(401).json({ error: 'INVALID_CREDENTIALS' });
-  if (parseInt(driver.approved, 10) !== 1) return res.status(403).json({ error: 'DRIVER_PENDING' });
 
-  db.all(
-    "SELECT id, passenger_phone, pickup_text, dropoff_text, status, created_at, accepted_at FROM orders WHERE driver_phone=? ORDER BY id DESC LIMIT 20",
+  db.get(
+    "SELECT id, passenger_phone, pickup_text, dropoff_text, status, created_at, updated_at FROM orders WHERE driver_phone=? AND status IN ('accepted','arrived','started') ORDER BY id DESC LIMIT 1",
     [driver.phone],
-    (err, rows) => {
+    (err, row) => {
       if (err) return res.status(500).json({ error: 'DB_ERROR' });
-      res.json({ success: true, orders: rows || [] });
+      res.json({ success: true, order: row || null });
+    }
+  );
+});
+
+// Driver updates ride status
+async function updateOrderStatus(req, res, nextStatus) {
+  const driver = await authUser(req.body.phone, req.body.password, 'driver');
+  if (!driver) return res.status(401).json({ error: 'INVALID_CREDENTIALS' });
+
+  const order_id = parseInt(req.body.order_id, 10);
+  if (!order_id) return res.json({ error: 'MISSING_ORDER' });
+
+  const t = nowMs();
+  db.run(
+    "UPDATE orders SET status=?, updated_at=? WHERE id=? AND driver_phone=? AND status IN ('accepted','arrived','started')",
+    [nextStatus, t, order_id, driver.phone],
+    function(err){
+      if (err) return res.status(500).json({ error: 'DB_ERROR' });
+      if (this.changes === 0) return res.json({ error: 'NOT_ALLOWED' });
+      res.json({ success: true, status: nextStatus });
+    }
+  );
+}
+
+app.post('/api/orders/arrived', (req, res) => updateOrderStatus(req, res, 'arrived'));
+app.post('/api/orders/start', (req, res) => updateOrderStatus(req, res, 'started'));
+
+// Complete: only if started/arrived/accepted (MVP)
+app.post('/api/orders/complete', async (req, res) => {
+  const driver = await authUser(req.body.phone, req.body.password, 'driver');
+  if (!driver) return res.status(401).json({ error: 'INVALID_CREDENTIALS' });
+
+  const order_id = parseInt(req.body.order_id, 10);
+  if (!order_id) return res.json({ error: 'MISSING_ORDER' });
+
+  const t = nowMs();
+  db.run(
+    "UPDATE orders SET status='completed', updated_at=? WHERE id=? AND driver_phone=? AND status IN ('accepted','arrived','started')",
+    [t, order_id, driver.phone],
+    function(err){
+      if (err) return res.status(500).json({ error: 'DB_ERROR' });
+      if (this.changes === 0) return res.json({ error: 'NOT_ALLOWED' });
+      res.json({ success: true, status: 'completed' });
     }
   );
 });
@@ -412,39 +481,40 @@ app.get('/admin/reset-db', (req, res) => {
   }
 
   db.serialize(() => {
-    db.run("DROP TABLE IF EXISTS users", (err) => {
-      if (err) return res.status(500).send("DB_ERROR");
-      db.run("DROP TABLE IF EXISTS orders", (err3) => {
-        if (err3) return res.status(500).send("DB_ERROR");
-        db.run(`CREATE TABLE IF NOT EXISTS users (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          phone TEXT NOT NULL,
-          password TEXT NOT NULL,
-          role TEXT NOT NULL,
-          name TEXT,
-          approved INTEGER DEFAULT 0,
-          is_online INTEGER DEFAULT 0,
-          UNIQUE(phone, role)
-        )`, (err2) => {
-          if (err2) return res.status(500).send("DB_ERROR");
-          db.run(`CREATE TABLE IF NOT EXISTS orders (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            passenger_phone TEXT NOT NULL,
-            pickup_text TEXT,
-            pickup_lat REAL,
-            pickup_lon REAL,
-            dropoff_text TEXT,
-            dropoff_lat REAL,
-            dropoff_lon REAL,
-            status TEXT NOT NULL DEFAULT 'new',
-            created_at INTEGER NOT NULL
-          )`, (err4) => {
-            if (err4) return res.status(500).send("DB_ERROR");
-            res.send("OK_RESET");
-          });
-        });
-      });
-    });
+    db.run("DROP TABLE IF EXISTS users");
+    db.run("DROP TABLE IF EXISTS orders");
+    db.run("DROP TABLE IF EXISTS driver_locations");
+    db.run(`CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      phone TEXT NOT NULL,
+      password TEXT NOT NULL,
+      role TEXT NOT NULL,
+      name TEXT,
+      approved INTEGER DEFAULT 0,
+      is_online INTEGER DEFAULT 0,
+      UNIQUE(phone, role)
+    )`);
+    db.run(`CREATE TABLE IF NOT EXISTS orders (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      passenger_phone TEXT NOT NULL,
+      pickup_text TEXT,
+      pickup_lat REAL,
+      pickup_lon REAL,
+      dropoff_text TEXT,
+      dropoff_lat REAL,
+      dropoff_lon REAL,
+      status TEXT NOT NULL DEFAULT 'new',
+      driver_phone TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER
+    )`);
+    db.run(`CREATE TABLE IF NOT EXISTS driver_locations (
+      driver_phone TEXT PRIMARY KEY,
+      lat REAL NOT NULL,
+      lon REAL NOT NULL,
+      updated_at INTEGER NOT NULL
+    )`);
+    res.send("OK_RESET");
   });
 });
 

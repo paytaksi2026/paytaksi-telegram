@@ -29,9 +29,7 @@
 <body>
 <div class="wrap">
   <div class="topbar" style="margin-bottom:10px">
-    <div>
-      <div class="pill" id="who"></div>
-    </div>
+    <div><div class="pill" id="who"></div></div>
     <div class="row">
       <a href="/app/passenger.html" class="pill" style="text-decoration:none;color:#e5e7eb">← Panel</a>
       <a href="/" onclick="localStorage.removeItem('pt_session')" class="pill" style="text-decoration:none;color:#e5e7eb">Çıxış</a>
@@ -60,10 +58,6 @@
       <button onclick="createOrder()">Sifariş et</button>
 
       <div class="msg" id="msg"></div>
-      <div style="margin-top:10px;opacity:.7;font-size:12px">
-        Qeyd: Bu MVP-dir. Marşrut/qiymət hələ hesablanmır.
-      </div>
-
       <div style="margin-top:16px">
         <div class="pill">Son sifarişlər</div>
         <div id="orders" style="margin-top:10px"></div>
@@ -74,10 +68,11 @@
 
 <script>
 const NOMINATIM = 'https://nominatim.openstreetmap.org';
-let map, meMarker, fromMarker, toMarker;
+let map, meMarker, fromMarker, toMarker, driverMarker;
 let pickup = null;   // {lat,lon,text}
 let dropoff = null;  // {lat,lon,text}
 let debounceT = null;
+let pollTimer = null;
 
 function getSession(){ try{ return JSON.parse(localStorage.getItem('pt_session')||'null'); }catch(e){ return null; } }
 const s = getSession();
@@ -86,13 +81,9 @@ document.getElementById('who').textContent = 'Müştəri: ' + (s.name||'') + ' �
 
 function setMsg(t){ document.getElementById('msg').textContent = t || ''; }
 
-function initMap(lat=40.4093, lon=49.8671){ // default Baku center
+function initMap(lat=40.4093, lon=49.8671){
   map = L.map('map').setView([lat, lon], 13);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19,
-    attribution: '&copy; OpenStreetMap'
-  }).addTo(map);
-
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(map);
   meMarker = L.marker([lat, lon]).addTo(map).bindPopup('Sizin yeriniz');
 }
 
@@ -127,9 +118,7 @@ async function useMyLocation(){
     const text = await reverse(lat,lon);
     setPickup(lat,lon,text);
     setMsg('');
-  }, (err)=>{
-    setMsg('GPS icazəsi verilmədi.');
-  }, { enableHighAccuracy:true, timeout:10000 });
+  }, ()=> setMsg('GPS icazəsi verilmədi.'), { enableHighAccuracy:true, timeout:10000 });
 }
 
 function renderSug(el, items, onPick){
@@ -186,18 +175,13 @@ async function createOrder(){
   const res = await fetch('/api/orders/create', {
     method:'POST',
     headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({
-      phone: s.phone,
-      password: s.password,
-      pickup,
-      dropoff
-    })
+    body: JSON.stringify({ phone: s.phone, password: s.password, pickup, dropoff })
   });
   const data = await res.json();
   if(data.success){
     setMsg('Sifariş yaradıldı. ID: ' + data.order_id);
     loadMyOrders();
-  }else{
+  } else {
     setMsg(data.error || 'ERROR');
   }
 }
@@ -208,30 +192,53 @@ async function loadMyOrders(){
   const box = document.getElementById('orders');
   if(!data.success){ box.innerHTML = '<div style="opacity:.7">Sifarişlər yüklənmədi.</div>'; return; }
   if(!data.orders.length){ box.innerHTML = '<div style="opacity:.7">Hələ sifariş yoxdur.</div>'; return; }
+
   box.innerHTML = data.orders.map(o => {
     const dt = new Date(o.created_at).toLocaleString();
-    const accepted = o.accepted_at ? new Date(o.accepted_at).toLocaleString() : '';
-    let extra = '';
-    if(o.status === 'accepted' && o.driver_phone){
-      extra = `<div style="margin-top:6px;opacity:.9"><b>Sürücü:</b> ${o.driver_phone}${accepted ? ` <span style=\"opacity:.7\">(${accepted})</span>` : ''}</div>`;
-    }
+    const driverLine = o.driver_phone ? `<div style="opacity:.9;margin-top:4px"><b>Sürücü:</b> ${o.driver_phone}</div>` : '';
     return `<div style="padding:10px 0;border-bottom:1px solid rgba(148,163,184,.12)">
       <div><b>#${o.id}</b> <span class="pill">${o.status}</span></div>
       <div style="opacity:.9;margin-top:4px"><b>Haradan:</b> ${o.pickup_text}</div>
       <div style="opacity:.9;margin-top:4px"><b>Haraya:</b> ${o.dropoff_text}</div>
-      ${extra}
+      ${driverLine}
       <div style="opacity:.65;margin-top:4px">${dt}</div>
     </div>`;
   }).join('');
+
+  // Track latest active order with driver
+  const active = data.orders.find(o => ['accepted','arrived','started'].includes(o.status) && o.driver_phone);
+  if(active) {
+    trackDriver(active.driver_phone);
+  } else {
+    if(driverMarker){ map.removeLayer(driverMarker); driverMarker=null; }
+  }
+}
+
+async function trackDriver(driverPhone){
+  try{
+    const res = await fetch('/api/driver/location/get?driver_phone=' + encodeURIComponent(driverPhone));
+    const data = await res.json().catch(()=> ({}));
+    if(!data.success || !data.location) return;
+    const {lat, lon} = data.location;
+    if(!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+    if(!driverMarker){
+      driverMarker = L.marker([lat, lon]).addTo(map).bindPopup('Sürücü');
+    } else {
+      driverMarker.setLatLng([lat, lon]);
+    }
+  }catch(e){}
+}
+
+function startPolling(){
+  if(pollTimer) return;
+  pollTimer = setInterval(loadMyOrders, 5000);
 }
 
 // Boot
 initMap();
 useMyLocation();
 loadMyOrders();
-
-// auto refresh (show when driver accepts)
-setInterval(loadMyOrders, 5000);
+startPolling();
 </script>
 </body>
 </html>
