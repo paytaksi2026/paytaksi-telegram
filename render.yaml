@@ -1,0 +1,32 @@
+services:
+  - type: web
+    name: paytaksi-telegram
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PUBLIC_BASE_URL
+        value: https://paytaksi-telegram-wlig.onrender.com
+      - key: PASSENGER_BOT_TOKEN
+        sync: false
+      - key: DRIVER_BOT_TOKEN
+        sync: false
+      - key: ADMIN_BOT_TOKEN
+        sync: false
+      - key: ADMIN_EMAIL
+        value: ratik1984@mail.ru
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+
+  - type: pserv
+    name: paytaksi-db
+    env: postgres
+    plan: free
+    ipAllowList: []
+    postgresMajorVersion: 18
