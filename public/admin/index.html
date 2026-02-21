@@ -64,30 +64,16 @@
             <option value="4">4 km</option>
             <option value="8">8 km</option>
           </select>
-          <button class="secondary" onclick="saveSettings()">Yadda saxla</button>
-          <button class="secondary" onclick="loadStats()">Statistika</button>
-        </div>
-        <div class="msg" id="statMsg"></div>
-        <div id="statsBox" style="opacity:.9"></div>
 
-        <table>
-          <thead>
-            <tr>
-              <th>ID</th>
-              <th>Ad</th>
-              <th>Telefon</th>
-              <th>Status</th>
-              <th>Online</th>
-              <th>Action</th>
-            </tr>
-          </thead>
-          <tbody id="tbody"></tbody>
-        </table>
-      </div>
-    </div>
-  </div>
-
-<script>
+          <label style="opacity:.85">Base (AZN):</label>
+          <input id="fareBase" type="number" step="0.01" style="max-width:140px" />
+          <label style="opacity:.85">KM (AZN):</label>
+          <input id="farePerKm" type="number" step="0.01" style="max-width:140px" />
+          <label style="opacity:.85">Dəqiqə (AZN):</label>
+          <input id="farePerMin" type="number" step="0.01" style="max-width:140px" />
+          <label style="opacity:.85">Min (AZN):</label>
+          <input id="fareMin" type="number" step="0.01" style="max-width:140px" />
+          <label style="opacity:.85">Komissiya (%):</labe<script>
 async function api(url, body){
   const res = await fetch(url, {
     method:'POST',
@@ -195,18 +181,41 @@ async function loadSettings(){
     const res = await fetch('/api/admin/settings');
     const data = await res.json().catch(()=> ({}));
     if(!res.ok) throw data;
-    const r = Number(data.settings?.default_radius_km || 4);
+    const s = data.settings || {};
+    const r = Number(s.default_radius_km ?? 4);
     defRadius.value = String([2,4,8].includes(r)?r:4);
+
+    // Pricing
+    fareBase.value = Number(s.fare_base ?? 1.0);
+    farePerKm.value = Number(s.fare_per_km ?? 0.6);
+    farePerMin.value = Number(s.fare_per_min ?? 0.15);
+    fareMin.value = Number(s.fare_min ?? 2.0);
+
+    // Commission shown as percent
+    const cr = Number(s.commission_rate ?? 0.10);
+    commissionRate.value = (cr*100).toFixed(1);
   }catch(e){}
+}
+
 }
 async function saveSettings(){
   setText('statMsg','...');
   try{
-    await api('/api/admin/settings', { default_radius_km: Number(defRadius.value) });
+    const payload = {
+      default_radius_km: Number(defRadius.value),
+      fare_base: Number(fareBase.value),
+      fare_per_km: Number(farePerKm.value),
+      fare_per_min: Number(farePerMin.value),
+      fare_min: Number(fareMin.value),
+      commission_rate: Number(commissionRate.value) / 100
+    };
+    await api('/api/admin/settings', payload);
     setText('statMsg','Yadda saxlandı.');
   }catch(e){
     setText('statMsg', (e && e.error) ? e.error : 'ERROR');
   }
+}
+
 }
 async function loadStats(){
   setText('statMsg','...');
