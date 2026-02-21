@@ -55,6 +55,21 @@
         </div>
         <div class="msg" id="msg"></div>
 
+        <hr style="border:none;border-top:1px solid rgba(148,163,184,.18);margin:14px 0" />
+        <h3 style="margin:0 0 10px 0">Sistem Ayarları</h3>
+        <div class="row" style="align-items:center">
+          <label style="opacity:.85">Default driver radius:</label>
+          <select id="defRadius">
+            <option value="2">2 km</option>
+            <option value="4">4 km</option>
+            <option value="8">8 km</option>
+          </select>
+          <button class="secondary" onclick="saveSettings()">Yadda saxla</button>
+          <button class="secondary" onclick="loadStats()">Statistika</button>
+        </div>
+        <div class="msg" id="statMsg"></div>
+        <div id="statsBox" style="opacity:.9"></div>
+
         <table>
           <thead>
             <tr>
@@ -93,6 +108,7 @@ async function login(){
     loginBox.classList.add('hidden');
     panelBox.classList.remove('hidden');
     loadDrivers('pending');
+    loadSettings();
   }catch(e){
     setText('loginMsg', (e && e.error) ? e.error : 'LOGIN_ERROR');
   }
@@ -144,6 +160,7 @@ async function approve(id){
     const r = await api('/api/admin/approve', { id });
     setText('msg','Approved: ' + (r.changes||0));
     loadDrivers('pending');
+    loadSettings();
   }catch(e){
     setText('msg', (e && e.error) ? e.error : 'ERROR');
   }
@@ -156,6 +173,7 @@ async function approveByPhone(){
     const r = await api('/api/admin/approve', { phone });
     setText('msg','Approved: ' + (r.changes||0));
     loadDrivers('pending');
+    loadSettings();
   }catch(e){
     setText('msg', (e && e.error) ? e.error : 'ERROR');
   }
@@ -171,6 +189,43 @@ async function delDriver(id){
     setText('msg', (e && e.error) ? e.error : 'ERROR');
   }
 }
+
+async function loadSettings(){
+  try{
+    const res = await fetch('/api/admin/settings');
+    const data = await res.json().catch(()=> ({}));
+    if(!res.ok) throw data;
+    const r = Number(data.settings?.default_radius_km || 4);
+    defRadius.value = String([2,4,8].includes(r)?r:4);
+  }catch(e){}
+}
+async function saveSettings(){
+  setText('statMsg','...');
+  try{
+    await api('/api/admin/settings', { default_radius_km: Number(defRadius.value) });
+    setText('statMsg','Yadda saxlandı.');
+  }catch(e){
+    setText('statMsg', (e && e.error) ? e.error : 'ERROR');
+  }
+}
+async function loadStats(){
+  setText('statMsg','...');
+  try{
+    const res = await fetch('/api/admin/stats');
+    const data = await res.json().catch(()=> ({}));
+    if(!res.ok) throw data;
+    const s = data.stats || {};
+    statsBox.innerHTML = `<div class="row" style="margin-top:6px">
+      <span class="badge">Rides: ${s.rides||0}</span>
+      <span class="badge">Dövriyyə: ${Number(s.total_turnover||0).toFixed(2)} AZN</span>
+      <span class="badge">Komissiya: ${Number(s.total_commission||0).toFixed(2)} AZN</span>
+    </div>`;
+    setText('statMsg','');
+  }catch(e){
+    setText('statMsg', (e && e.error) ? e.error : 'ERROR');
+  }
+}
+
 </script>
 </body>
 </html>

@@ -31,12 +31,35 @@ db.serialize(() => {
     name TEXT,
     approved INTEGER DEFAULT 0,      -- driver: 0 pending, 1 approved
     is_online INTEGER DEFAULT 0,     -- driver presence: 0/1
-    UNIQUE(phone, role)
+    
+    driver_radius_km INTEGER DEFAULT 4, -- driver radius (km)
+UNIQUE(phone, role)
   )`);
 
   // Ensure columns if older DB exists
   ensureColumn('users', 'approved', 'approved INTEGER DEFAULT 0');
   ensureColumn('users', 'is_online', 'is_online INTEGER DEFAULT 0');
+  ensureColumn('users', 'driver_radius_km', 'driver_radius_km INTEGER DEFAULT 4');
+
+  // Settings (default radius & pricing) - additive
+  db.run(`CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  )`);
+
+  function seedSetting(k, v){
+    db.get("SELECT value FROM settings WHERE key=?", [k], (e, row)=>{
+      if(e) return;
+      if(!row) db.run("INSERT INTO settings (key,value) VALUES (?,?)", [k, String(v)]);
+    });
+  }
+  seedSetting('default_radius_km', 4);
+  seedSetting('fare_base', 1.0);
+  seedSetting('fare_per_km', 0.6);
+  seedSetting('fare_per_min', 0.15);
+  seedSetting('fare_min', 2.0);
+  seedSetting('commission_rate', 0.10);
+
 
   db.run(`CREATE TABLE IF NOT EXISTS orders (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -67,6 +90,15 @@ db.serialize(() => {
   ensureColumn('orders', 'arrived_at', 'arrived_at INTEGER');
   ensureColumn('orders', 'cancelled_at', 'cancelled_at INTEGER');
   ensureColumn('orders', 'updated_at', 'updated_at INTEGER');
+  // Estimated pricing (from pickup->dropoff)
+  ensureColumn('orders', 'est_km', 'est_km REAL');
+  ensureColumn('orders', 'est_fare', 'est_fare REAL');
+  // Final fare engine (completed)
+  ensureColumn('orders', 'real_km', 'real_km REAL');
+  ensureColumn('orders', 'real_minutes', 'real_minutes REAL');
+  ensureColumn('orders', 'final_fare', 'final_fare REAL');
+  ensureColumn('orders', 'admin_fee', 'admin_fee REAL');
+  ensureColumn('orders', 'driver_earn', 'driver_earn REAL');
 });
 
 // ---------------- Helpers
@@ -77,7 +109,50 @@ function normRole(role) {
 function normPhone(phone) {
   return String(phone || '').trim();
 }
-function nowMs() { return Date.now(); }
+function nowMs() { return Date.now(); 
+async function getSetting(key, defVal){
+  return await new Promise((resolve)=>{
+    db.get("SELECT value FROM settings WHERE key=?", [key], (err, row)=>{
+      if(err || !row) return resolve(defVal);
+      const v = row.value;
+      const n = Number(v);
+      // if defVal is number, coerce
+      if (typeof defVal === 'number' && Number.isFinite(n)) return resolve(n);
+      resolve(v);
+    });
+  });
+}
+async function setSetting(key, value){
+  return await new Promise((resolve)=>{
+    db.run("INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+      [key, String(value)],
+      (err)=> resolve(!err)
+    );
+  });
+}
+function havKm(lat1, lon1, lat2, lon2){
+  const toRad = d => (d*Math.PI)/180;
+  const R = 6371;
+  const dLat = toRad(lat2-lat1);
+  const dLon = toRad(lon2-lon1);
+  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+  const c = 2*Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return R*c;
+}
+async function osrmRouteMeta(pickup_lon, pickup_lat, dropoff_lon, dropoff_lat){
+  try{
+    const url = `https://router.project-osrm.org/route/v1/driving/${pickup_lon},${pickup_lat};${dropoff_lon},${dropoff_lat}?overview=false`;
+    const r = await fetch(url, { headers: { 'Accept': 'application/json' } });
+    const j = await r.json();
+    const route = j && j.routes && j.routes[0];
+    if(route && typeof route.distance === 'number' && typeof route.duration === 'number'){
+      return { km: route.distance/1000, minutes: route.duration/60 };
+    }
+  }catch(e){}
+  return null;
+}
+
+}
 
 function adminCreds() {
   return {
@@ -146,7 +221,7 @@ function authUser(phone, password, role) {
     if (!phone || !password) return resolve(null);
 
     db.get(
-      "SELECT id, phone, role, name, approved, is_online FROM users WHERE phone=? AND password=? AND role=?",
+      "SELECT id, phone, role, name, approved, is_online, driver_radius_km FROM users WHERE phone=? AND password=? AND role=?",
       [phone, password, role],
       (err, row) => {
         if (err || !row) return resolve(null);
@@ -157,7 +232,8 @@ function authUser(phone, password, role) {
 }
 
 // ---------------- Auth (user)
-app.post('/api/register', (req, res) => {
+
+app.post('/api/register', async (req, res) => {
   const phone = normPhone(req.body.phone);
   const password = String(req.body.password || '');
   const role = normRole(req.body.role);
@@ -169,15 +245,19 @@ app.post('/api/register', (req, res) => {
   const approved = (role === 'driver') ? 0 : 1; // passengers active by default
   const is_online = 0;
 
+  const defaultRadius = await getSetting('default_radius_km', 4);
+  const driver_radius_km = (role === 'driver') ? Number(defaultRadius) : 0;
+
   db.run(
-    "INSERT INTO users (phone, password, role, name, approved, is_online) VALUES (?, ?, ?, ?, ?, ?)",
-    [phone, password, role, name, approved, is_online],
+    "INSERT INTO users (phone, password, role, name, approved, is_online, driver_radius_km) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    [phone, password, role, name, approved, is_online, driver_radius_km],
     function (err) {
       if (err) return res.json({ error: "PHONE_ROLE_EXISTS" });
-      res.json({ success: true, role, approved });
+      res.json({ success: true, role, approved, driver_radius_km });
     }
   );
 });
+
 
 app.post('/api/login', (req, res) => {
   const phone = normPhone(req.body.phone);
@@ -200,7 +280,7 @@ app.post('/api/login', (req, res) => {
         return res.json({ pending: true, name: row.name || "", role });
       }
 
-      return res.json({ success: true, name: row.name || "", role, is_online });
+      return res.json({ success: true, name: row.name || "", role, is_online, driver_radius_km: Number(row.driver_radius_km||0) });
     }
   );
 });
@@ -236,13 +316,32 @@ app.post('/api/driver/status', async (req, res) => {
     success: true,
     approved: parseInt(user.approved,10) || 0,
     is_online: parseInt(user.is_online,10) || 0,
-    name: user.name || ''
+    name: user.name || '',
+    driver_radius_km: Number(user.driver_radius_km||0)
   });
 });
 
+
+
+app.post('/api/driver/set-radius', async (req, res) => {
+  const user = await authUser(req.body.phone, req.body.password, 'driver');
+  if (!user) return res.json({ error: "INVALID_CREDENTIALS" });
+  const approved = parseInt(user.approved, 10) || 0;
+  if (approved === 0) return res.json({ error: "DRIVER_NOT_APPROVED" });
+
+  const r = parseInt(req.body.radius_km, 10);
+  if (![2,4,8].includes(r)) return res.json({ error: "INVALID_RADIUS" });
+
+  db.run("UPDATE users SET driver_radius_km=? WHERE id=?", [r, user.id], function(e2){
+    if (e2) return res.json({ error: "DB_ERROR" });
+    res.json({ success: true, driver_radius_km: r });
+  });
+});
+
+
 // ---------------- Orders (MVP)
+
 app.post('/api/orders/create', async (req, res) => {
-  // Passenger auth via phone+password (MVP)
   const passenger = await authUser(req.body.phone, req.body.password, 'passenger');
   if (!passenger) return res.json({ error: 'INVALID_CREDENTIALS' });
 
@@ -261,14 +360,25 @@ app.post('/api/orders/create', async (req, res) => {
     return res.json({ error: 'MISSING_COORDS' });
   }
 
+  // Estimate (km/fare)
+  let est_km = havKm(pickup_lat, pickup_lon, dropoff_lat, dropoff_lon);
+  const meta = await osrmRouteMeta(pickup_lon, pickup_lat, dropoff_lon, dropoff_lat);
+  if (meta && Number.isFinite(meta.km) && meta.km > 0) est_km = meta.km;
+
+  const fare_base = await getSetting('fare_base', 1.0);
+  const fare_per_km = await getSetting('fare_per_km', 0.6);
+  const fare_min = await getSetting('fare_min', 2.0);
+  let est_fare = fare_base + (fare_per_km * est_km);
+  if (Number.isFinite(fare_min)) est_fare = Math.max(fare_min, est_fare);
+
   const created_at = nowMs();
   db.run(
-    `INSERT INTO orders (passenger_phone, pickup_text, pickup_lat, pickup_lon, dropoff_text, dropoff_lat, dropoff_lon, status, created_at, updated_at, driver_phone, accepted_at, arrived_at, started_at, completed_at, cancelled_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'new', ?, ?, NULL, NULL, NULL, NULL, NULL, NULL)`,
-    [passenger.phone, pickup_text, pickup_lat, pickup_lon, dropoff_text, dropoff_lat, dropoff_lon, created_at, created_at],
+    `INSERT INTO orders (passenger_phone, pickup_text, pickup_lat, pickup_lon, dropoff_text, dropoff_lat, dropoff_lon, status, created_at, updated_at, driver_phone, accepted_at, arrived_at, started_at, completed_at, cancelled_at, est_km, est_fare)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'new', ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?)`,
+    [passenger.phone, pickup_text, pickup_lat, pickup_lon, dropoff_text, dropoff_lat, dropoff_lon, created_at, created_at, est_km, est_fare],
     function(err){
       if (err) return res.json({ error: 'DB_ERROR' });
-      res.json({ success: true, order_id: this.lastID });
+      res.json({ success: true, order_id: this.lastID, est_km: Number(est_km.toFixed(3)), est_fare: Number(est_fare.toFixed(2)) });
     }
   );
 });
@@ -280,7 +390,7 @@ app.get('/api/orders/my', async (req, res) => {
   if (!passenger) return res.status(401).json({ error: 'INVALID_CREDENTIALS' });
 
   db.all(
-    "SELECT id, pickup_text, dropoff_text, status, driver_phone, created_at, accepted_at, arrived_at, started_at, completed_at, cancelled_at, updated_at FROM orders WHERE passenger_phone=? ORDER BY id DESC LIMIT 20",
+    "SELECT id, pickup_text, dropoff_text, status, driver_phone, est_km, est_fare, real_km, real_minutes, final_fare, admin_fee, driver_earn, created_at, accepted_at, arrived_at, started_at, completed_at, cancelled_at, updated_at FROM orders WHERE passenger_phone=? ORDER BY id DESC LIMIT 20",
     [passenger.phone],
     (err, rows) => {
       if (err) return res.status(500).json({ error: 'DB_ERROR' });
@@ -290,22 +400,50 @@ app.get('/api/orders/my', async (req, res) => {
 });
 
 // Driver: new orders feed
+
 app.get('/api/orders/feed', async (req, res) => {
   const phone = normPhone(req.query.phone);
   const password = String(req.query.password || '');
   const driver = await authUser(phone, password, 'driver');
   if (!driver) return res.status(401).json({ error: 'INVALID_CREDENTIALS' });
   if (parseInt(driver.approved, 10) !== 1) return res.status(403).json({ error: 'DRIVER_PENDING' });
+  if (parseInt(driver.is_online, 10) !== 1) return res.status(403).json({ error: 'DRIVER_OFFLINE' });
 
-  db.all(
-    "SELECT id, passenger_phone, pickup_text, dropoff_text, pickup_lat, pickup_lon, dropoff_lat, dropoff_lon, status, created_at FROM orders WHERE status='new' ORDER BY id DESC LIMIT 30",
-    [],
-    (err, rows) => {
-      if (err) return res.status(500).json({ error: 'DB_ERROR' });
-      res.json({ success: true, orders: rows || [] });
-    }
-  );
+  const radiusKm = (Number(driver.driver_radius_km) > 0) ? Number(driver.driver_radius_km) : await getSetting('default_radius_km', 4);
+
+  db.get("SELECT lat, lng, updated_at FROM driver_locations WHERE driver_phone=?", [driver.phone], (eLoc, loc) => {
+    if (eLoc) return res.status(500).json({ error: 'DB_ERROR' });
+
+    // If no GPS yet, still return latest orders but without distance filter
+    const hasLoc = !!(loc && Number.isFinite(loc.lat) && Number.isFinite(loc.lng));
+
+    db.all(
+      "SELECT id, passenger_phone, pickup_text, dropoff_text, pickup_lat, pickup_lon, dropoff_lat, dropoff_lon, est_km, est_fare, status, created_at FROM orders WHERE status='new' ORDER BY id DESC LIMIT 50",
+      [],
+      (err, rows) => {
+        if (err) return res.status(500).json({ error: 'DB_ERROR' });
+        let list = (rows || []).map(o => ({...o}));
+
+        if (hasLoc) {
+          list = list.map(o => {
+            const d = havKm(loc.lat, loc.lng, Number(o.pickup_lat), Number(o.pickup_lon));
+            o.pickup_distance_km = Number(d.toFixed(3));
+            return o;
+          }).filter(o => Number(o.pickup_distance_km) <= Number(radiusKm));
+          list.sort((a,b)=> (a.pickup_distance_km - b.pickup_distance_km));
+        }
+
+        res.json({
+          success: true,
+          radius_km: Number(radiusKm),
+          driver_location: hasLoc ? { lat: loc.lat, lng: loc.lng, updated_at: loc.updated_at } : null,
+          orders: list
+        });
+      }
+    );
+  });
 });
+
 
 // Driver: accept order (first come first served)
 app.post('/api/orders/accept', async (req, res) => {
@@ -339,7 +477,7 @@ app.get('/api/orders/driver/my', async (req, res) => {
   if (parseInt(driver.approved, 10) !== 1) return res.status(403).json({ error: 'DRIVER_PENDING' });
 
   db.all(
-    "SELECT id, passenger_phone, pickup_text, pickup_lat, pickup_lon, dropoff_text, dropoff_lat, dropoff_lon, status, created_at, accepted_at, arrived_at, started_at, completed_at, cancelled_at, updated_at FROM orders WHERE driver_phone=? ORDER BY id DESC LIMIT 20",
+    "SELECT id, passenger_phone, pickup_text, pickup_lat, pickup_lon, dropoff_text, dropoff_lat, dropoff_lon, status, est_km, est_fare, real_km, real_minutes, final_fare, admin_fee, driver_earn, created_at, accepted_at, arrived_at, started_at, completed_at, cancelled_at, updated_at FROM orders WHERE driver_phone=? ORDER BY id DESC LIMIT 20",
     [driver.phone],
     (err, rows) => {
       if (err) return res.status(500).json({ error: 'DB_ERROR' });
@@ -371,6 +509,7 @@ app.post('/api/orders/cancel', async (req, res) => {
 });
 
 // Driver: update order status (arrived / in_progress / completed / cancelled)
+
 app.post('/api/orders/status', async (req, res) => {
   const phone = normPhone(req.body.phone);
   const password = String(req.body.password || '');
@@ -383,38 +522,81 @@ app.post('/api/orders/status', async (req, res) => {
   if (!order_id) return res.status(400).json({ error: 'ORDER_ID_REQUIRED' });
   if (!['arrived','in_progress','completed','cancelled'].includes(next)) return res.status(400).json({ error: 'BAD_STATUS' });
 
-  db.get(
-    "SELECT id, status, driver_phone FROM orders WHERE id=?",
-    [order_id],
-    (err, row) => {
-      if (err) return res.status(500).json({ error: 'DB_ERROR' });
-      if (!row) return res.status(404).json({ error: 'NOT_FOUND' });
-      if ((row.driver_phone || '') !== driver.phone) return res.status(403).json({ error: 'NOT_YOUR_ORDER' });
+  const dbGet = (sql, params)=>new Promise((resolve,reject)=>db.get(sql, params, (e,row)=> e?reject(e):resolve(row)));
+  const dbRun = (sql, params)=>new Promise((resolve,reject)=>db.run(sql, params, function(e){ e?reject(e):resolve(this); }));
 
-      const cur = row.status;
-      const allowed = {
-        accepted: ['arrived','in_progress','cancelled'],
-        arrived: ['in_progress','cancelled'],
-        in_progress: ['completed'],
-      };
-      if (!allowed[cur] || !allowed[cur].includes(next)) return res.status(409).json({ error: 'BAD_TRANSITION' });
+  try{
+    const row = await dbGet("SELECT * FROM orders WHERE id=?", [order_id]);
+    if (!row) return res.status(404).json({ error: 'NOT_FOUND' });
+    if ((row.driver_phone || '') !== driver.phone) return res.status(403).json({ error: 'NOT_YOUR_ORDER' });
 
-      const ts = nowMs();
-      const sets = ["status=?", "updated_at=?"];
-      const vals = [next, ts];
-      if (next === 'arrived') { sets.push('arrived_at=?'); vals.push(ts); }
-      if (next === 'in_progress') { sets.push('started_at=?'); vals.push(ts); }
-      if (next === 'completed') { sets.push('completed_at=?'); vals.push(ts); }
-      if (next === 'cancelled') { sets.push('cancelled_at=?'); vals.push(ts); }
+    const cur = row.status;
+    const allowed = {
+      accepted: ['arrived','in_progress','cancelled'],
+      arrived: ['in_progress','cancelled'],
+      in_progress: ['completed'],
+    };
+    if (!allowed[cur] || !allowed[cur].includes(next)) return res.status(409).json({ error: 'BAD_TRANSITION' });
 
-      vals.push(order_id);
-      db.run(`UPDATE orders SET ${sets.join(', ')} WHERE id=?`, vals, function(e2){
-        if (e2) return res.status(500).json({ error: 'DB_ERROR' });
-        res.json({ success: true });
+    const ts = nowMs();
+    const sets = ["status=?", "updated_at=?"];
+    const vals = [next, ts];
+
+    if (next === 'arrived') { sets.push('arrived_at=?'); vals.push(ts); }
+    if (next === 'in_progress') { sets.push('started_at=?'); vals.push(ts); }
+    if (next === 'completed') { sets.push('completed_at=?'); vals.push(ts); }
+    if (next === 'cancelled') { sets.push('cancelled_at=?'); vals.push(ts); }
+
+    vals.push(order_id);
+    await dbRun(`UPDATE orders SET ${sets.join(', ')} WHERE id=?`, vals);
+
+    // Fare engine on completion (additive; does not break old flow)
+    if (next === 'completed') {
+      const ord = await dbGet("SELECT * FROM orders WHERE id=?", [order_id]);
+      const started = Number(ord.started_at || 0);
+      const completed = Number(ord.completed_at || ts);
+      const minutes = started ? Math.max(1, Math.round((completed - started) / 60000)) : 0;
+
+      let km = havKm(Number(ord.pickup_lat), Number(ord.pickup_lon), Number(ord.dropoff_lat), Number(ord.dropoff_lon));
+      const meta = await osrmRouteMeta(Number(ord.pickup_lon), Number(ord.pickup_lat), Number(ord.dropoff_lon), Number(ord.dropoff_lat));
+      if (meta && Number.isFinite(meta.km) && meta.km > 0) km = meta.km;
+
+      const fare_base = await getSetting('fare_base', 1.0);
+      const fare_per_km = await getSetting('fare_per_km', 0.6);
+      const fare_per_min = await getSetting('fare_per_min', 0.15);
+      const fare_min = await getSetting('fare_min', 2.0);
+      const commission_rate = await getSetting('commission_rate', 0.10);
+
+      let final_fare = Number(fare_base) + (Number(fare_per_km) * km) + (Number(fare_per_min) * minutes);
+      final_fare = Math.max(Number(fare_min), final_fare);
+
+      const admin_fee = final_fare * Number(commission_rate);
+      const driver_earn = final_fare - admin_fee;
+
+      await dbRun(
+        "UPDATE orders SET real_km=?, real_minutes=?, final_fare=?, admin_fee=?, driver_earn=? WHERE id=?",
+        [km, minutes, final_fare, admin_fee, driver_earn, order_id]
+      );
+
+      return res.json({
+        success: true,
+        fare: {
+          real_km: Number(km.toFixed(3)),
+          real_minutes: minutes,
+          final_fare: Number(final_fare.toFixed(2)),
+          admin_fee: Number(admin_fee.toFixed(2)),
+          driver_earn: Number(driver_earn.toFixed(2)),
+        }
       });
     }
-  );
+
+    res.json({ success: true });
+  }catch(e){
+    console.error(e);
+    res.status(500).json({ error: 'DB_ERROR' });
+  }
 });
+
 
 // Driver: location ping
 app.post('/api/driver/location', async (req, res) => {
@@ -438,6 +620,19 @@ app.post('/api/driver/location', async (req, res) => {
     }
   );
 });
+
+
+app.get('/api/driver/location/get', (req, res) => {
+  const driver_phone = normPhone(req.query.driver_phone);
+  if (!driver_phone) return res.status(400).json({ error: 'DRIVER_PHONE_REQUIRED' });
+
+  db.get("SELECT lat, lng, updated_at FROM driver_locations WHERE driver_phone=?", [driver_phone], (err, row) => {
+    if (err) return res.status(500).json({ error: 'DB_ERROR' });
+    if (!row) return res.json({ success: true, location: null });
+    res.json({ success: true, location: { lat: row.lat, lon: row.lng, updated_at: row.updated_at } });
+  });
+});
+
 
 // Passenger: get driver location for an order (only after accepted)
 app.get('/api/orders/driver_location', async (req, res) => {
@@ -510,6 +705,50 @@ app.get('/api/admin/drivers', requireAdmin, (req, res) => {
   });
 });
 
+
+app.get('/api/admin/settings', requireAdmin, async (req, res) => {
+  const s = {
+    default_radius_km: await getSetting('default_radius_km', 4),
+    fare_base: await getSetting('fare_base', 1.0),
+    fare_per_km: await getSetting('fare_per_km', 0.6),
+    fare_per_min: await getSetting('fare_per_min', 0.15),
+    fare_min: await getSetting('fare_min', 2.0),
+    commission_rate: await getSetting('commission_rate', 0.10),
+  };
+  res.json({ success: true, settings: s });
+});
+
+app.post('/api/admin/settings', requireAdmin, async (req, res) => {
+  const updates = {};
+  if (req.body.default_radius_km != null) {
+    const r = parseInt(req.body.default_radius_km, 10);
+    if (![2,4,8].includes(r)) return res.status(400).json({ error: 'INVALID_RADIUS' });
+    updates.default_radius_km = r;
+    await setSetting('default_radius_km', r);
+  }
+  // Optional: allow pricing edits later (kept additive)
+  for (const k of ['fare_base','fare_per_km','fare_per_min','fare_min','commission_rate']) {
+    if (req.body[k] != null) {
+      const v = Number(req.body[k]);
+      if (!Number.isFinite(v)) return res.status(400).json({ error: 'INVALID_VALUE' });
+      updates[k] = v;
+      await setSetting(k, v);
+    }
+  }
+  res.json({ success: true, updates });
+});
+
+app.get('/api/admin/stats', requireAdmin, (req, res) => {
+  db.get(
+    "SELECT COUNT(*) as rides, COALESCE(SUM(final_fare),0) as total_turnover, COALESCE(SUM(admin_fee),0) as total_commission FROM orders WHERE status='completed'",
+    [],
+    (err, row) => {
+      if (err) return res.status(500).json({ error: 'DB_ERROR' });
+      res.json({ success: true, stats: row });
+    }
+  );
+});
+
 app.post('/api/admin/approve', requireAdmin, (req, res) => {
   const id = parseInt(req.body.id, 10);
   const phone = normPhone(req.body.phone);
@@ -561,6 +800,7 @@ app.get('/admin/reset-db', (req, res) => {
           name TEXT,
           approved INTEGER DEFAULT 0,
           is_online INTEGER DEFAULT 0,
+          driver_radius_km INTEGER DEFAULT 4,
           UNIQUE(phone, role)
         )`, (err2) => {
             if (err2) return res.status(500).send("DB_ERROR");
@@ -582,7 +822,14 @@ app.get('/admin/reset-db', (req, res) => {
               started_at INTEGER,
               completed_at INTEGER,
               cancelled_at INTEGER,
-              updated_at INTEGER
+              updated_at INTEGER,
+              est_km REAL,
+              est_fare REAL,
+              real_km REAL,
+              real_minutes REAL,
+              final_fare REAL,
+              admin_fee REAL,
+              driver_earn REAL
             )`, (err4) => {
               if (err4) return res.status(500).send("DB_ERROR");
 
@@ -593,7 +840,21 @@ app.get('/admin/reset-db', (req, res) => {
                 updated_at INTEGER NOT NULL
               )`, (err5) => {
                 if (err5) return res.status(500).send("DB_ERROR");
-                res.send("OK_RESET");
+                
+db.run(`CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+)`, ()=>{
+  // seed defaults
+  db.run("INSERT OR IGNORE INTO settings (key,value) VALUES ('default_radius_km','4')");
+  db.run("INSERT OR IGNORE INTO settings (key,value) VALUES ('fare_base','1')");
+  db.run("INSERT OR IGNORE INTO settings (key,value) VALUES ('fare_per_km','0.6')");
+  db.run("INSERT OR IGNORE INTO settings (key,value) VALUES ('fare_per_min','0.15')");
+  db.run("INSERT OR IGNORE INTO settings (key,value) VALUES ('fare_min','2')");
+  db.run("INSERT OR IGNORE INTO settings (key,value) VALUES ('commission_rate','0.10')");
+  res.send("OK_RESET");
+});
+
               });
             });
           });

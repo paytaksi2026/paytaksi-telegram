@@ -74,6 +74,9 @@
 
 <script>
 const NOMINATIM = 'https://nominatim.openstreetmap.org';
+// Estimate defaults (final fare is computed on server at completion)
+const START_PRICE = 1.0;
+const PRICE_PER_KM = 0.6;
 let map, meMarker, fromMarker, toMarker, driverMarker;
 let routeLine = null;
 let lastRouteKey = '';
@@ -260,29 +263,35 @@ async function loadMyOrders(){
   box.innerHTML = data.orders.map(o => {
     const dt = new Date(o.created_at).toLocaleString();
     const driverLine = o.driver_phone ? `<div style="opacity:.9;margin-top:4px"><b>Sürücü:</b> ${o.driver_phone}</div>` : '';
+    const finalLine = (o.final_fare != null) ? `<div style="opacity:.9;margin-top:4px"><b>Yekun:</b> ${Number(o.final_fare).toFixed(2)} AZN</div>` : '';
     const estLine = (o.est_fare != null) ? `<div style="opacity:.9;margin-top:4px"><b>Təxmini:</b> ${Number(o.est_km||0).toFixed(1)} km • ${o.est_fare} AZN</div>` : '';
     return `<div style="padding:10px 0;border-bottom:1px solid rgba(148,163,184,.12)">
       <div><b>#${o.id}</b> <span class="pill">${o.status}</span></div>
       <div style="opacity:.9;margin-top:4px"><b>Haradan:</b> ${o.pickup_text}</div>
       <div style="opacity:.9;margin-top:4px"><b>Haraya:</b> ${o.dropoff_text}</div>
       ${estLine}
+      ${finalLine}
       ${driverLine}
       <div style="opacity:.65;margin-top:4px">${dt}</div>
     </div>`;
   }).join('');
 
-  const active = data.orders.find(o => ['accepted','arrived','started'].includes(o.status) && o.driver_phone);
-  if(active) trackDriver(active.driver_phone);
+  const active = data.orders.find(o => ['accepted','arrived','in_progress'].includes(o.status) && o.driver_phone);
+  if(active) trackDriverByOrder(active.id);
   else { if(driverMarker){ map.removeLayer(driverMarker); driverMarker=null; } }
 }
 
-async function trackDriver(driverPhone){
+async function trackDriverByOrder(orderId){
   try{
-    const res = await fetch('/api/driver/location/get?driver_phone=' + encodeURIComponent(driverPhone));
+    const url = '/api/orders/driver_location?phone=' + encodeURIComponent(s.phone) + '&password=' + encodeURIComponent(s.password) + '&order_id=' + encodeURIComponent(orderId);
+    const res = await fetch(url);
     const data = await res.json().catch(()=> ({}));
     if(!data.success || !data.location) return;
-    const {lat, lon} = data.location;
+    const lat = Number(data.location.lat);
+    const lon = Number(data.location.lng ?? data.location.lon);
     if(!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+
+    // smooth marker
     if(!driverMarker) driverMarker = L.marker([lat, lon]).addTo(map).bindPopup('Sürücü');
     else driverMarker.setLatLng([lat, lon]);
   }catch(e){}

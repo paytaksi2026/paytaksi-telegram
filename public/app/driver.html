@@ -35,6 +35,12 @@
     <div class="row">
       <button onclick="goOnline()">Online ol</button>
       <button class="secondary" onclick="goOffline()">Offline ol</button>
+      <select id="radiusSelect" class="secondary" style="padding:10px 12px;border-radius:10px;border:1px solid rgba(148,163,184,.25);background:rgba(2,6,23,.55);color:#e5e7eb" onchange="changeRadius()">
+        <option value="2">2 km</option>
+        <option value="4">4 km</option>
+        <option value="8">8 km</option>
+      </select>
+
       <a href="/admin" class="badge" style="text-decoration:none;color:#e5e7eb">Admin Panel</a>
     </div>
     <div class="msg" id="msg"></div>
@@ -79,6 +85,21 @@ if(!s || s.role !== 'driver'){ location.href='/'; }
 document.getElementById('who').textContent = 'Hörmətli ' + (s.name||'') + ' (' + (s.phone||'') + ')';
 setSt(!!s.is_online);
 
+async function refreshDriverMeta(){
+  try{
+    const res = await fetch('/api/driver/status', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password })});
+    const data = await res.json();
+    if(data && data.success){
+      const r = Number(data.driver_radius_km||s.driver_radius_km||4);
+      s.driver_radius_km = r;
+      localStorage.setItem('pt_session', JSON.stringify(s));
+      const sel = document.getElementById('radiusSelect');
+      if(sel) sel.value = String([2,4,8].includes(r)?r:4);
+    }
+  }catch(e){}
+}
+refreshDriverMeta();
+
 async function goOnline(){
   setMsg('...');
   const res = await fetch('/api/driver/online', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password })});
@@ -87,6 +108,15 @@ async function goOnline(){
   else if(data.error==='DRIVER_NOT_APPROVED'){ setMsg('Admin təsdiqi yoxdur.'); }
   else setMsg(data.error||'ERROR');
 }
+async function changeRadius(){
+  const r = Number(document.getElementById('radiusSelect').value);
+  setMsg('...');
+  const res = await fetch('/api/driver/set-radius', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password, radius_km:r })});
+  const data = await res.json();
+  if(data.success){ setMsg('Radius: ' + data.driver_radius_km + ' km'); }
+  else setMsg(data.error||'ERROR');
+}
+
 async function goOffline(){
   setMsg('...');
   const res = await fetch('/api/driver/offline', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password })});
@@ -210,7 +240,10 @@ async function loadFeed(){
         <button onclick="acceptOrder(${o.id})">Qəbul et</button>
       </div>
       <div style="margin-top:8px;opacity:.9"><b>Haradan:</b> ${esc(o.pickup_text)}</div>
+      ${o.pickup_distance_km!=null ? `<div style="margin-top:6px;opacity:.8"><b>Məsafə:</b> ${Number(o.pickup_distance_km).toFixed(2)} km</div>` : ''}
+      ${o.est_fare!=null ? `<div style="margin-top:6px;opacity:.8"><b>Təxmini:</b> ${Number(o.est_km||0).toFixed(1)} km • ${Number(o.est_fare).toFixed(2)} AZN</div>` : ''}
       <div style="margin-top:6px;opacity:.9"><b>Haraya:</b> ${esc(o.dropoff_text)}</div>
+      ${o.final_fare!=null ? `<div style="margin-top:6px;opacity:.85"><b>Yekun:</b> ${Number(o.final_fare).toFixed(2)} AZN • <b>Sizin:</b> ${Number(o.driver_earn||0).toFixed(2)} AZN</div>` : ''}
       <div style="margin-top:6px;opacity:.65">${dt}</div>
     </div>`;
   }).join('');
@@ -276,8 +309,11 @@ async function loadMy(){
     return `<div style="padding:12px;border:1px solid rgba(148,163,184,.18);border-radius:12px;margin-bottom:10px;background:rgba(2,6,23,.35)">
       <div><b>#${o.id}</b> <span class="badge">${esc(o.status)}</span></div>
       <div style="margin-top:8px;opacity:.9"><b>Haradan:</b> ${esc(o.pickup_text)}</div>
+      ${o.pickup_distance_km!=null ? `<div style="margin-top:6px;opacity:.8"><b>Məsafə:</b> ${Number(o.pickup_distance_km).toFixed(2)} km</div>` : ''}
+      ${o.est_fare!=null ? `<div style="margin-top:6px;opacity:.8"><b>Təxmini:</b> ${Number(o.est_km||0).toFixed(1)} km • ${Number(o.est_fare).toFixed(2)} AZN</div>` : ''}
       <div style="margin-top:6px;opacity:.9"><b>Haraya:</b> ${esc(o.dropoff_text)}</div>
       ${at ? `<div style="margin-top:6px;opacity:.75"><b>Qəbul:</b> ${at}</div>` : ''}
+      ${o.final_fare!=null ? `<div style="margin-top:6px;opacity:.85"><b>Yekun:</b> ${Number(o.final_fare).toFixed(2)} AZN • <b>Sizin:</b> ${Number(o.driver_earn||0).toFixed(2)} AZN</div>` : ''}
       <div style="margin-top:6px;opacity:.65">${dt}</div>
       ${actions}
     </div>`;
