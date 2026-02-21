@@ -9,86 +9,253 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
 <style>
-body{margin:0;background:#0b1220;color:#e5e7eb;font-family:Arial}
-#map{height:55vh;width:100%}
-.wrap{max-width:980px;margin:0 auto;padding:14px}
-.card{background:#0f172a;border-radius:14px;overflow:hidden}
-.pad{padding:14px}
-input,button{width:100%;padding:12px;border-radius:10px;border:1px solid #334155;background:#020617;color:#fff}
-button{background:#22c55e;border:none;color:#081014;font-weight:700;cursor:pointer}
-.row{display:flex;gap:10px;flex-wrap:wrap}
-.msg{margin-top:10px;min-height:20px}
-.pill{display:inline-block;padding:4px 10px;border-radius:999px;background:#1e293b;font-size:12px}
+  body{margin:0;background:#0b1220;color:#e5e7eb;font-family:Arial,Helvetica,sans-serif}
+  #map{height:52vh;width:100%}
+  .wrap{max-width:980px;margin:0 auto;padding:14px}
+  .card{background:rgba(15,23,42,.75);border:1px solid rgba(148,163,184,.2);border-radius:14px;overflow:hidden;box-shadow:0 10px 30px rgba(0,0,0,.35)}
+  .pad{padding:14px}
+  input,button{width:100%;padding:12px;border-radius:10px;border:1px solid rgba(148,163,184,.25);background:rgba(2,6,23,.55);color:#e5e7eb;box-sizing:border-box}
+  button{background:#22c55e;border:none;color:#081014;font-weight:700;cursor:pointer}
+  button.secondary{background:rgba(148,163,184,.15);border:1px solid rgba(148,163,184,.25);color:#e5e7eb}
+  .row{display:flex;gap:10px;flex-wrap:wrap}
+  .msg{min-height:22px;margin-top:10px}
+  .suggest{background:rgba(2,6,23,.8);border:1px solid rgba(148,163,184,.15);border-radius:10px;margin-top:6px;overflow:hidden}
+  .suggest button{width:100%;text-align:left;background:transparent;border:none;color:#e5e7eb;padding:10px 12px;cursor:pointer}
+  .suggest button:hover{background:rgba(148,163,184,.12)}
+  .topbar{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+  .pill{display:inline-block;padding:4px 10px;border-radius:999px;border:1px solid rgba(148,163,184,.25);background:rgba(148,163,184,.10);font-size:12px}
+  .est{margin-top:10px;display:flex;gap:8px;flex-wrap:wrap}
 </style>
 </head>
 <body>
 <div class="wrap">
-<div class="card">
-<div id="map"></div>
-<div class="pad">
+  <div class="topbar" style="margin-bottom:10px">
+    <div><div class="pill" id="who"></div></div>
+    <div class="row">
+      <a href="/app/passenger.html" class="pill" style="text-decoration:none;color:#e5e7eb">← Panel</a>
+      <a href="/" onclick="localStorage.removeItem('pt_session')" class="pill" style="text-decoration:none;color:#e5e7eb">Çıxış</a>
+    </div>
+  </div>
 
-<label>Haradan</label>
-<input id="from"/>
+  <div class="card">
+    <div id="map"></div>
+    <div class="pad">
+      <div class="row">
+        <button class="secondary" onclick="useMyLocation()">Cari yer</button>
+        <button class="secondary" onclick="swap()">↕ Dəyiş</button>
+      </div>
 
-<label style="margin-top:10px">Haraya</label>
-<input id="to"/>
+      <div style="height:10px"></div>
+      <label style="opacity:.85">Haradan</label>
+      <input id="from" placeholder="Cari yer..." />
+      <div id="fromSug" class="suggest" style="display:none"></div>
 
-<div style="height:12px"></div>
-<button onclick="createOrder()">Sifariş et</button>
-<div class="msg" id="msg"></div>
+      <div style="height:10px"></div>
+      <label style="opacity:.85">Haraya</label>
+      <input id="to" placeholder="Ünvan yaz..." />
+      <div id="toSug" class="suggest" style="display:none"></div>
 
-</div>
-</div>
+      <div class="est" id="estBox" style="display:none">
+        <span class="pill" id="estKm"></span>
+        <span class="pill" id="estFare"></span>
+      </div>
+
+      <div style="height:12px"></div>
+      <button onclick="createOrder()">Sifariş et</button>
+
+      <div class="msg" id="msg"></div>
+      <div style="margin-top:16px">
+        <div class="pill">Son sifarişlər</div>
+        <div id="orders" style="margin-top:10px"></div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script>
-let map = L.map('map').setView([40.4093,49.8671],13);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(map);
+const NOMINATIM = 'https://nominatim.openstreetmap.org';
+let map, meMarker, fromMarker, toMarker, driverMarker;
+let pickup = null;
+let dropoff = null;
+let debounceT = null;
+let pollTimer = null;
 
-let pickup=null, dropoff=null;
-let fromMarker=null, toMarker=null, routeLine=null;
+function getSession(){ try{ return JSON.parse(localStorage.getItem('pt_session')||'null'); }catch(e){ return null; } }
+const s = getSession();
+if(!s || s.role !== 'passenger'){ location.href='/'; }
+document.getElementById('who').textContent = 'Müştəri: ' + (s.name||'') + ' • ' + (s.phone||'');
 
-async function geocode(q){
- const r=await fetch('https://nominatim.openstreetmap.org/search?format=json&q='+encodeURIComponent(q)+'&countrycodes=az');
- const j=await r.json();
- if(j.length) return {lat:+j[0].lat,lon:+j[0].lon,text:j[0].display_name};
- return null;
+function setMsg(t){ document.getElementById('msg').textContent = t || ''; }
+
+function havKm(lat1, lon1, lat2, lon2){
+  const toRad = d => (d*Math.PI)/180;
+  const R = 6371;
+  const dLat = toRad(lat2-lat1);
+  const dLon = toRad(lon2-lon1);
+  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+  const c = 2*Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return R*c;
+}
+function showEstimate(){
+  if(!pickup || !dropoff){ estBox.style.display='none'; return; }
+  const km = havKm(pickup.lat, pickup.lon, dropoff.lat, dropoff.lon);
+  const base = 1.0, per = 0.6, min = 2.0;
+  const fare = Math.max(min, base + per*km);
+  estBox.style.display='flex';
+  estKm.textContent = km.toFixed(1) + ' km (təxmini)';
+  estFare.textContent = fare.toFixed(2) + ' AZN (təxmini)';
 }
 
-async function drawRoute(){
- if(!pickup||!dropoff) return;
- const url=`https://router.project-osrm.org/route/v1/driving/${pickup.lon},${pickup.lat};${dropoff.lon},${dropoff.lat}?overview=full&geometries=geojson`;
- const r=await fetch(url);
- const j=await r.json();
- if(!j.routes||!j.routes.length) return;
- const coords=j.routes[0].geometry.coordinates.map(c=>[c[1],c[0]]);
- if(routeLine) map.removeLayer(routeLine);
- routeLine=L.polyline(coords,{color:'#22c55e',weight:5}).addTo(map);
- map.fitBounds(routeLine.getBounds(),{padding:[40,40]});
+function initMap(lat=40.4093, lon=49.8671){
+  map = L.map('map').setView([lat, lon], 13);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(map);
+  meMarker = L.marker([lat, lon]).addTo(map).bindPopup('Sizin yeriniz');
 }
 
-document.getElementById('from').addEventListener('change',async e=>{
- const g=await geocode(e.target.value);
- if(!g) return;
- pickup=g;
- if(fromMarker) map.removeLayer(fromMarker);
- fromMarker=L.marker([g.lat,g.lon]).addTo(map).bindPopup('Haradan').openPopup();
- drawRoute();
-});
-
-document.getElementById('to').addEventListener('change',async e=>{
- const g=await geocode(e.target.value);
- if(!g) return;
- dropoff=g;
- if(toMarker) map.removeLayer(toMarker);
- toMarker=L.marker([g.lat,g.lon]).addTo(map).bindPopup('Haraya').openPopup();
- drawRoute();
-});
-
-function createOrder(){
- if(!pickup||!dropoff){document.getElementById('msg').textContent='Ünvanları seçin.';return;}
- document.getElementById('msg').textContent='Marşrut çəkildi ✅';
+function setPickup(lat, lon, text){
+  pickup = {lat, lon, text};
+  from.value = text || '';
+  if(fromMarker) map.removeLayer(fromMarker);
+  fromMarker = L.marker([lat, lon]).addTo(map).bindPopup('Haradan').openPopup();
+  map.setView([lat, lon], 14);
+  showEstimate();
 }
+function setDropoff(lat, lon, text){
+  dropoff = {lat, lon, text};
+  to.value = text || '';
+  if(toMarker) map.removeLayer(toMarker);
+  toMarker = L.marker([lat, lon]).addTo(map).bindPopup('Haraya').openPopup();
+  showEstimate();
+}
+
+async function reverse(lat, lon){
+  const url = `${NOMINATIM}/reverse?format=jsonv2&lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&addressdetails=1&accept-language=az`;
+  const r = await fetch(url, { headers: { 'Accept': 'application/json' } });
+  const j = await r.json();
+  return (j && j.display_name) ? j.display_name : `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+}
+
+async function useMyLocation(){
+  setMsg('GPS...');
+  navigator.geolocation.getCurrentPosition(async (pos)=>{
+    const lat = pos.coords.latitude;
+    const lon = pos.coords.longitude;
+    map.setView([lat,lon], 14);
+    meMarker.setLatLng([lat,lon]);
+    const text = await reverse(lat,lon);
+    setPickup(lat,lon,text);
+    setMsg('');
+  }, ()=> setMsg('GPS icazəsi verilmədi.'), { enableHighAccuracy:true, timeout:10000 });
+}
+
+function renderSug(el, items, onPick){
+  el.innerHTML = '';
+  for(const it of items){
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = it.text;
+    btn.onclick = ()=> onPick(it);
+    el.appendChild(btn);
+  }
+  el.style.display = items.length ? 'block' : 'none';
+}
+
+async function search(q){
+  const url = `${NOMINATIM}/search?format=jsonv2&addressdetails=1&limit=6&countrycodes=az&q=${encodeURIComponent(q)}&accept-language=az`;
+  const r = await fetch(url, { headers: { 'Accept': 'application/json' } });
+  const j = await r.json();
+  return (j||[]).map(x => ({ text: x.display_name, lat: Number(x.lat), lon: Number(x.lon) })).filter(x => Number.isFinite(x.lat) && Number.isFinite(x.lon));
+}
+
+function hookAutocomplete(input, sugEl, setter){
+  input.addEventListener('input', ()=>{
+    const q = input.value.trim();
+    if(debounceT) clearTimeout(debounceT);
+    if(q.length < 3){ sugEl.style.display='none'; return; }
+    debounceT = setTimeout(async ()=>{
+      try{
+        const items = await search(q);
+        renderSug(sugEl, items, (it)=>{
+          setter(it.lat, it.lon, it.text);
+          sugEl.style.display='none';
+        });
+      }catch(e){ sugEl.style.display='none'; }
+    }, 700);
+  });
+}
+
+hookAutocomplete(from, document.getElementById('fromSug'), setPickup);
+hookAutocomplete(to, document.getElementById('toSug'), setDropoff);
+
+function swap(){
+  const a = pickup, b = dropoff;
+  pickup = b; dropoff = a;
+  if(pickup) setPickup(pickup.lat,pickup.lon,pickup.text);
+  if(dropoff) setDropoff(dropoff.lat,dropoff.lon,dropoff.text);
+}
+
+async function createOrder(){
+  if(!pickup || !dropoff){ setMsg('Haradan və Haraya seçin.'); return; }
+  setMsg('Göndərilir...');
+  const res = await fetch('/api/orders/create', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ phone: s.phone, password: s.password, pickup, dropoff })
+  });
+  const data = await res.json();
+  if(data.success){
+    setMsg('Sifariş yaradıldı. ID: ' + data.order_id + ' • ' + (data.est_fare ?? '') + ' AZN (təxmini)');
+    loadMyOrders();
+  } else setMsg(data.error || 'ERROR');
+}
+
+async function loadMyOrders(){
+  const res = await fetch('/api/orders/my?phone=' + encodeURIComponent(s.phone) + '&password=' + encodeURIComponent(s.password));
+  const data = await res.json().catch(()=> ({}));
+  const box = document.getElementById('orders');
+  if(!data.success){ box.innerHTML = '<div style="opacity:.7">Sifarişlər yüklənmədi.</div>'; return; }
+  if(!data.orders.length){ box.innerHTML = '<div style="opacity:.7">Hələ sifariş yoxdur.</div>'; return; }
+
+  box.innerHTML = data.orders.map(o => {
+    const dt = new Date(o.created_at).toLocaleString();
+    const driverLine = o.driver_phone ? `<div style="opacity:.9;margin-top:4px"><b>Sürücü:</b> ${o.driver_phone}</div>` : '';
+    const estLine = (o.est_fare != null) ? `<div style="opacity:.9;margin-top:4px"><b>Təxmini:</b> ${Number(o.est_km||0).toFixed(1)} km • ${o.est_fare} AZN</div>` : '';
+    return `<div style="padding:10px 0;border-bottom:1px solid rgba(148,163,184,.12)">
+      <div><b>#${o.id}</b> <span class="pill">${o.status}</span></div>
+      <div style="opacity:.9;margin-top:4px"><b>Haradan:</b> ${o.pickup_text}</div>
+      <div style="opacity:.9;margin-top:4px"><b>Haraya:</b> ${o.dropoff_text}</div>
+      ${estLine}
+      ${driverLine}
+      <div style="opacity:.65;margin-top:4px">${dt}</div>
+    </div>`;
+  }).join('');
+
+  const active = data.orders.find(o => ['accepted','arrived','started'].includes(o.status) && o.driver_phone);
+  if(active) trackDriver(active.driver_phone);
+  else { if(driverMarker){ map.removeLayer(driverMarker); driverMarker=null; } }
+}
+
+async function trackDriver(driverPhone){
+  try{
+    const res = await fetch('/api/driver/location/get?driver_phone=' + encodeURIComponent(driverPhone));
+    const data = await res.json().catch(()=> ({}));
+    if(!data.success || !data.location) return;
+    const {lat, lon} = data.location;
+    if(!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+    if(!driverMarker) driverMarker = L.marker([lat, lon]).addTo(map).bindPopup('Sürücü');
+    else driverMarker.setLatLng([lat, lon]);
+  }catch(e){}
+}
+
+function startPolling(){
+  if(pollTimer) return;
+  pollTimer = setInterval(loadMyOrders, 5000);
+}
+
+initMap();
+useMyLocation();
+loadMyOrders();
+startPolling();
 </script>
 </body>
 </html>
