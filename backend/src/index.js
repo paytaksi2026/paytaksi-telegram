@@ -198,6 +198,66 @@ app.post("/api/driver/update", (req, res) => {
   res.json({ ok: true });
 });
 
+// ===== Geocoding helpers (Nominatim via backend) =====
+// This keeps the Mini App simple and avoids CORS issues.
+// NOTE: Respect Nominatim usage policy in production (add caching / rate-limit if needed).
+app.get("/api/geocode", async (req, res) => {
+  try {
+    const q = String(req.query.q || "").trim();
+    if (!q) return res.status(400).json({ ok: false, error: "q required" });
+
+    const limit = Math.min(Number(req.query.limit || 6) || 6, 10);
+    const url = new URL("https://nominatim.openstreetmap.org/search");
+    url.searchParams.set("format", "json");
+    url.searchParams.set("addressdetails", "1");
+    url.searchParams.set("limit", String(limit));
+    url.searchParams.set("accept-language", "az");
+    url.searchParams.set("q", q);
+
+    const r = await fetch(url.toString(), {
+      headers: {
+        // Identify your app (important for Nominatim)
+        "User-Agent": "PayTaksiTelegram/1.0 (MiniApp)",
+      },
+    });
+    const data = await r.json();
+    const items = (Array.isArray(data) ? data : []).map((it) => ({
+      display_name: it.display_name,
+      lat: Number(it.lat),
+      lon: Number(it.lon),
+    }));
+    res.json({ ok: true, items });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "geocode_failed" });
+  }
+});
+
+app.get("/api/reverse", async (req, res) => {
+  try {
+    const lat = Number(req.query.lat);
+    const lon = Number(req.query.lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+      return res.status(400).json({ ok: false, error: "lat/lon required" });
+    }
+    const url = new URL("https://nominatim.openstreetmap.org/reverse");
+    url.searchParams.set("format", "json");
+    url.searchParams.set("zoom", "18");
+    url.searchParams.set("addressdetails", "1");
+    url.searchParams.set("accept-language", "az");
+    url.searchParams.set("lat", String(lat));
+    url.searchParams.set("lon", String(lon));
+
+    const r = await fetch(url.toString(), {
+      headers: { "User-Agent": "PayTaksiTelegram/1.0 (MiniApp)" },
+    });
+    const data = await r.json();
+    const name = data && data.display_name ? String(data.display_name) : "";
+    res.json({ ok: true, display_name: name, lat, lon });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "reverse_failed" });
+  }
+});
+
 app.get("/api/drivers", (req, res) => {
   const out = [];
   for (const [id, d] of store.drivers.entries()) out.push({ driverId: id, ...d });
