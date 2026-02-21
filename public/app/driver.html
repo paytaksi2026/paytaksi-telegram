@@ -4,19 +4,18 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Sürücü Paneli - PayTaksi</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <style>
   body{margin:0;background:#0b1220;color:#e5e7eb;font-family:Arial,Helvetica,sans-serif}
   .wrap{max-width:980px;margin:0 auto;padding:18px}
   .card{background:rgba(15,23,42,.75);border:1px solid rgba(148,163,184,.2);border-radius:14px;padding:16px;box-shadow:0 10px 30px rgba(0,0,0,.35)}
   button{padding:10px 12px;border-radius:10px;border:none;background:#22c55e;color:#081014;font-weight:700;cursor:pointer}
   button.secondary{background:rgba(148,163,184,.15);color:#e5e7eb;border:1px solid rgba(148,163,184,.25)}
-  button.danger{background:#ef4444;color:#fff}
   .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
   .badge{display:inline-block;padding:4px 10px;border-radius:999px;border:1px solid rgba(148,163,184,.25);background:rgba(148,163,184,.10);font-size:12px}
   .msg{min-height:22px;margin-top:10px}
-  .list{margin-top:12px}
-  .item{padding:10px 0;border-bottom:1px solid rgba(148,163,184,.12)}
-  .muted{opacity:.75}
+  .pill{display:inline-block;padding:6px 10px;border-radius:999px;border:1px solid rgba(148,163,184,.25);background:rgba(148,163,184,.10);font-size:12px}
+  #map{height:340px;border-radius:14px;overflow:hidden;border:1px solid rgba(148,163,184,.22);background:rgba(2,6,23,.35)}
 </style>
 </head>
 <body>
@@ -28,191 +27,268 @@
         <div style="opacity:.85" id="who"></div>
       </div>
       <div class="row">
-        <a href="/admin" class="badge" style="text-decoration:none;color:#e5e7eb">Admin Panel</a>
         <button class="secondary" onclick="logout()">Çıxış</button>
       </div>
     </div>
 
-    <p style="margin-top:14px">
-      Status: <span class="badge" id="st">OFFLINE</span>
-      <span class="badge" id="gps">GPS: OFF</span>
-      <span class="badge">Radius: <span id="rad">10</span> km</span>
-    </p>
-
+    <p style="margin-top:14px">Status: <span class="badge" id="st">OFFLINE</span></p>
     <div class="row">
       <button onclick="goOnline()">Online ol</button>
       <button class="secondary" onclick="goOffline()">Offline ol</button>
-      <button class="secondary" onclick="setRadius(5)">5 km</button>
-      <button class="secondary" onclick="setRadius(10)">10 km</button>
-      <button class="secondary" onclick="setRadius(20)">20 km</button>
+      <a href="/admin" class="badge" style="text-decoration:none;color:#e5e7eb">Admin Panel</a>
     </div>
     <div class="msg" id="msg"></div>
 
-    <div class="list" style="margin-top:18px">
-      <div class="badge">Yaxın yeni sifarişlər</div>
-      <div id="orders" class="muted" style="margin-top:8px">Yüklənir...</div>
-    </div>
+	<div style="margin-top:12px">
+	  <div class="row" style="justify-content:space-between">
+	    <span class="pill" id="mapInfo">Xəritə: GPS + marşrut (OSRM)</span>
+	    <a class="secondary" id="navBtn" target="_blank" rel="noreferrer" style="display:none">Naviqasiya</a>
+	  </div>
+	  <div id="map" style="margin-top:10px"></div>
+	  <div style="margin-top:8px;opacity:.75;font-size:12px">Aktiv sifariş olduqda yol xətti “düz xətt” yox, real marşrutla çəkilir.</div>
+	</div>
 
-    <div class="list" style="margin-top:18px">
-      <div class="badge">Aktiv sifariş</div>
-      <div id="active" class="muted" style="margin-top:8px">Yüklənir...</div>
+    <hr style="border:none;border-top:1px solid rgba(148,163,184,.18);margin:16px 0" />
+
+    <div class="row" style="justify-content:space-between;align-items:flex-end">
+      <div>
+        <h3 style="margin:0">Yeni sifarişlər</h3>
+        <div style="opacity:.75;font-size:13px">Sifarişi qəbul etmək üçün “Qəbul et” basın.</div>
+      </div>
+      <div class="row">
+        <button class="secondary" onclick="loadFeed()">Yenilə</button>
+      </div>
     </div>
+    <div id="feed" style="margin-top:10px"></div>
+
+    <hr style="border:none;border-top:1px solid rgba(148,163,184,.18);margin:16px 0" />
+    <h3 style="margin:0">Mənim qəbul etdiklərim</h3>
+    <div id="my" style="margin-top:10px"></div>
   </div>
 </div>
 
-<script>
+	<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+	<script>
 function getSession(){ try{ return JSON.parse(localStorage.getItem('pt_session')||'null'); }catch(e){ return null; } }
-function saveSession(s){ localStorage.setItem('pt_session', JSON.stringify(s)); }
 function logout(){ localStorage.removeItem('pt_session'); location.href='/'; }
 function setMsg(t){ document.getElementById('msg').textContent = t||''; }
-function setSt(on){ document.getElementById('st').textContent = on? 'ONLINE':'OFFLINE'; }
-function setGps(on){ document.getElementById('gps').textContent = on? 'GPS: ON':'GPS: OFF'; }
+function setSt(on){ const el=document.getElementById('st'); el.textContent = on? 'ONLINE':'OFFLINE'; }
 
 const s = getSession();
 if(!s || s.role !== 'driver'){ location.href='/'; }
 document.getElementById('who').textContent = 'Hörmətli ' + (s.name||'') + ' (' + (s.phone||'') + ')';
 setSt(!!s.is_online);
 
-let pollTimer = null;
-let watchId = null;
-let lastSent = 0;
-let radiusKm = 10;
-
-function setRadius(v){ radiusKm = v; document.getElementById('rad').textContent = String(v); loadAvailable(); }
-
-async function apiGet(url){
-  const r = await fetch(url);
-  return await r.json().catch(()=> ({}));
-}
-async function apiPost(url, body){
-  const r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body||{})});
-  return await r.json().catch(()=> ({}));
-}
-
-// ---- GPS tracking
-function startGps(){
-  if(watchId) return;
-  if(!navigator.geolocation){ setMsg('GPS dəstəklənmir'); return; }
-  setGps(true);
-  watchId = navigator.geolocation.watchPosition(async (pos)=>{
-    const now = Date.now();
-    if(now - lastSent < 5000) return;
-    lastSent = now;
-
-    const lat = pos.coords.latitude;
-    const lon = pos.coords.longitude;
-    await apiPost('/api/driver/location/update', { phone: s.phone, password: s.password, lat, lon });
-  }, ()=>{ setGps(false); }, { enableHighAccuracy:true, maximumAge:5000, timeout:10000 });
-}
-function stopGps(){
-  if(watchId){ navigator.geolocation.clearWatch(watchId); watchId = null; }
-  setGps(false);
-}
-
 async function goOnline(){
   setMsg('...');
-  const data = await apiPost('/api/driver/online', { phone: s.phone, password: s.password });
-  if(data.success){
-    s.is_online = 1; saveSession(s);
-    setSt(true);
-    setMsg('Online oldunuz.');
-    startPolling();
-    startGps();
-  } else setMsg(data.error || 'ERROR');
+  const res = await fetch('/api/driver/online', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password })});
+  const data = await res.json();
+  if(data.success){ s.is_online=1; localStorage.setItem('pt_session', JSON.stringify(s)); setSt(true); setMsg('Online oldunuz.'); }
+  else if(data.error==='DRIVER_NOT_APPROVED'){ setMsg('Admin təsdiqi yoxdur.'); }
+  else setMsg(data.error||'ERROR');
 }
-
 async function goOffline(){
   setMsg('...');
-  const data = await apiPost('/api/driver/offline', { phone: s.phone, password: s.password });
-  if(data.success){
-    s.is_online = 0; saveSession(s);
-    setSt(false);
-    setMsg('Offline oldunuz.');
-    stopGps();
-  } else setMsg(data.error || 'ERROR');
+  const res = await fetch('/api/driver/offline', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password })});
+  const data = await res.json();
+  if(data.success){ s.is_online=0; localStorage.setItem('pt_session', JSON.stringify(s)); setSt(false); setMsg('Offline oldunuz.'); }
+  else setMsg(data.error||'ERROR');
 }
 
-async function loadAvailable(){
-  const data = await apiGet('/api/orders/available?phone=' + encodeURIComponent(s.phone) + '&password=' + encodeURIComponent(s.password) + '&radius_km=' + encodeURIComponent(radiusKm));
-  const box = document.getElementById('orders');
-  if(!data.success){ box.textContent = (data.error || 'ERROR'); return; }
-  const list = data.orders || [];
-  if(!list.length){ box.textContent = 'Yeni sifariş yoxdur.'; return; }
-  box.innerHTML = list.map(o => {
-    const dist = (o.pickup_distance_km != null) ? ` • <span class="badge">${o.pickup_distance_km} km</span>` : '';
-    const fare = (o.est_fare != null) ? ` • <span class="badge">${o.est_fare} AZN</span>` : '';
-    return `
-    <div class="item">
-      <div><b>#${o.id}</b> <span class="badge">${o.status}</span>${dist}${fare}</div>
-      <div><b>Haradan:</b> ${o.pickup_text}</div>
-      <div><b>Haraya:</b> ${o.dropoff_text}</div>
-      <div style="margin-top:8px"><button onclick="accept(${o.id})">Qəbul et</button></div>
+function esc(s){ return String(s||'').replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])); }
+
+let lastLocSentAt = 0;
+
+// Map state
+let map, meMarker, pickupMarker, dropoffMarker, routeToPickup, routePickupToDropoff;
+let lastPos = null;
+
+function ensureMap(lat=40.4093, lng=49.8671){
+  if(map) return;
+  map = L.map('map').setView([lat,lng], 13);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(map);
+  meMarker = L.marker([lat,lng]).addTo(map).bindPopup('Siz');
+}
+
+async function osrmPolyline(aLat,aLng,bLat,bLng){
+  const url = `https://router.project-osrm.org/route/v1/driving/${aLng},${aLat};${bLng},${bLat}?overview=full&geometries=geojson`;
+  const r = await fetch(url);
+  if(!r.ok) throw new Error('OSRM_ERROR');
+  const j = await r.json();
+  const coords = j.routes?.[0]?.geometry?.coordinates || [];
+  return coords.map(c=>[c[1],c[0]]);
+}
+
+async function updateRouteForOrder(o){
+  if(!o) return;
+  const pLat = Number(o.pickup_lat), pLng = Number(o.pickup_lon);
+  const dLat = Number(o.dropoff_lat), dLng = Number(o.dropoff_lon);
+  if(!isFinite(pLat)||!isFinite(pLng)||!isFinite(dLat)||!isFinite(dLng)) return;
+
+  if(!lastPos){
+    document.getElementById('mapInfo').textContent = 'GPS gözlənilir...';
+    ensureMap(pLat,pLng);
+    return;
+  }
+
+  ensureMap(lastPos.lat, lastPos.lng);
+  if(meMarker) meMarker.setLatLng([lastPos.lat,lastPos.lng]);
+
+  if(pickupMarker) pickupMarker.remove();
+  if(dropoffMarker) dropoffMarker.remove();
+  pickupMarker = L.marker([pLat,pLng]).addTo(map).bindPopup('Götürmə');
+  dropoffMarker = L.marker([dLat,dLng]).addTo(map).bindPopup('Təyinat');
+
+  if(routeToPickup) routeToPickup.remove();
+  if(routePickupToDropoff) routePickupToDropoff.remove();
+
+  try{
+    const poly1 = await osrmPolyline(lastPos.lat,lastPos.lng,pLat,pLng);
+    routeToPickup = L.polyline(poly1, { weight: 5 }).addTo(map);
+    const poly2 = await osrmPolyline(pLat,pLng,dLat,dLng);
+    routePickupToDropoff = L.polyline(poly2, { weight: 5, dashArray: '8 10' }).addTo(map);
+    const g = L.featureGroup([meMarker, pickupMarker, dropoffMarker, routeToPickup, routePickupToDropoff]);
+    map.fitBounds(g.getBounds().pad(0.15));
+    document.getElementById('mapInfo').textContent = `Marşrut: Siz → Götürmə → Təyinat (Sifariş #${o.id})`;
+    const nav = `https://www.google.com/maps/dir/?api=1&origin=${lastPos.lat},${lastPos.lng}&destination=${dLat},${dLng}&waypoints=${pLat},${pLng}&travelmode=driving`;
+    const nb = document.getElementById('navBtn');
+    nb.href = nav;
+    nb.style.display = 'inline-block';
+  }catch(e){
+    document.getElementById('mapInfo').textContent = 'Marşrut çəkilmədi (internet/OSRM).';
+    console.warn(e);
+  }
+}
+
+async function setOrderStatus(id, status){
+  setMsg('...');
+  const res = await fetch('/api/orders/status', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password, order_id:id, status })});
+  const data = await res.json();
+  if(data.success){
+    setMsg('OK');
+    loadMy();
+    loadFeed();
+  } else {
+    setMsg(data.error || 'ERROR');
+  }
+}
+
+function startLocationLoop(){
+  if(!('geolocation' in navigator)) return;
+  navigator.geolocation.watchPosition(async (pos)=>{
+    const now = Date.now();
+    if(now - lastLocSentAt < 5000) return;
+    lastLocSentAt = now;
+    lastPos = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+    ensureMap(lastPos.lat, lastPos.lng);
+    if(meMarker) meMarker.setLatLng([lastPos.lat, lastPos.lng]);
+    try{
+      await fetch('/api/driver/location', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password, lat: pos.coords.latitude, lng: pos.coords.longitude })});
+    }catch(e){/* ignore */}
+  }, ()=>{}, {enableHighAccuracy:true, maximumAge:5000, timeout:8000});
+}
+
+async function loadFeed(){
+  const box = document.getElementById('feed');
+  box.innerHTML = '<div style="opacity:.75">Yüklənir...</div>';
+  const qs = new URLSearchParams({ phone: s.phone, password: s.password });
+  const res = await fetch('/api/orders/feed?' + qs.toString());
+  const data = await res.json();
+  if(!data.success){
+    box.innerHTML = `<div style="opacity:.85">${esc(data.error||'ERROR')}</div>`;
+    return;
+  }
+  if(!data.orders || data.orders.length===0){
+    box.innerHTML = '<div style="opacity:.75">Hazırda yeni sifariş yoxdur.</div>';
+    return;
+  }
+  box.innerHTML = data.orders.map(o=>{
+    const dt = new Date(o.created_at).toLocaleString();
+    return `<div style="padding:12px;border:1px solid rgba(148,163,184,.18);border-radius:12px;margin-bottom:10px;background:rgba(2,6,23,.35)">
+      <div class="row" style="justify-content:space-between">
+        <div><b>#${o.id}</b> <span class="badge">${esc(o.status)}</span></div>
+        <button onclick="acceptOrder(${o.id})">Qəbul et</button>
+      </div>
+      <div style="margin-top:8px;opacity:.9"><b>Haradan:</b> ${esc(o.pickup_text)}</div>
+      <div style="margin-top:6px;opacity:.9"><b>Haraya:</b> ${esc(o.dropoff_text)}</div>
+      <div style="margin-top:6px;opacity:.65">${dt}</div>
+    </div>`;
+  }).join('');
+
+	// marşrutu aktiv sifariş üçün çək (accepted/arrived/in_progress)
+	const active = (data.orders||[]).find(x=>['accepted','arrived','in_progress'].includes(x.status));
+	if(active){
+		updateRouteForOrder(active);
+	}else{
+		document.getElementById('mapInfo').textContent = 'Xəritə: aktiv sifariş yoxdur';
+		document.getElementById('navBtn').style.display = 'none';
+		ensureMap();
+	}
+}
+
+async function acceptOrder(id){
+  setMsg('Qəbul edilir...');
+  const res = await fetch('/api/orders/accept', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password, order_id:id })});
+  const data = await res.json();
+  if(data.success){
+    setMsg('Sifariş qəbul olundu.');
+    loadFeed();
+    loadMy();
+  } else {
+    setMsg(data.error || 'ERROR');
+  }
+}
+
+async function loadMy(){
+  const box = document.getElementById('my');
+  box.innerHTML = '<div style="opacity:.75">Yüklənir...</div>';
+  const qs = new URLSearchParams({ phone: s.phone, password: s.password });
+  const res = await fetch('/api/orders/driver/my?' + qs.toString());
+  const data = await res.json();
+  if(!data.success){
+    box.innerHTML = `<div style="opacity:.85">${esc(data.error||'ERROR')}</div>`;
+    return;
+  }
+  if(!data.orders || data.orders.length===0){
+    box.innerHTML = '<div style="opacity:.75">Hələ sifariş qəbul etməmisiniz.</div>';
+    return;
+  }
+  box.innerHTML = data.orders.map(o=>{
+    const dt = new Date(o.created_at).toLocaleString();
+    const at = o.accepted_at ? new Date(o.accepted_at).toLocaleString() : '';
+    let actions = '';
+    if(o.status==='accepted'){
+      actions = `<div class="row" style="margin-top:10px">
+        <button class="secondary" onclick="setOrderStatus(${o.id},'arrived')">Gəldim</button>
+        <button class="secondary" onclick="setOrderStatus(${o.id},'in_progress')">Başla</button>
+        <button class="secondary" onclick="setOrderStatus(${o.id},'cancelled')">Ləğv et</button>
+      </div>`;
+    } else if(o.status==='arrived'){
+      actions = `<div class="row" style="margin-top:10px">
+        <button class="secondary" onclick="setOrderStatus(${o.id},'in_progress')">Başla</button>
+        <button class="secondary" onclick="setOrderStatus(${o.id},'cancelled')">Ləğv et</button>
+      </div>`;
+    } else if(o.status==='in_progress'){
+      actions = `<div class="row" style="margin-top:10px">
+        <button onclick="setOrderStatus(${o.id},'completed')">Bitir</button>
+      </div>`;
+    }
+    return `<div style="padding:12px;border:1px solid rgba(148,163,184,.18);border-radius:12px;margin-bottom:10px;background:rgba(2,6,23,.35)">
+      <div><b>#${o.id}</b> <span class="badge">${esc(o.status)}</span></div>
+      <div style="margin-top:8px;opacity:.9"><b>Haradan:</b> ${esc(o.pickup_text)}</div>
+      <div style="margin-top:6px;opacity:.9"><b>Haraya:</b> ${esc(o.dropoff_text)}</div>
+      ${at ? `<div style="margin-top:6px;opacity:.75"><b>Qəbul:</b> ${at}</div>` : ''}
+      <div style="margin-top:6px;opacity:.65">${dt}</div>
+      ${actions}
     </div>`;
   }).join('');
 }
 
-async function accept(id){
-  setMsg('...');
-  const data = await apiPost('/api/orders/accept', { phone: s.phone, password: s.password, order_id: id });
-  if(data.success){
-    setMsg('Sifariş qəbul edildi.');
-    loadAvailable();
-    loadActive();
-  } else setMsg(data.error || 'ERROR');
-}
-
-async function loadActive(){
-  const data = await apiGet('/api/orders/driver-active?phone=' + encodeURIComponent(s.phone) + '&password=' + encodeURIComponent(s.password));
-  const box = document.getElementById('active');
-  if(!data.success){ box.textContent = (data.error || 'ERROR'); return; }
-  const o = data.order;
-  if(!o){ box.textContent = 'Aktiv sifariş yoxdur.'; return; }
-
-  const buttons = [];
-  if(o.status === 'accepted') buttons.push(`<button onclick="arrived(${o.id})">Gəldim</button>`);
-  if(o.status === 'arrived') buttons.push(`<button onclick="startRide(${o.id})">Səfəri başlat</button>`);
-  if(o.status === 'started') buttons.push(`<button class="danger" onclick="complete(${o.id})">Bitir</button>`);
-  if(o.status === 'accepted' || o.status === 'arrived') buttons.push(`<button class="danger" onclick="complete(${o.id})">Ləğv/Bitir</button>`);
-
-  const fare = (o.est_fare != null) ? `<span class="badge">${o.est_fare} AZN</span>` : '';
-  const km = (o.est_km != null) ? `<span class="badge">${Number(o.est_km).toFixed(1)} km</span>` : '';
-
-  box.innerHTML = `
-    <div class="item">
-      <div><b>#${o.id}</b> <span class="badge">${o.status}</span> ${km} ${fare}</div>
-      <div><b>Haradan:</b> ${o.pickup_text}</div>
-      <div><b>Haraya:</b> ${o.dropoff_text}</div>
-      <div class="muted" style="margin-top:6px">Sərnişin: ${o.passenger_phone}</div>
-      <div class="row" style="margin-top:10px">${buttons.join(' ')}</div>
-    </div>
-  `;
-}
-
-async function arrived(id){
-  setMsg('...');
-  const data = await apiPost('/api/orders/arrived', { phone: s.phone, password: s.password, order_id: id });
-  if(data.success){ setMsg('Gəldim ✅'); loadActive(); } else setMsg(data.error||'ERROR');
-}
-async function startRide(id){
-  setMsg('...');
-  const data = await apiPost('/api/orders/start', { phone: s.phone, password: s.password, order_id: id });
-  if(data.success){ setMsg('Səfər başladı ▶️'); loadActive(); } else setMsg(data.error||'ERROR');
-}
-async function complete(id){
-  setMsg('...');
-  const data = await apiPost('/api/orders/complete', { phone: s.phone, password: s.password, order_id: id });
-  if(data.success){ setMsg('Bitdi ✅'); loadActive(); loadAvailable(); } else setMsg(data.error||'ERROR');
-}
-
-function startPolling(){
-  if(pollTimer) return;
-  pollTimer = setInterval(()=>{ loadAvailable(); loadActive(); }, 5000);
-}
-function boot(){
-  loadAvailable(); loadActive(); startPolling();
-  if(s.is_online){ startGps(); }
-}
-boot();
+// initial + polling
+loadFeed();
+loadMy();
+setInterval(()=>{ loadFeed(); loadMy(); }, 5000);
+startLocationLoop();
 </script>
 </body>
 </html>
