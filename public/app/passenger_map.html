@@ -75,6 +75,8 @@
 <script>
 const NOMINATIM = 'https://nominatim.openstreetmap.org';
 let map, meMarker, fromMarker, toMarker, driverMarker;
+let routeLine = null;
+let lastRouteKey = '';
 let pickup = null;
 let dropoff = null;
 let debounceT = null;
@@ -96,6 +98,43 @@ function havKm(lat1, lon1, lat2, lon2){
   const c = 2*Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
   return R*c;
 }
+async function drawRoute(){
+  if(!pickup || !dropoff){
+    if(routeLine){ try{ map.removeLayer(routeLine); }catch(e){} routeLine=null; }
+    lastRouteKey='';
+    return;
+  }
+  const key = `${pickup.lat.toFixed(5)},${pickup.lon.toFixed(5)}|${dropoff.lat.toFixed(5)},${dropoff.lon.toFixed(5)}`;
+  if(key === lastRouteKey) return;
+  lastRouteKey = key;
+
+  if(routeLine){ try{ map.removeLayer(routeLine); }catch(e){} routeLine=null; }
+
+  try{
+    const url = `https://router.project-osrm.org/route/v1/driving/${pickup.lon},${pickup.lat};${dropoff.lon},${dropoff.lat}?overview=full&geometries=geojson`;
+    const res = await fetch(url);
+    const data = await res.json().catch(()=>null);
+    const r = data && data.routes && data.routes[0];
+    if(r && r.geometry && r.geometry.coordinates && r.geometry.coordinates.length){
+      const coords = r.geometry.coordinates.map(c => [c[1], c[0]]);
+      routeLine = L.polyline(coords, {weight:5, opacity:0.9}).addTo(map);
+      map.fitBounds(routeLine.getBounds(), {padding:[20,20]});
+
+      if(typeof r.distance === 'number' && r.distance > 0){
+        const km = r.distance / 1000;
+        document.getElementById('estKm').textContent = km.toFixed(2) + ' km';
+        const price = Math.max(START_PRICE, km * PRICE_PER_KM);
+        document.getElementById('estFare').textContent = price.toFixed(2) + ' AZN';
+      }
+      return;
+    }
+  }catch(e){}
+
+  // fallback straight line
+  routeLine = L.polyline([[pickup.lat,pickup.lon],[dropoff.lat,dropoff.lon]], {dashArray:'6,8', weight:4, opacity:0.8}).addTo(map);
+  map.fitBounds(routeLine.getBounds(), {padding:[20,20]});
+}
+
 function showEstimate(){
   if(!pickup || !dropoff){ estBox.style.display='none'; return; }
   const km = havKm(pickup.lat, pickup.lon, dropoff.lat, dropoff.lon);
@@ -119,6 +158,7 @@ function setPickup(lat, lon, text){
   fromMarker = L.marker([lat, lon]).addTo(map).bindPopup('Haradan').openPopup();
   map.setView([lat, lon], 14);
   showEstimate();
+  drawRoute();
 }
 function setDropoff(lat, lon, text){
   dropoff = {lat, lon, text};
@@ -126,6 +166,7 @@ function setDropoff(lat, lon, text){
   if(toMarker) map.removeLayer(toMarker);
   toMarker = L.marker([lat, lon]).addTo(map).bindPopup('Haraya').openPopup();
   showEstimate();
+  drawRoute();
 }
 
 async function reverse(lat, lon){
