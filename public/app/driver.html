@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="az">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>PayTaksi — Sürücü</title>
+  <style>
+    :root{--bg:#071423;--card:#0b1322cc;--border:#1c2a44;--text:#e8eefc;--muted:#9fb0d3;--green:#22c55e;--red:#ef4444;--btn:#1b273f;--radius:18px}
+    *{box-sizing:border-box;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial}
+    body{margin:0;min-height:100vh;background:linear-gradient(180deg,#070b12,#071a2b);color:var(--text);display:flex;align-items:center;justify-content:center;padding:18px}
+    .card{width:min(760px,96vw);background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:22px;box-shadow:0 18px 60px rgba(0,0,0,.55)}
+    .top{display:flex;justify-content:space-between;align-items:center;gap:10px}
+    h1{margin:0;font-size:22px}
+    .meta{color:var(--muted);font-size:13px;margin-top:6px}
+    button{padding:10px 14px;border-radius:14px;border:1px solid var(--border);background:var(--btn);color:var(--text);cursor:pointer;font-weight:700}
+    .badge{display:inline-block;padding:4px 10px;border-radius:999px;font-size:12px;border:1px solid rgba(159,176,211,.35);margin-left:8px}
+    .ok{background:rgba(34,197,94,.14);border-color:rgba(34,197,94,.35)}
+    .bad{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.35)}
+    .box{margin-top:18px;padding:14px;border:1px dashed rgba(159,176,211,.35);border-radius:14px;color:var(--muted)}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="top">
+      <div>
+        <h1>Sürücü paneli <span id="status" class="badge">Yoxlanır...</span></h1>
+        <div class="meta" id="meta">Yüklənir...</div>
+      </div>
+      <button id="logout">Çıxış</button>
+    </div>
+
+    <div class="box" id="box">
+      Bu MVP-də sürücü üçün “online” düyməsi və sifariş listi növbəti addımdır.
+      İndi əsas olan: admin təsdiqi olmasa sürücü daxil ola bilməsin.
+    </div>
+  </div>
+
+<script>
+  async function me(){
+    const r = await fetch('/api/me');
+    if(!r.ok) throw new Error('NO');
+    return r.json();
+  }
+  (async ()=>{
+    try{
+      const j = await me();
+      if(!j.success) throw new Error('NO');
+      if(j.user.role !== 'driver') return location.href='/';
+      document.getElementById('meta').textContent = `Telefon: ${j.user.phone}  |  Ad: ${j.user.name || '-'}  |  Rol: Sürücü`;
+      const st = document.getElementById('status');
+      if(!j.user.approved){
+        st.textContent = 'Pending';
+        st.className = 'badge bad';
+        document.getElementById('box').textContent = 'Sürücü hesabın hələ admin tərəfindən təsdiqlənməyib. Admin paneldən təsdiq verilməlidir.';
+        // Force logout to avoid "login success" confusion
+        await fetch('/api/logout',{method:'POST'});
+        setTimeout(()=>location.href='/', 1200);
+        return;
+      }
+      st.textContent = 'Approved';
+      st.className = 'badge ok';
+    }catch(e){
+      location.href='/';
+    }
+  })();
+
+  document.getElementById('logout').addEventListener('click', async ()=>{
+    await fetch('/api/logout',{method:'POST'});
+    location.href='/';
+  });
+</script>
+</body>
+</html>
