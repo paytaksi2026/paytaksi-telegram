@@ -40,11 +40,31 @@ function sendPassenger(res) {
   return res.sendFile(path.join(WEB_DIR, "passenger.html"));
 }
 
+function sendDriver(res) {
+  return res.sendFile(path.join(WEB_DIR, "driver.html"));
+}
+
+function sendAdmin(res) {
+  return res.sendFile(path.join(WEB_DIR, "admin.html"));
+}
+
 // Telegram sometimes opens different variants -> avoid 404
 app.get("/passenger", (req, res) => sendPassenger(res));
 app.get("/passenger/", (req, res) => sendPassenger(res));
 app.get("/passenger.html", (req, res) => sendPassenger(res));
 app.get("/passenger/index.html", (req, res) => sendPassenger(res));
+
+// Driver mini app routes
+app.get("/driver", (req, res) => sendDriver(res));
+app.get("/driver/", (req, res) => sendDriver(res));
+app.get("/driver.html", (req, res) => sendDriver(res));
+app.get("/driver/index.html", (req, res) => sendDriver(res));
+
+// Admin mini app routes
+app.get("/admin", (req, res) => sendAdmin(res));
+app.get("/admin/", (req, res) => sendAdmin(res));
+app.get("/admin.html", (req, res) => sendAdmin(res));
+app.get("/admin/index.html", (req, res) => sendAdmin(res));
 
 // --- In-memory store (MVP) ---
 const store = {

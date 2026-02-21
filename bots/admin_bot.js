@@ -6,7 +6,26 @@ const token = process.env.ADMIN_BOT_TOKEN;
 if(!token){ console.error("ADMIN_BOT_TOKEN yoxdur"); process.exit(1); }
 const bot = new Telegraf(token);
 
-bot.start((ctx)=>ctx.reply("Admin bot 🛠️\n/health\n/drivers"));
+function adminWebAppUrl(){
+  const explicit = (process.env.ADMIN_WEBAPP_URL||"").trim();
+  if(explicit) return explicit;
+  const base=(process.env.BACKEND_URL||process.env.BASE_URL||"").trim().replace(/\/$/,"");
+  return base? (base+"/admin") : "";
+}
+
+function startMsg(){
+  return "Admin bot 🛠️\n/health\n/drivers\n\n✅ Premium: Web admin panel düyməsi varsa, aşağıda görünəcək.";
+}
+
+bot.start((ctx)=>{
+  const url=adminWebAppUrl();
+  if(!url) return ctx.reply(startMsg());
+  return ctx.reply(startMsg(), {
+    reply_markup:{
+      inline_keyboard:[[ {text:"🧩 Admin Panel (Web)", web_app:{url}} ]]
+    }
+  });
+});
 
 bot.command("health", async (ctx)=>{
   try{ const r=await get("/health"); ctx.reply(r.ok?"Backend OK ✅":"Backend Xəta"); }

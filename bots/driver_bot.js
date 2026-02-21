@@ -6,19 +6,30 @@ const token = process.env.DRIVER_BOT_TOKEN;
 if(!token){ console.error("DRIVER_BOT_TOKEN yoxdur"); process.exit(1); }
 const bot = new Telegraf(token);
 
+function driverWebAppUrl(){
+  const explicit = (process.env.DRIVER_WEBAPP_URL||"").trim();
+  if(explicit) return explicit;
+  const base=(process.env.BACKEND_URL||process.env.BASE_URL||"").trim().replace(/\/$/,"");
+  return base? (base+"/driver") : "";
+}
+
 const state = new Map(); // chatId -> {online, name, car, lastOrderId}
 
 function mainKeyboard(){
-  return Markup.keyboard([
-    ["🟢 Onlayn ol","🔴 Oflayn ol"],
-    ["📍 Yer göndər"],
-    ["ℹ️ Qəbul: /accept ID"]
-  ]).resize();
+  const rows=[];
+  const w=driverWebAppUrl();
+  if(w){
+    rows.push([Markup.button.webApp("🚖 Sürücü Paneli (Web)", w)]);
+  }
+  rows.push(["🟢 Onlayn ol","🔴 Oflayn ol"]);
+  rows.push(["📍 Yer göndər"]);
+  rows.push(["ℹ️ Qəbul: /accept ID"]);
+  return Markup.keyboard(rows).resize();
 }
 
 bot.start((ctx)=>{
   if(!state.has(ctx.chat.id)) state.set(ctx.chat.id,{online:false,name:ctx.from.first_name||"",car:"Toyota Aqua"});
-  ctx.reply("Sürücü paneli 🚕", mainKeyboard());
+  ctx.reply("Sürücü paneli 🚕\n\n✅ Premium: Web panel düyməsi yuxarıda görünür (varsa).", mainKeyboard());
 });
 
 bot.hears("🟢 Onlayn ol",(ctx)=>{
