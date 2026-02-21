@@ -3,175 +3,120 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>PayTaksi — Daxil ol / Qeydiyyat</title>
+  <title>PayTaksi</title>
   <style>
-    :root{
-      --bg1:#070b12; --bg2:#071a2b;
-      --card:#0b1322cc; --border:#1c2a44;
-      --text:#e8eefc; --muted:#9fb0d3;
-      --green:#22c55e; --red:#ef4444; --btn:#1b273f;
-      --radius:18px;
-    }
+    :root{--bg1:#060b16;--bg2:#071e3a;--card:rgba(255,255,255,.06);--bd:rgba(255,255,255,.09);--txt:#e9eef7;--muted:#aab6cc;--green:#22c55e;--red:#ef4444;}
     *{box-sizing:border-box;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial}
     body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
-      background:radial-gradient(900px 600px at 70% 20%, #0b2b52 0%, transparent 55%),
-                 radial-gradient(900px 600px at 20% 80%, #0c3b2b 0%, transparent 55%),
-                 linear-gradient(180deg,var(--bg1),var(--bg2));
-      color:var(--text);
-    }
-    .wrap{width:min(560px,92vw)}
-    .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
-      padding:26px 22px;box-shadow:0 18px 60px rgba(0,0,0,.55);backdrop-filter: blur(10px);
-    }
-    h1{margin:0 0 10px;font-size:28px;letter-spacing:.2px;text-align:center}
-    .sub{margin:0 0 16px;text-align:center;color:var(--muted);font-size:14px}
-    .row{display:flex;gap:10px}
-    label{display:block;margin:10px 0 6px;color:var(--muted);font-size:13px}
-    select,input{width:100%;padding:12px 12px;border-radius:14px;border:1px solid var(--border);
-      background:#0b1322;color:var(--text);outline:none}
-    input::placeholder{color:#5f77a8}
-    .buttons{display:flex;gap:12px;margin-top:14px}
-    button{flex:1;padding:12px 14px;border-radius:14px;border:1px solid var(--border);
-      background:var(--btn);color:var(--text);cursor:pointer;font-weight:700}
-    button.primary{background:linear-gradient(135deg,#16a34a,#22c55e);border-color:#15803d}
-    button:disabled{opacity:.6;cursor:not-allowed}
-    .note{margin-top:10px;color:var(--muted);font-size:13px;text-align:center}
-    .toast{margin-top:12px;padding:10px 12px;border-radius:14px;border:1px solid var(--border);display:none}
-    .toast.ok{display:block;background:rgba(34,197,94,.14);border-color:rgba(34,197,94,.35)}
-    .toast.err{display:block;background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.35)}
-    .tiny{margin-top:10px;text-align:center}
-    .tiny a{color:#a8c7ff;text-decoration:none}
+      background:radial-gradient(1200px 600px at 20% 20%, rgba(34,197,94,.15), transparent 60%),
+                 radial-gradient(900px 500px at 80% 70%, rgba(56,189,248,.14), transparent 60%),
+                 linear-gradient(180deg,var(--bg1),var(--bg2)); color:var(--txt);}
+    .card{width:min(560px,92vw); padding:26px 26px 20px; border-radius:18px; background:var(--card); border:1px solid var(--bd); box-shadow:0 18px 40px rgba(0,0,0,.45);}
+    h1{margin:0 0 10px; font-size:28px; text-align:center; letter-spacing:.3px;}
+    .sub{margin:0 0 18px; text-align:center; color:var(--muted); font-size:13px;}
+    .row{display:grid; gap:12px; margin-top:12px;}
+    select,input{width:100%; padding:14px 14px; border-radius:12px; border:1px solid var(--bd); background:rgba(255,255,255,.08); color:var(--txt); outline:none;}
+    input::placeholder{color:rgba(233,238,247,.55)}
+    .btns{display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px;}
+    button{border:0; padding:12px 14px; border-radius:12px; cursor:pointer; font-weight:700;}
+    .btn-green{background:var(--green); color:#05210f;}
+    .btn-dark{background:rgba(255,255,255,.10); color:var(--txt); border:1px solid var(--bd);}
+    .msg{margin-top:12px; padding:10px 12px; border-radius:12px; border:1px solid var(--bd); background:rgba(0,0,0,.18); color:var(--muted); min-height:40px; display:flex; align-items:center; justify-content:center; text-align:center;}
+    .msg.ok{border-color:rgba(34,197,94,.35); color:#c9f7d7}
+    .msg.err{border-color:rgba(239,68,68,.35); color:#ffd1d1}
+    .hint{margin-top:10px; font-size:12px; color:var(--muted); text-align:center;}
+    .link{color:#bfe5ff}
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="card">
-      <h1>PayTaksi Daxil OL / Qeydiyyat</h1>
-      <p class="sub">Role seç: Sərnişin və ya Sürücü</p>
+  <div class="card">
+    <h1>PayTaksi</h1>
+    <p class="sub">Giriş / Qeydiyyat — müştəri və sürücü ayrı ayrı (eyni nömrə hər iki rolda ola bilər).</p>
 
-      <label for="role">Role</label>
+    <div class="row">
       <select id="role">
-        <option value="passenger">Müştəri (Sərnişin)</option>
+        <option value="passenger">Müştəri</option>
         <option value="driver">Sürücü</option>
       </select>
+      <input id="phone" placeholder="+994..." autocomplete="username" />
+      <input id="password" placeholder="Şifrə" type="password" autocomplete="current-password" />
+      <input id="name" placeholder="Ad Soyad (yalnız qeydiyyat)" autocomplete="name" />
+    </div>
 
-      <label for="phone">Telefon</label>
-      <input id="phone" placeholder="+9945xxxxxxxx" autocomplete="username" />
+    <div class="btns">
+      <button class="btn-green" id="btnRegister">Qeydiyyat</button>
+      <button class="btn-dark" id="btnLogin">Daxil ol</button>
+    </div>
 
-      <label for="pass">Şifrə</label>
-      <input id="pass" type="password" placeholder="••••••" autocomplete="current-password" />
-
-      <label for="name">Ad Soyad (yalnız qeydiyyat)</label>
-      <input id="name" placeholder="Ad Soyad" autocomplete="name" />
-
-      <div class="buttons">
-        <button id="btnRegister" class="primary">Qeydiyyat</button>
-        <button id="btnLogin">Daxil OL</button>
-      </div>
-
-      <div id="toast" class="toast"></div>
-      <div class="note">Sürücü qeydiyyatı: admin təsdiqi lazımdır (pending). Müştəri dərhal aktivdir.</div>
-      <div class="tiny"><a href="/health" target="_blank">/health</a></div>
+    <div class="msg" id="msg">Hazırdır.</div>
+    <div class="hint">
+      Admin panel: <span class="link">/admin</span> (Admin: <b>Ratik</b> / Parol: <b>Sevenler1984</b>)
     </div>
   </div>
 
 <script>
-  const $ = (id)=>document.getElementById(id);
-  const toast = $('toast');
-  const setToast = (type, msg)=>{
-    toast.className = 'toast ' + (type==='ok'?'ok':'err');
-    toast.textContent = msg;
-  };
+const $ = (id)=>document.getElementById(id);
+const msg = (t, type="")=>{
+  const el=$("msg");
+  el.className="msg"+(type?(" "+type):"");
+  el.textContent=t;
+};
 
-  async function postJSON(url, data){
-    const r = await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
-    return r.json();
-  }
+function roleLabel(r){ return r==="driver" ? "Sürücü" : "Müştəri"; }
 
-  function go(role){
-    if(role==='driver') location.href='/app/driver';
-    else location.href='/app/passenger';
-  }
-
-  async function checkAlready(){
-    try{
-      const r = await fetch('/api/me');
-      if(!r.ok) return;
-      const j = await r.json();
-      if(j && j.success && j.user){
-        if(j.user.role==='driver' && !j.user.approved){
-          setToast('err','Sürücü hesabı təsdiq gözləyir (pending).');
-          return;
-        }
-        go(j.user.role);
-      }
-    }catch(e){}
-  }
-
-  $('role').addEventListener('change', ()=>{
-    // Driver requires name for registration
-    if($('role').value==='driver') $('name').placeholder='Ad Soyad (sürücü üçün mütləq)';
-    else $('name').placeholder='Ad Soyad';
+async function api(path, body){
+  const res = await fetch(path, {
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body: JSON.stringify(body)
   });
+  const data = await res.json().catch(()=>({ok:false,code:"BAD_JSON"}));
+  if(!res.ok) throw data;
+  return data;
+}
 
-  $('btnRegister').addEventListener('click', async ()=>{
-    const role = $('role').value;
-    const phone = $('phone').value.trim();
-    const password = $('pass').value;
-    const name = $('name').value.trim();
+$("btnRegister").onclick = async ()=>{
+  const role=$("role").value;
+  const phone=$("phone").value.trim();
+  const password=$("password").value;
+  const name=$("name").value.trim();
 
-    if(!phone || !password){
-      return setToast('err','Telefon və şifrə yaz.');
+  if(!name){ msg("Ad Soyad yazın (qeydiyyat üçün).","err"); return; }
+
+  msg("Qeydiyyat edilir...");
+  try{
+    const data = await api("/api/register",{role,phone,password,name});
+    msg(data.message || "Qeydiyyat uğurlu oldu.","ok");
+  }catch(e){
+    const code = e.code || "ERROR";
+    if(code==="PHONE_EXISTS") msg("Bu rol üçün bu telefon artıq var. Daxil ol edin.","err");
+    else if(code==="NAME_REQUIRED") msg("Ad Soyad tələb olunur.","err");
+    else msg("Xəta: "+code,"err");
+  }
+};
+
+$("btnLogin").onclick = async ()=>{
+  const role=$("role").value;
+  const phone=$("phone").value.trim();
+  const password=$("password").value;
+
+  msg("Daxil olunur...");
+  try{
+    const data = await api("/api/login",{role,phone,password});
+    msg("Login success","ok");
+    // redirect
+    if(data.user && data.user.role==="driver"){
+      window.location.href="/app/driver";
+    } else {
+      window.location.href="/app/passenger";
     }
-    if(role==='driver' && !name){
-      return setToast('err','Sürücü üçün Ad Soyad mütləqdir.');
-    }
-
-    $('btnRegister').disabled=true;
-    try{
-      const j = await postJSON('/api/register',{role,phone,password,name});
-      if(j.success){
-        setToast('ok', j.message || 'Qeydiyyat uğurlu oldu.');
-      } else {
-        const m = j.error || 'Xəta';
-        setToast('err', m);
-      }
-    }catch(e){
-      setToast('err','Şəbəkə xətası');
-    }finally{
-      $('btnRegister').disabled=false;
-    }
-  });
-
-  $('btnLogin').addEventListener('click', async ()=>{
-    const role = $('role').value;
-    const phone = $('phone').value.trim();
-    const password = $('pass').value;
-
-    if(!phone || !password){
-      return setToast('err','Telefon və şifrə yaz.');
-    }
-
-    $('btnLogin').disabled=true;
-    try{
-      const j = await postJSON('/api/login',{role,phone,password});
-      if(j.pending){
-        return setToast('err','Sürücü hesabı təsdiq gözləyir (pending).');
-      }
-      if(j.success){
-        setToast('ok','Daxil oldun. Yönləndirilir...');
-        setTimeout(()=>go(role), 300);
-      } else {
-        setToast('err', j.error || 'Xəta');
-      }
-    }catch(e){
-      setToast('err','Şəbəkə xətası');
-    }finally{
-      $('btnLogin').disabled=false;
-    }
-  });
-
-  checkAlready();
+  }catch(e){
+    const code = e.code || "ERROR";
+    if(code==="INVALID_CREDENTIALS") msg("Telefon və ya şifrə yanlışdır.","err");
+    else if(code==="DRIVER_PENDING") msg(e.message || "Sürücü hesabı pending (admin təsdiqi gözlənilir).","err");
+    else msg("Xəta: "+code,"err");
+  }
+};
 </script>
 </body>
 </html>
