@@ -82,6 +82,17 @@ UNIQUE(phone, role)
     updated_at INTEGER NOT NULL
   )`);
 
+  // GPS track points for real distance during ride (MVP)
+  db.run(`CREATE TABLE IF NOT EXISTS order_track_points (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    order_id INTEGER NOT NULL,
+    driver_phone TEXT NOT NULL,
+    lat REAL NOT NULL,
+    lng REAL NOT NULL,
+    created_at INTEGER NOT NULL
+  )`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_order_track_points_order ON order_track_points(order_id, id)`);
+
   // Additive columns for order lifecycle
   ensureColumn('orders', 'driver_phone', 'driver_phone TEXT');
   ensureColumn('orders', 'accepted_at', 'accepted_at INTEGER');
@@ -545,23 +556,40 @@ app.post('/api/orders/status', async (req, res) => {
     const vals = [next, ts];
 
     if (next === 'arrived') { sets.push('arrived_at=?'); vals.push(ts); }
-    if (next === 'in_progress') { sets.push('started_at=?'); vals.push(ts); }
+    if (next === 'in_progress') {
+      sets.push('started_at=?'); vals.push(ts);
+      // reset real tracking fields
+      sets.push('real_km=?'); vals.push(0);
+      sets.push('real_minutes=?'); vals.push(0);
+      sets.push('final_fare=?'); vals.push(0);
+      sets.push('admin_fee=?'); vals.push(0);
+      sets.push('driver_earn=?'); vals.push(0);
+    }
     if (next === 'completed') { sets.push('completed_at=?'); vals.push(ts); }
     if (next === 'cancelled') { sets.push('cancelled_at=?'); vals.push(ts); }
 
     vals.push(order_id);
     await dbRun(`UPDATE orders SET ${sets.join(', ')} WHERE id=?`, vals);
 
+    // If ride started, reset track points (additive)
+    if (next === 'in_progress') {
+      await dbRun('DELETE FROM order_track_points WHERE order_id=?', [order_id]);
+    }
+
     // Fare engine on completion (additive; does not break old flow)
     if (next === 'completed') {
       const ord = await dbGet("SELECT * FROM orders WHERE id=?", [order_id]);
       const started = Number(ord.started_at || 0);
       const completed = Number(ord.completed_at || ts);
-      const minutes = started ? Math.max(1, Math.round((completed - started) / 60000)) : 0;
+      const minutes = started ? Math.max(1, Math.round((completed - started) / 60000)) : Number(ord.real_minutes || 0);
 
-      let km = havKm(Number(ord.pickup_lat), Number(ord.pickup_lon), Number(ord.dropoff_lat), Number(ord.dropoff_lon));
-      const meta = await osrmRouteMeta(Number(ord.pickup_lon), Number(ord.pickup_lat), Number(ord.dropoff_lon), Number(ord.dropoff_lat));
-      if (meta && Number.isFinite(meta.km) && meta.km > 0) km = meta.km;
+      // Prefer GPS-tracked real_km if available; otherwise OSRM estimate
+      let km = Number(ord.real_km || 0);
+      if (!Number.isFinite(km) || km < 0.05) {
+        km = havKm(Number(ord.pickup_lat), Number(ord.pickup_lon), Number(ord.dropoff_lat), Number(ord.dropoff_lon));
+        const meta = await osrmRouteMeta(Number(ord.pickup_lon), Number(ord.pickup_lat), Number(ord.dropoff_lon), Number(ord.dropoff_lat));
+        if (meta && Number.isFinite(meta.km) && meta.km > 0) km = meta.km;
+      }
 
       const fare_base = await getSetting('fare_base', 1.0);
       const fare_per_km = await getSetting('fare_per_km', 0.6);
@@ -618,7 +646,53 @@ app.post('/api/driver/location', async (req, res) => {
     [driver.phone, lat, lng, ts],
     (err) => {
       if (err) return res.status(500).json({ error: 'DB_ERROR' });
-      res.json({ success: true });
+
+      // If driver has an active in-progress order, append GPS track point and update real_km/minutes
+      db.get(
+        "SELECT id, started_at, real_km FROM orders WHERE driver_phone=? AND status='in_progress' ORDER BY id DESC LIMIT 1",
+        [driver.phone],
+        (e1, ord) => {
+          if (e1 || !ord) return res.json({ success: true });
+
+          db.get(
+            "SELECT lat, lng FROM order_track_points WHERE order_id=? ORDER BY id DESC LIMIT 1",
+            [ord.id],
+            (e2, last) => {
+              if (e2) return res.json({ success: true });
+
+              // Always insert first point
+              if (!last) {
+                db.run(
+                  "INSERT INTO order_track_points(order_id, driver_phone, lat, lng, created_at) VALUES(?,?,?,?,?)",
+                  [ord.id, driver.phone, lat, lng, ts],
+                  () => res.json({ success: true })
+                );
+                return;
+              }
+
+              const distKm = havKm(Number(last.lat), Number(last.lng), lat, lng);
+              // filter GPS noise (>=10m)
+              if (!Number.isFinite(distKm) || distKm < 0.01) return res.json({ success: true });
+
+              const startedAt = Number(ord.started_at || 0);
+              const minutes = startedAt ? Math.max(0, Math.round((ts - startedAt) / 60000)) : 0;
+              const newKm = Number(ord.real_km || 0) + distKm;
+
+              db.run(
+                "INSERT INTO order_track_points(order_id, driver_phone, lat, lng, created_at) VALUES(?,?,?,?,?)",
+                [ord.id, driver.phone, lat, lng, ts],
+                () => {
+                  db.run(
+                    "UPDATE orders SET real_km=?, real_minutes=? WHERE id=?",
+                    [newKm, minutes, ord.id],
+                    () => res.json({ success: true })
+                  );
+                }
+              );
+            }
+          );
+        }
+      );
     }
   );
 });

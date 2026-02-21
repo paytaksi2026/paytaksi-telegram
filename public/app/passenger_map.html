@@ -25,6 +25,13 @@
   .topbar{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
   .pill{display:inline-block;padding:4px 10px;border-radius:999px;border:1px solid rgba(148,163,184,.25);background:rgba(148,163,184,.10);font-size:12px}
   .est{margin-top:10px;display:flex;gap:8px;flex-wrap:wrap}
+
+  /* status + toast */
+  .status{margin:10px 0 0 0;padding:12px;border-radius:14px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10)}
+  .status .title{display:inline-block;padding:6px 10px;border-radius:999px;font-weight:700;font-size:13px;background:rgba(34,197,94,.18);border:1px solid rgba(34,197,94,.35)}
+  .status .sub{margin-top:6px;opacity:.9;font-size:12px}
+  .hidden{display:none}
+  .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:18px;padding:10px 12px;border-radius:12px;background:rgba(0,0,0,.75);border:1px solid rgba(255,255,255,.15);z-index:9999;font-size:13px;max-width:90vw}
 </style>
 </head>
 <body>
@@ -40,6 +47,11 @@
   <div class="card">
     <div id="map"></div>
     <div class="pad">
+
+      <div id="statusBox" class="status hidden">
+        <div class="title" id="statusTitle">...</div>
+        <div class="sub" id="statusSub"></div>
+      </div>
       <div class="row">
         <button class="secondary" onclick="useMyLocation()">Cari yer</button>
         <button class="secondary" onclick="swap()">↕ Dəyiş</button>
@@ -72,6 +84,8 @@
   </div>
 </div>
 
+<div id="toast" class="toast hidden"></div>
+
 <script>
 const NOMINATIM = 'https://nominatim.openstreetmap.org';
 // Estimate defaults (final fare is computed on server at completion)
@@ -84,6 +98,24 @@ let pickup = null;
 let dropoff = null;
 let debounceT = null;
 let pollTimer = null;
+let lastOrderStatus = null;
+
+function showToast(t){
+  const el = document.getElementById('toast');
+  el.textContent = t;
+  el.classList.remove('hidden');
+  clearTimeout(window.__ptToastT);
+  window.__ptToastT = setTimeout(()=>el.classList.add('hidden'), 2400);
+}
+
+function statusText(st){
+  if(st==='accepted') return {t:'Sürücü yaxınlaşır', s:'Sürücü sifarişi qəbul etdi, sizə doğru gəlir.'};
+  if(st==='arrived') return {t:'Sürücü gəldi', s:'Sürücü pickup nöqtəsinə çatdı.'};
+  if(st==='in_progress') return {t:'Ride başladı', s:'Gediş başladı. Marşrut real GPS ilə ölçülür.'};
+  if(st==='completed') return {t:'Ride tamamlandı', s:'Sifariş tamamlandı.'};
+  if(st==='pending') return {t:'Sürücü axtarılır', s:'Uyğun sürücü tapılır...'};
+  return {t:st||'', s:''};
+}
 
 function getSession(){ try{ return JSON.parse(localStorage.getItem('pt_session')||'null'); }catch(e){ return null; } }
 const s = getSession();
@@ -263,18 +295,47 @@ async function loadMyOrders(){
   box.innerHTML = data.orders.map(o => {
     const dt = new Date(o.created_at).toLocaleString();
     const driverLine = o.driver_phone ? `<div style="opacity:.9;margin-top:4px"><b>Sürücü:</b> ${o.driver_phone}</div>` : '';
-    const finalLine = (o.final_fare != null) ? `<div style="opacity:.9;margin-top:4px"><b>Yekun:</b> ${Number(o.final_fare).toFixed(2)} AZN</div>` : '';
+    const finalLine = (o.final_fare != null && Number(o.final_fare) > 0) ? `<div style="opacity:.9;margin-top:4px"><b>Yekun:</b> ${Number(o.final_fare).toFixed(2)} AZN</div>` : '';
     const estLine = (o.est_fare != null) ? `<div style="opacity:.9;margin-top:4px"><b>Təxmini:</b> ${Number(o.est_km||0).toFixed(1)} km • ${o.est_fare} AZN</div>` : '';
+    const liveLine = (o.status==='in_progress') ? `<div style="opacity:.9;margin-top:4px"><b>Real:</b> ${Number(o.real_km||0).toFixed(2)} km • ${Number(o.real_minutes||0)} dəq</div>` : '';
     return `<div style="padding:10px 0;border-bottom:1px solid rgba(148,163,184,.12)">
       <div><b>#${o.id}</b> <span class="pill">${o.status}</span></div>
       <div style="opacity:.9;margin-top:4px"><b>Haradan:</b> ${o.pickup_text}</div>
       <div style="opacity:.9;margin-top:4px"><b>Haraya:</b> ${o.dropoff_text}</div>
       ${estLine}
+      ${liveLine}
       ${finalLine}
       ${driverLine}
       <div style="opacity:.65;margin-top:4px">${dt}</div>
     </div>`;
   }).join('');
+
+  // Status banner & live tracking
+  const activeAny = data.orders.find(o => ['pending','accepted','arrived','in_progress'].includes(o.status));
+  const sb = document.getElementById('statusBox');
+  const stTitle = document.getElementById('statusTitle');
+  const stSub = document.getElementById('statusSub');
+  if(activeAny){
+    const st = statusText(activeAny.status);
+    stTitle.textContent = st.t;
+    let extra = st.s;
+    if(activeAny.status==='in_progress'){
+      const km = Number(activeAny.real_km || 0);
+      const mins = Number(activeAny.real_minutes || 0);
+      if(km>0) extra += ` | Gedilən: ${km.toFixed(2)} km`;
+      if(mins>0) extra += ` | ${mins} dəq`;
+    }
+    stSub.textContent = extra;
+    sb.classList.remove('hidden');
+
+    if(lastOrderStatus !== activeAny.status){
+      lastOrderStatus = activeAny.status;
+      if(st.t) showToast(st.t);
+    }
+  } else {
+    sb.classList.add('hidden');
+    lastOrderStatus = null;
+  }
 
   const active = data.orders.find(o => ['accepted','arrived','in_progress'].includes(o.status) && o.driver_phone);
   if(active) trackDriverByOrder(active.id);
