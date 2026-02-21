@@ -1,14 +1,23 @@
 {
-  "name": "paytaksi-v2-enterprise-onebot",
-  "version": "2.0.0",
-  "private": true,
-  "main": "backend/src/index.js",
+  "name": "paytaksi-onebot",
+  "version": "1.0.0",
+  "main": "src/index.js",
+  "type": "commonjs",
   "scripts": {
-    "start": "node backend/src/index.js"
+    "start": "node src/index.js"
+  },
+  "engines": {
+    "node": ">=18"
   },
   "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
     "express": "^4.19.2",
-    "ws": "^8.18.0",
-    "telegraf": "^4.16.3"
+    "ws": "^8.17.0",
+    "telegraf": "^4.16.3",
+    "pg": "^8.13.1",
+    "ioredis": "^5.4.1",
+    "@sentry/node": "^8.33.0",
+    "stripe": "^16.2.0"
   }
 }
