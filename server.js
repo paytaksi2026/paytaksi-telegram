@@ -50,6 +50,11 @@ db.serialize(() => {
     status TEXT NOT NULL DEFAULT 'new',
     created_at INTEGER NOT NULL
   )`);
+
+  // Additive columns for order lifecycle
+  ensureColumn('orders', 'driver_phone', 'driver_phone TEXT');
+  ensureColumn('orders', 'accepted_at', 'accepted_at INTEGER');
+  ensureColumn('orders', 'completed_at', 'completed_at INTEGER');
 });
 
 // ---------------- Helpers
@@ -246,8 +251,8 @@ app.post('/api/orders/create', async (req, res) => {
 
   const created_at = nowMs();
   db.run(
-    `INSERT INTO orders (passenger_phone, pickup_text, pickup_lat, pickup_lon, dropoff_text, dropoff_lat, dropoff_lon, status, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'new', ?)`,
+    `INSERT INTO orders (passenger_phone, pickup_text, pickup_lat, pickup_lon, dropoff_text, dropoff_lat, dropoff_lon, status, created_at, driver_phone, accepted_at, completed_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'new', ?, NULL, NULL, NULL)`,
     [passenger.phone, pickup_text, pickup_lat, pickup_lon, dropoff_text, dropoff_lat, dropoff_lon, created_at],
     function(err){
       if (err) return res.json({ error: 'DB_ERROR' });
@@ -263,8 +268,67 @@ app.get('/api/orders/my', async (req, res) => {
   if (!passenger) return res.status(401).json({ error: 'INVALID_CREDENTIALS' });
 
   db.all(
-    "SELECT id, pickup_text, dropoff_text, status, created_at FROM orders WHERE passenger_phone=? ORDER BY id DESC LIMIT 20",
+    "SELECT id, pickup_text, dropoff_text, status, driver_phone, accepted_at, created_at FROM orders WHERE passenger_phone=? ORDER BY id DESC LIMIT 20",
     [passenger.phone],
+    (err, rows) => {
+      if (err) return res.status(500).json({ error: 'DB_ERROR' });
+      res.json({ success: true, orders: rows || [] });
+    }
+  );
+});
+
+// Driver: new orders feed
+app.get('/api/orders/feed', async (req, res) => {
+  const phone = normPhone(req.query.phone);
+  const password = String(req.query.password || '');
+  const driver = await authUser(phone, password, 'driver');
+  if (!driver) return res.status(401).json({ error: 'INVALID_CREDENTIALS' });
+  if (parseInt(driver.approved, 10) !== 1) return res.status(403).json({ error: 'DRIVER_PENDING' });
+
+  db.all(
+    "SELECT id, passenger_phone, pickup_text, dropoff_text, pickup_lat, pickup_lon, dropoff_lat, dropoff_lon, status, created_at FROM orders WHERE status='new' ORDER BY id DESC LIMIT 30",
+    [],
+    (err, rows) => {
+      if (err) return res.status(500).json({ error: 'DB_ERROR' });
+      res.json({ success: true, orders: rows || [] });
+    }
+  );
+});
+
+// Driver: accept order (first come first served)
+app.post('/api/orders/accept', async (req, res) => {
+  const phone = normPhone(req.body.phone);
+  const password = String(req.body.password || '');
+  const driver = await authUser(phone, password, 'driver');
+  if (!driver) return res.status(401).json({ error: 'INVALID_CREDENTIALS' });
+  if (parseInt(driver.approved, 10) !== 1) return res.status(403).json({ error: 'DRIVER_PENDING' });
+
+  const order_id = parseInt(req.body.order_id, 10);
+  if (!order_id) return res.status(400).json({ error: 'ORDER_ID_REQUIRED' });
+
+  const accepted_at = nowMs();
+  db.run(
+    "UPDATE orders SET status='accepted', driver_phone=?, accepted_at=? WHERE id=? AND status='new'",
+    [driver.phone, accepted_at, order_id],
+    function(err){
+      if (err) return res.status(500).json({ error: 'DB_ERROR' });
+      if (this.changes === 0) return res.status(409).json({ error: 'NOT_AVAILABLE' });
+      res.json({ success: true });
+    }
+  );
+});
+
+// Driver: my accepted/completed orders
+app.get('/api/orders/driver/my', async (req, res) => {
+  const phone = normPhone(req.query.phone);
+  const password = String(req.query.password || '');
+  const driver = await authUser(phone, password, 'driver');
+  if (!driver) return res.status(401).json({ error: 'INVALID_CREDENTIALS' });
+  if (parseInt(driver.approved, 10) !== 1) return res.status(403).json({ error: 'DRIVER_PENDING' });
+
+  db.all(
+    "SELECT id, passenger_phone, pickup_text, dropoff_text, status, created_at, accepted_at FROM orders WHERE driver_phone=? ORDER BY id DESC LIMIT 20",
+    [driver.phone],
     (err, rows) => {
       if (err) return res.status(500).json({ error: 'DB_ERROR' });
       res.json({ success: true, orders: rows || [] });
