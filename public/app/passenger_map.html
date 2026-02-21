@@ -119,6 +119,35 @@ let debounceT = null;
 let pollTimer = null;
 let driverTimer = null;
 
+// Fare settings (loaded from server; fallback defaults)
+let fareBase = 0.50;
+let farePerKm = 0.25;
+let farePerMin = 0.00;
+let fareMin = 0.00;
+
+async function loadSettings(){
+  try{
+    const r = await fetch('/api/settings');
+    const j = await r.json();
+    if(j && j.success && j.settings){
+      const st = j.settings;
+      fareBase = Number(st.fare_base ?? fareBase);
+      farePerKm = Number(st.fare_per_km ?? farePerKm);
+      farePerMin = Number(st.fare_per_min ?? farePerMin);
+      fareMin = Number(st.fare_min ?? fareMin);
+    }
+  }catch(e){}
+}
+
+function round2(n){ return Math.round((Number(n)||0)*100)/100; }
+function calcFare(km, minutes){
+  km = Number(km)||0;
+  minutes = Number(minutes)||0;
+  let fare = (Number(fareBase)||0) + (Number(farePerKm)||0)*km + (Number(farePerMin)||0)*minutes;
+  if((Number(fareMin)||0) > 0 && fare < Number(fareMin)) fare = Number(fareMin);
+  return round2(fare);
+}
+
 function getSession(){ try{ return JSON.parse(localStorage.getItem('pt_session')||'null'); }catch(e){ return null; } }
 const s = getSession();
 if(!s || s.role !== 'passenger'){ location.href='/'; }
@@ -170,7 +199,26 @@ function renderRideUI(order){
   box.style.display='block';
 
   document.getElementById('rideTitle').textContent = 'Sifariş #' + order.id;
-  document.getElementById('rideSub').textContent = statusLabel(order.status);
+  // Subtitle: status + fare (estimate/live)
+  try{
+    const cur = String(order.status||'').toLowerCase();
+    if(cur==='in_progress' || cur==='started'){
+      const km = Number(order.real_km || 0);
+      let mins = 0;
+      if(order.started_at){
+        const t0 = new Date(order.started_at).getTime();
+        if(Number.isFinite(t0) && t0>0) mins = Math.max(0, (Date.now()-t0)/60000);
+      }
+      const fare = calcFare(km, mins);
+      document.getElementById('rideSub').textContent = `Başladı • Gedilən: ${round2(km)} km • Canlı: ${fare} AZN`;
+    }else if(order.est_km!=null && order.est_fare_azn!=null){
+      document.getElementById('rideSub').textContent = `${statusLabel(order.status)} • Təxmini: ${round2(order.est_km)} km • ${round2(order.est_fare_azn)} AZN`;
+    }else{
+      document.getElementById('rideSub').textContent = statusLabel(order.status);
+    }
+  }catch(e){
+    document.getElementById('rideSub').textContent = statusLabel(order.status);
+  }
   const pill = document.getElementById('ridePill');
   pill.textContent = order.status || 'new';
 
@@ -206,32 +254,6 @@ function metersBetween(a,b){
   const lat2=toRad(b.lat);
   const s=Math.sin(dLat/2)**2 + Math.cos(lat1)*Math.cos(lat2)*Math.sin(dLon/2)**2;
   return 2*R*Math.asin(Math.sqrt(s));
-}
-
-// Smooth marker animation (for live driver movement)
-const _markerAnim = { raf: null };
-function animateMarkerTo(marker, toLatLng, durationMs){
-  try{
-    if (!marker || !toLatLng) return;
-    const from = marker.getLatLng();
-    if(!from){ marker.setLatLng(toLatLng); return; }
-    if (_markerAnim.raf) cancelAnimationFrame(_markerAnim.raf);
-    const start = { lat: from.lat, lng: from.lng };
-    const end = { lat: toLatLng.lat, lng: toLatLng.lng };
-    const t0 = performance.now();
-    const dur = Math.max(250, Math.min(2000, durationMs || 900));
-    const step = (now)=>{
-      const t = Math.min(1, (now - t0)/dur);
-      const e = t < 0.5 ? 2*t*t : 1 - Math.pow(-2*t + 2, 2)/2;
-      const lat = start.lat + (end.lat - start.lat)*e;
-      const lng = start.lng + (end.lng - start.lng)*e;
-      marker.setLatLng([lat,lng]);
-      if (t < 1) _markerAnim.raf = requestAnimationFrame(step);
-    };
-    _markerAnim.raf = requestAnimationFrame(step);
-  }catch(e){
-    try{ marker.setLatLng(toLatLng); }catch(_e){}
-  }
 }
 
 async function updateOSRMLine(from, to, opts, existingLine){
@@ -467,16 +489,8 @@ async function refreshDriverLocation(){
     const llObj = { lat: data.location.lat, lng: data.location.lng };
     if(!Number.isFinite(llObj.lat) || !Number.isFinite(llObj.lng)) return;
 
-    // how much driver moved since last tick (meters)
-    const movedNow = metersBetween(lastDriverPos, llObj);
-
-    if(!driverMarker){
-      driverMarker = L.marker([llObj.lat, llObj.lng]).addTo(map).bindPopup('Sürücü');
-    } else {
-      // Smooth movement for nicer live tracking
-      if (movedNow > 1) animateMarkerTo(driverMarker, llObj, 900);
-      else driverMarker.setLatLng([llObj.lat, llObj.lng]);
-    }
+    if(!driverMarker) driverMarker = L.marker([llObj.lat, llObj.lng]).addTo(map).bindPopup('Sürücü');
+    else driverMarker.setLatLng([llObj.lat, llObj.lng]);
 
     const fb = document.getElementById('focusDriverBtn');
     if (fb){
@@ -498,9 +512,9 @@ async function refreshDriverLocation(){
           dest = { lat: activeOrderObj.dropoff_lat, lng: activeOrderObj.dropoff_lon };
         }
       }
-      // keep lastDriverPos in sync
+      const moved = metersBetween(lastDriverPos, llObj);
       lastDriverPos = llObj;
-      if (dest && (movedNow > 25 || !driverRouteLine)){
+      if (dest && (moved > 25 || !driverRouteLine)){
         driverRouteLine = await updateOSRMLine(llObj, dest, { weight: 5, opacity: 0.9, dashArray: '8 10' }, driverRouteLine);
       }
     }
@@ -512,6 +526,8 @@ function startPolling(){
   pollTimer = setInterval(loadMyOrders, 5000);
 }
 
+// Load pricing settings first (non-blocking)
+loadSettings();
 initMap();
 useMyLocation();
 loadMyOrders();
