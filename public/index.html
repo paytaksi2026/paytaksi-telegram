@@ -20,7 +20,7 @@
 </head>
 <body>
   <div class="card">
-    <h2>PayTaksi Login / Register</h2>
+    <h2>PayTaksi Daxil OL / Qeydiyyat</h2>
     <div style="text-align:center"><span class="pill">Role seç: Sernishin və ya Surucu</span></div>
 
     <select id="role">
@@ -37,8 +37,8 @@
 
     <div style="height:14px"></div>
     <div class="row">
-      <button id="btnReg" onclick="registerUser()">Register</button>
-      <button id="btnLogin" class="secondary" onclick="loginUser()">Login</button>
+      <button id="btnReg" onclick="registerUser()">Qeydiyyat</button>
+      <button id="btnLogin" class="secondary" onclick="loginUser()">Daxil OL</button>
     </div>
 
     <div class="msg" id="msg"></div>
@@ -66,9 +66,9 @@ async function registerUser() {
   const data = await res.json();
   if (data.success) {
     if (data.role === 'driver') {
-      setMsg('Registered successfully. Surucu hesabı təsdiq gözləyir.');
+      setMsg('Qeydiyyatdan kecdiniz. Surucu hesabı təsdiq gözləyir.');
     } else {
-      setMsg('Registered successfully. İndi Login et.');
+      setMsg('Qeydiyyatdan Kecdiniz. İndi Daxil Olun.');
     }
   } else {
     setMsg(data.error || 'ERROR');
