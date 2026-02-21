@@ -101,78 +101,19 @@ connectWS();
 
 const map=L.map("map",{zoomControl:false}).setView([40.4093,49.8671],12);
 L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19}).addTo(map);
-
-let userMarker=null;
-async function reverseGeocode(lat,lon){
-  const r=await fetch(`${BACKEND}/api/reverse?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}`);
-  const j=await r.json();
-  return j && j.ok ? j.display_name : "";
-}
-
-// Auto-detect current location and fill pickup after permission
-navigator.geolocation.getCurrentPosition(async p=>{
-  const lat=p.coords.latitude, lon=p.coords.longitude;
-  map.setView([lat,lon],15);
-  if(userMarker) userMarker.remove();
-  userMarker=L.circleMarker([lat,lon],{radius:8,weight:2,opacity:1,fillOpacity:0.9}).addTo(map);
-  const name=await reverseGeocode(lat,lon);
-  if(name){
-    pickup.value=name;
-    pickupSel={lat,lon,display:name};
-  }else{
-    pickupSel={lat,lon,display:""};
-  }
-},()=>{});
+navigator.geolocation.getCurrentPosition(p=>{map.setView([p.coords.latitude,p.coords.longitude],15);},()=>{});
 
 let pickupSel=null, dropSel=null;
-let activeField="pickup";
-
-pickup.addEventListener('focus',()=>activeField='pickup');
-dropoff.addEventListener('focus',()=>activeField='dropoff');
-
-// Tap on map to choose locations quickly
-map.on('click', async (e)=>{
-  const lat=e.latlng.lat, lon=e.latlng.lng;
-  const name=await reverseGeocode(lat,lon);
-  const label=name||`${lat.toFixed(5)}, ${lon.toFixed(5)}`;
-  if(activeField==='dropoff'){
-    dropoff.value=label;
-    dropSel={lat,lon,display:label};
-  }else{
-    pickup.value=label;
-    pickupSel={lat,lon,display:label};
-  }
-});
-
-async function geocode(q){
-  const r=await fetch(`${BACKEND}/api/geocode?q=`+encodeURIComponent(q));
-  const j=await r.json();
-  return (j && j.ok && Array.isArray(j.items)) ? j.items : [];
-}
-
-function renderList(el,items,onPick){
-  el.style.display=items.length?"block":"none";
-  el.innerHTML="";
-  items.forEach(it=>{
-    const d=document.createElement("div");
-    d.className="item";
-    const display=it.display_name || "";
-    d.innerHTML=`<div class="t">${(display.split(",")[0]||display)}</div><div class="d">${display}</div>`;
-    d.onclick=()=>onPick({lat:it.lat,lon:it.lon,display});
-    el.appendChild(d);
-  });
-}
+async function geocode(q){const r=await fetch(`${BACKEND}/api/geocode?q=`+encodeURIComponent(q));const j=await r.json();return j.ok?j.results:[];}
+function renderList(el,items,onPick){el.style.display=items.length?"block":"none";el.innerHTML="";
+items.forEach(it=>{const d=document.createElement("div");d.className="item";
+d.innerHTML=`<div class="t">${it.display.split(",")[0]}</div><div class="d">${it.display}</div>`;
+d.onclick=()=>onPick(it);el.appendChild(d);});}
 let t1,t2;
-pickup.oninput=()=>{activeField='pickup'; clearTimeout(t1);const v=pickup.value.trim();if(v.length<3){pickupList.style.display="none";return;}
-t1=setTimeout(async()=>{renderList(pickupList,await geocode(v),(it)=>{pickupSel={lat:it.lat,lon:it.lon,display:it.display};pickup.value=it.display;pickupList.style.display="none";map.setView([it.lat,it.lon],16);});},250);};
-dropoff.oninput=()=>{activeField='dropoff'; clearTimeout(t2);const v=dropoff.value.trim();if(v.length<3){dropList.style.display="none";return;}
-t2=setTimeout(async()=>{renderList(dropList,await geocode(v),(it)=>{dropSel={lat:it.lat,lon:it.lon,display:it.display};dropoff.value=it.display;dropList.style.display="none";map.setView([it.lat,it.lon],16);});},250);};
-
-// Hide lists when tapping elsewhere
-document.addEventListener('click',(e)=>{
-  if(!pickup.contains(e.target) && !pickupList.contains(e.target)) pickupList.style.display='none';
-  if(!dropoff.contains(e.target) && !dropList.contains(e.target)) dropList.style.display='none';
-});
+pickup.oninput=()=>{clearTimeout(t1);const v=pickup.value.trim();if(v.length<3){pickupList.style.display="none";return;}
+t1=setTimeout(async()=>{renderList(pickupList,await geocode(v),(it)=>{pickupSel={lat:it.lat,lon:it.lon,display:it.display};pickup.value=it.display;pickupList.style.display="none";map.setView([it.lat,it.lon],16);});},350);};
+dropoff.oninput=()=>{clearTimeout(t2);const v=dropoff.value.trim();if(v.length<3){dropList.style.display="none";return;}
+t2=setTimeout(async()=>{renderList(dropList,await geocode(v),(it)=>{dropSel={lat:it.lat,lon:it.lon,display:it.display};dropoff.value=it.display;dropList.style.display="none";map.setView([it.lat,it.lon],16);});},350);};
 
 async function calc(){if(!pickupSel||!dropSel){alert("Pickup və Dropoff seçin.");return null;}
 const r=await fetch(`${BACKEND}/api/route`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({pickup:pickupSel,dropoff:dropSel})});
