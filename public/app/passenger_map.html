@@ -210,10 +210,16 @@ async function loadMyOrders(){
   if(!data.orders.length){ box.innerHTML = '<div style="opacity:.7">Hələ sifariş yoxdur.</div>'; return; }
   box.innerHTML = data.orders.map(o => {
     const dt = new Date(o.created_at).toLocaleString();
+    const accepted = o.accepted_at ? new Date(o.accepted_at).toLocaleString() : '';
+    let extra = '';
+    if(o.status === 'accepted' && o.driver_phone){
+      extra = `<div style="margin-top:6px;opacity:.9"><b>Sürücü:</b> ${o.driver_phone}${accepted ? ` <span style=\"opacity:.7\">(${accepted})</span>` : ''}</div>`;
+    }
     return `<div style="padding:10px 0;border-bottom:1px solid rgba(148,163,184,.12)">
       <div><b>#${o.id}</b> <span class="pill">${o.status}</span></div>
       <div style="opacity:.9;margin-top:4px"><b>Haradan:</b> ${o.pickup_text}</div>
       <div style="opacity:.9;margin-top:4px"><b>Haraya:</b> ${o.dropoff_text}</div>
+      ${extra}
       <div style="opacity:.65;margin-top:4px">${dt}</div>
     </div>`;
   }).join('');
@@ -223,6 +229,9 @@ async function loadMyOrders(){
 initMap();
 useMyLocation();
 loadMyOrders();
+
+// auto refresh (show when driver accepts)
+setInterval(loadMyOrders, 5000);
 </script>
 </body>
 </html>

@@ -35,6 +35,23 @@
       <a href="/admin" class="badge" style="text-decoration:none;color:#e5e7eb">Admin Panel</a>
     </div>
     <div class="msg" id="msg"></div>
+
+    <hr style="border:none;border-top:1px solid rgba(148,163,184,.18);margin:16px 0" />
+
+    <div class="row" style="justify-content:space-between;align-items:flex-end">
+      <div>
+        <h3 style="margin:0">Yeni sifarişlər</h3>
+        <div style="opacity:.75;font-size:13px">Sifarişi qəbul etmək üçün “Qəbul et” basın.</div>
+      </div>
+      <div class="row">
+        <button class="secondary" onclick="loadFeed()">Yenilə</button>
+      </div>
+    </div>
+    <div id="feed" style="margin-top:10px"></div>
+
+    <hr style="border:none;border-top:1px solid rgba(148,163,184,.18);margin:16px 0" />
+    <h3 style="margin:0">Mənim qəbul etdiklərim</h3>
+    <div id="my" style="margin-top:10px"></div>
   </div>
 </div>
 
@@ -64,6 +81,81 @@ async function goOffline(){
   if(data.success){ s.is_online=0; localStorage.setItem('pt_session', JSON.stringify(s)); setSt(false); setMsg('Offline oldunuz.'); }
   else setMsg(data.error||'ERROR');
 }
+
+function esc(s){ return String(s||'').replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])); }
+
+async function loadFeed(){
+  const box = document.getElementById('feed');
+  box.innerHTML = '<div style="opacity:.75">Yüklənir...</div>';
+  const qs = new URLSearchParams({ phone: s.phone, password: s.password });
+  const res = await fetch('/api/orders/feed?' + qs.toString());
+  const data = await res.json();
+  if(!data.success){
+    box.innerHTML = `<div style="opacity:.85">${esc(data.error||'ERROR')}</div>`;
+    return;
+  }
+  if(!data.orders || data.orders.length===0){
+    box.innerHTML = '<div style="opacity:.75">Hazırda yeni sifariş yoxdur.</div>';
+    return;
+  }
+  box.innerHTML = data.orders.map(o=>{
+    const dt = new Date(o.created_at).toLocaleString();
+    return `<div style="padding:12px;border:1px solid rgba(148,163,184,.18);border-radius:12px;margin-bottom:10px;background:rgba(2,6,23,.35)">
+      <div class="row" style="justify-content:space-between">
+        <div><b>#${o.id}</b> <span class="badge">${esc(o.status)}</span></div>
+        <button onclick="acceptOrder(${o.id})">Qəbul et</button>
+      </div>
+      <div style="margin-top:8px;opacity:.9"><b>Haradan:</b> ${esc(o.pickup_text)}</div>
+      <div style="margin-top:6px;opacity:.9"><b>Haraya:</b> ${esc(o.dropoff_text)}</div>
+      <div style="margin-top:6px;opacity:.65">${dt}</div>
+    </div>`;
+  }).join('');
+}
+
+async function acceptOrder(id){
+  setMsg('Qəbul edilir...');
+  const res = await fetch('/api/orders/accept', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password, order_id:id })});
+  const data = await res.json();
+  if(data.success){
+    setMsg('Sifariş qəbul olundu.');
+    loadFeed();
+    loadMy();
+  } else {
+    setMsg(data.error || 'ERROR');
+  }
+}
+
+async function loadMy(){
+  const box = document.getElementById('my');
+  box.innerHTML = '<div style="opacity:.75">Yüklənir...</div>';
+  const qs = new URLSearchParams({ phone: s.phone, password: s.password });
+  const res = await fetch('/api/orders/driver/my?' + qs.toString());
+  const data = await res.json();
+  if(!data.success){
+    box.innerHTML = `<div style="opacity:.85">${esc(data.error||'ERROR')}</div>`;
+    return;
+  }
+  if(!data.orders || data.orders.length===0){
+    box.innerHTML = '<div style="opacity:.75">Hələ sifariş qəbul etməmisiniz.</div>';
+    return;
+  }
+  box.innerHTML = data.orders.map(o=>{
+    const dt = new Date(o.created_at).toLocaleString();
+    const at = o.accepted_at ? new Date(o.accepted_at).toLocaleString() : '';
+    return `<div style="padding:12px;border:1px solid rgba(148,163,184,.18);border-radius:12px;margin-bottom:10px;background:rgba(2,6,23,.35)">
+      <div><b>#${o.id}</b> <span class="badge">${esc(o.status)}</span></div>
+      <div style="margin-top:8px;opacity:.9"><b>Haradan:</b> ${esc(o.pickup_text)}</div>
+      <div style="margin-top:6px;opacity:.9"><b>Haraya:</b> ${esc(o.dropoff_text)}</div>
+      ${at ? `<div style="margin-top:6px;opacity:.75"><b>Qəbul:</b> ${at}</div>` : ''}
+      <div style="margin-top:6px;opacity:.65">${dt}</div>
+    </div>`;
+  }).join('');
+}
+
+// initial + polling
+loadFeed();
+loadMy();
+setInterval(()=>{ loadFeed(); loadMy(); }, 5000);
 </script>
 </body>
 </html>
