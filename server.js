@@ -65,19 +65,19 @@ UNIQUE(phone, role)
     });
   }
   seedSetting('default_radius_km', 4);
-  seedSetting('fare_base', 1.0);
-  seedSetting('fare_per_km', 0.6);
-  seedSetting('fare_per_min', 0.15);
-  seedSetting('fare_min', 2.0);
+  seedSetting('fare_base', 3.5);
+  seedSetting('fare_per_km', 0.4);
+  seedSetting('fare_per_min', 0.0);
+  seedSetting('fare_min', 3.5);
   seedSetting('commission_rate', 0.10);
 
   // Fare packages (JSON). Additive + backward compatible.
   // Stored in settings to keep migrations minimal.
   // Default packages are derived from the base fare settings above.
   seedSetting('fare_packages_json', JSON.stringify({
-    economy:  { name: 'Ekonom',  fare_base: 1.0, fare_per_km: 0.6, fare_per_min: 0.15, fare_min: 2.0, commission_rate: 0.10 },
-    comfort:  { name: 'Komfort', fare_base: 2.0, fare_per_km: 0.75, fare_per_min: 0.20, fare_min: 3.0, commission_rate: 0.10 },
-    business: { name: 'Biznes',  fare_base: 4.0, fare_per_km: 0.95, fare_per_min: 0.25, fare_min: 5.0, commission_rate: 0.10 }
+    economy:  { name: 'Ekonom',  fare_base: 3.5, fare_per_km: 0.4, fare_per_min: 0.0, fare_min: 3.5, commission_rate: 0.10 },
+    comfort:  { name: 'Komfort', fare_base: 4.0, fare_per_km: 0.5, fare_per_min: 0.0, fare_min: 4.0, commission_rate: 0.13 },
+    business: { name: 'Biznes',  fare_base: 5.0, fare_per_km: 0.6, fare_per_min: 0.0, fare_min: 5.0, commission_rate: 0.16 }
   }));
 
 
