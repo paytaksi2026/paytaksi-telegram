@@ -133,6 +133,8 @@ function round2(n){ return Math.round((Number(n)||0)*100)/100; }
 let lastEstimateReqId = 0;
 let farePackages = [];
 let selectedPackageId = 'economy';
+let estimateReady = false;
+let lastEstimate = null; // {km, minutes, fare, package_id}
 
 function setSelectedPackage(id){
   selectedPackageId = String(id || 'economy');
@@ -187,6 +189,24 @@ async function estimateFare(km, minutes){
     });
     const j = await r.json().catch(()=>null);
     if(rid !== lastEstimateReqId) return null; // newer request exists
+    if(j && j.success) return j;
+  }catch(e){}
+  return null;
+}
+
+// Prefer this for passenger preview: server computes OSRM route distance/duration
+// so it ALWAYS matches order creation price.
+async function estimateFareByCoords(){
+  if(!pickup || !dropoff) return null;
+  const rid = ++lastEstimateReqId;
+  try{
+    const r = await fetch('/api/estimate', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ pickup, dropoff, package_id: selectedPackageId })
+    });
+    const j = await r.json().catch(()=>null);
+    if(rid !== lastEstimateReqId) return null;
     if(j && j.success) return j;
   }catch(e){}
   return null;
@@ -345,15 +365,6 @@ async function drawRoute(){
       const coords = r.geometry.coordinates.map(c => [c[1], c[0]]);
       routeLine = L.polyline(coords, {weight:5, opacity:0.9}).addTo(map);
       map.fitBounds(routeLine.getBounds(), {padding:[20,20]});
-
-      if(typeof r.distance === 'number' && r.distance > 0){
-        const km = r.distance / 1000;
-        document.getElementById('estKm').textContent = Number(km).toFixed(2) + ' km';
-        const mins = (typeof r.duration === 'number' ? (r.duration/60) : 0);
-        document.getElementById('estFare').textContent = '...';
-        const est = await estimateFare(km, mins);
-        if(est) document.getElementById('estFare').textContent = Number(est.fare).toFixed(2) + ' AZN';
-      }
       return;
     }
   }catch(e){}
@@ -364,13 +375,26 @@ async function drawRoute(){
 }
 
 function showEstimate(){
-  if(!pickup || !dropoff){ estBox.style.display='none'; return; }
-  const km = havKm(pickup.lat, pickup.lon, dropoff.lat, dropoff.lon);
+  if(!pickup || !dropoff){
+    estBox.style.display='none';
+    estimateReady = false;
+    lastEstimate = null;
+    return;
+  }
   estBox.style.display='flex';
-  estKm.textContent = km.toFixed(1) + ' km (təxmini)';
+  estimateReady = false;
+  lastEstimate = null;
+  estKm.textContent = '...';
   estFare.textContent = '...';
-  estimateFare(km, 0).then(est=>{
-    if(est) estFare.textContent = Number(est.fare).toFixed(2) + ' AZN (təxmini)';
+
+  // IMPORTANT: Use server OSRM route meta (not straight-line distance)
+  // so preview fare will match order fare.
+  estimateFareByCoords().then(est=>{
+    if(!est) return;
+    lastEstimate = est;
+    estimateReady = true;
+    estKm.textContent = Number(est.km).toFixed(2) + ' km';
+    estFare.textContent = Number(est.fare).toFixed(2) + ' AZN';
   });
 }
 
@@ -466,6 +490,17 @@ function swap(){
 
 async function createOrder(){
   if(!pickup || !dropoff){ setMsg('Haradan və Haraya seçin.'); return; }
+  // If estimate hasn't finished yet, wait so user never sees a different number.
+  if(!estimateReady){
+    setMsg('Təxmini qiymət hesablanır...');
+    const est = await estimateFareByCoords();
+    if(est){
+      lastEstimate = est;
+      estimateReady = true;
+      estKm.textContent = Number(est.km).toFixed(2) + ' km';
+      estFare.textContent = Number(est.fare).toFixed(2) + ' AZN';
+    }
+  }
   setMsg('Göndərilir...');
   const res = await fetch('/api/orders/create', {
     method:'POST',
