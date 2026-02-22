@@ -796,7 +796,7 @@ app.get('/api/orders/feed', async (req, res) => {
       [],
       (err, rows) => {
         if (err) return res.status(500).json({ error: 'DB_ERROR' });
-        let list = (rows || []).map(o => ({...o})).filter(o => enabledSet.has(String(o.fare_package || 'economy').toLowerCase().trim()));
+        let list = (rows || []).map(o => ({...o})).filter(o => allowedSet.has(String(o.fare_package || 'economy').toLowerCase().trim()));
 
         if (hasLoc) {
           list = list.map(o => {
@@ -840,7 +840,7 @@ app.post('/api/orders/accept', async (req, res) => {
   });
   if (!orderPkgRow) return res.status(404).json({ error: 'NOT_FOUND' });
   const pkgId = String(orderPkgRow.fare_package || 'economy').toLowerCase().trim();
-  if (!enabledSet.has(pkgId)) return res.status(403).json({ error: 'PACKAGE_NOT_ALLOWED' });
+  if (!allowedSet.has(pkgId)) return res.status(403).json({ error: 'PACKAGE_NOT_ALLOWED' });
 
   const accepted_at = nowMs();
   db.run(
@@ -1232,7 +1232,7 @@ app.post('/api/admin/driver/packages', requireAdmin, async (req, res) => {
       if (e0) return res.status(500).json({ error:'DB_ERROR' });
       const prevEnabled = parseAllowedPackages(row0 && row0.enabled_packages);
       const allowedSet = new Set(allowedList);
-      let enabledList = prevEnabled.filter(x=>enabledSet.has(String(x).toLowerCase().trim()));
+      let enabledList = prevEnabled.filter(x=>allowedSet.has(String(x).toLowerCase().trim()));
       if (!enabledList.length) enabledList = allowedList.slice();
       const enabledValue = enabledList.join(',');
 
