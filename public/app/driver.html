@@ -61,8 +61,11 @@
         <h3 style="margin:0">💰 Wallet</h3>
         <button class="secondary" id="walletRefreshBtn">Yenilə</button>
       </div>
-      <div style="margin-top:8px; opacity:.85;">Balans: <b><span id="walletBal">0.00</span> AZN</b></div>
+      <div style="margin-top:8px; opacity:.9;">Mövcud: <b><span id="walletAvail">0.00</span> AZN</b> • Gözləyən: <b><span id="walletPend">0.00</span> AZN</b> • Cəmi: <b><span id="walletTotal">0.00</span> AZN</b></div>
       <div style="margin-top:4px; opacity:.7; font-size:12px;" id="walletUpdated"></div>
+      <div id="walletRules" style="margin-top:6px; opacity:.65; font-size:12px;"></div>
+
+      <div id="walletNotifs" style="display:none; margin-top:10px; padding:10px; border:1px solid rgba(255,255,255,0.08); border-radius:12px;"></div>
 
       <div style="margin-top:12px; padding:10px; border:1px solid rgba(255,255,255,0.08); border-radius:12px;">
         <div style="font-weight:600; margin-bottom:8px;">💳 Çıxarış (Withdraw)</div>
@@ -71,7 +74,7 @@
           <input id="wdCard" class="secondary" style="flex:2; min-width:200px; padding:10px 12px; border-radius:10px;" placeholder="Kart/IBAN" >
           <button id="wdBtn">Göndər</button>
         </div>
-        <div style="opacity:.65; font-size:12px; margin-top:6px;">Qeyd: Sorğu yaradılır və admin təsdiq edəndə status PAID olur. Rədd edilərsə balans geri qaytarılır.</div>
+        <div style="opacity:.65; font-size:12px; margin-top:6px;">Qeyd: Sorğu yaradılır və admin təsdiq edəndə status PAID olur. Rədd edilərsə məbləğ geri qaytarılır. Komissiya varsa avtomatik hesablanır.</div>
         <div id="wdMsg" style="margin-top:8px; font-size:13px;"></div>
       </div>
       <div style="margin-top:12px; opacity:.85; font-size:13px;">Son əməliyyatlar</div>
@@ -163,7 +166,14 @@ wdBtn && (wdBtn.onclick = async ()=>{
       wdAmount.value = '';
       await loadWallet(true);
     } else {
-      wdMsg.textContent = (j && j.error) ? ('Xəta: ' + j.error + (j.balance!==undefined? (' (balans: '+fmtAZN(j.balance)+')'):'')) : 'Xəta oldu.';
+      if(j && j.error){
+        if(j.error==='MIN_WITHDRAW') wdMsg.textContent = `Minimum çıxarış: ${fmtAZN(j.min)} AZN`;
+        else if(j.error==='DAILY_LIMIT') wdMsg.textContent = `Gündəlik limit: ${fmtAZN(j.limit)} AZN (istifadə: ${fmtAZN(j.used)} AZN)`;
+        else if(j.error==='INSUFFICIENT_FUNDS') wdMsg.textContent = `Balans çatmır. Mövcud: ${fmtAZN(j.balance)} AZN${j.required?` (lazım: ${fmtAZN(j.required)})`:''}`;
+        else wdMsg.textContent = 'Xəta: ' + j.error;
+      } else {
+        wdMsg.textContent = 'Xəta oldu.';
+      }
     }
   }catch(e){
     wdMsg.textContent = 'Xəta oldu.';
@@ -189,9 +199,47 @@ async function loadWallet(force){
     });
     const j = await r.json();
     if(!j || !j.ok) return;
-    document.getElementById('walletMini').textContent = fmtAZN(j.balance);
-    document.getElementById('walletBal').textContent = fmtAZN(j.balance);
+    const avail = (j.available_balance!==undefined)? Number(j.available_balance) : Number(j.balance||0);
+    const pend = Number(j.pending_balance||0);
+    const total = (j.total_balance!==undefined) ? Number(j.total_balance) : (avail+pend);
+
+    document.getElementById('walletMini').textContent = fmtAZN(avail);
+    document.getElementById('walletAvail').textContent = fmtAZN(avail);
+    document.getElementById('walletPend').textContent = fmtAZN(pend);
+    document.getElementById('walletTotal').textContent = fmtAZN(total);
     document.getElementById('walletUpdated').textContent = j.updated_at ? ('Son yenilənmə: '+fmtDate(j.updated_at)) : '';
+
+    const rules = j.rules || {};
+    const rr = [];
+    if(rules.min_amount!==undefined) rr.push(`Min: ${fmtAZN(rules.min_amount)} AZN`);
+    if(rules.fee_percent!==undefined) rr.push(`Komissiya: ${Number(rules.fee_percent||0).toFixed(2)}%`);
+    if(rules.daily_limit!==undefined) rr.push(`Günlük limit: ${fmtAZN(rules.daily_limit)} AZN`);
+    document.getElementById('walletRules').textContent = rr.length ? ('Qaydalar: ' + rr.join(' • ')) : '';
+
+    // Notifications
+    const notifs = Array.isArray(j.notifications) ? j.notifications : [];
+    const notifBox = document.getElementById('walletNotifs');
+    if(notifs.length){
+      notifBox.style.display='block';
+      const ids = [];
+      notifBox.innerHTML = '<div style="font-weight:600; margin-bottom:8px;">🔔 Bildirişlər</div>' + notifs.map(n=>{
+        ids.push(n.id);
+        const when = n.created_at ? fmtDate(n.created_at) : '';
+        return `<div style="padding:8px 10px; border:1px solid rgba(255,255,255,0.06); border-radius:10px; margin-top:6px;">
+          <div style="font-weight:600">${esc(n.title||'')}</div>
+          <div style="opacity:.85; font-size:13px; margin-top:2px;">${esc(n.body||'')}</div>
+          <div style="opacity:.6; font-size:11px; margin-top:4px;">${when}</div>
+        </div>`;
+      }).join('');
+      // mark read in background
+      fetch('/api/driver/notifications/read',{
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({phone:s.phone, password:s.password, ids})
+      }).catch(()=>{});
+    } else {
+      notifBox.style.display='none';
+      notifBox.innerHTML='';
+    }
 
     const box = document.getElementById('walletTxs');
     box.innerHTML='';

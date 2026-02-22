@@ -107,6 +107,8 @@
               <th>ID</th>
               <th>Sürücü</th>
               <th>Məbləğ</th>
+              <th>Komissiya</th>
+              <th>Cəmi</th>
               <th>Kart/IBAN</th>
               <th>Status</th>
               <th>Tarix</th>
@@ -342,6 +344,8 @@ async function loadWithdrawals(){
         <td>${w.id}</td>
         <td>${w.driver_phone||''}</td>
         <td>${Number(w.amount||0).toFixed(2)}</td>
+        <td>${Number(w.fee||0).toFixed(2)}</td>
+        <td>${Number(w.total||w.amount||0).toFixed(2)}</td>
         <td style="max-width:220px; word-break:break-word">${w.card||''}</td>
         <td><span class="badge">${stx}</span></td>
         <td>${created}</td>

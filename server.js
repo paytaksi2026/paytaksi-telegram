@@ -204,6 +204,8 @@ async function initDb() {
     id BIGSERIAL PRIMARY KEY,
     driver_phone TEXT NOT NULL,
     amount DOUBLE PRECISION NOT NULL,
+    fee DOUBLE PRECISION DEFAULT 0,
+    total DOUBLE PRECISION DEFAULT 0,
     card TEXT,
     status TEXT NOT NULL DEFAULT "PENDING", -- PENDING | PAID | REJECTED
     created_at BIGINT NOT NULL,
@@ -213,12 +215,25 @@ async function initDb() {
   )`);
   await db._query(`CREATE INDEX IF NOT EXISTS idx_withdraw_status ON driver_withdraw_requests(status, id DESC)`);
 
+  // Driver notifications (admin actions, withdraw decisions, bonuses/penalties)
+  await db._query(`CREATE TABLE IF NOT EXISTS driver_notifications (
+    id BIGSERIAL PRIMARY KEY,
+    driver_phone TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    is_read INTEGER DEFAULT 0,
+    created_at BIGINT NOT NULL
+  )`);
+  await db._query(`CREATE INDEX IF NOT EXISTS idx_driver_notifications_unread ON driver_notifications(driver_phone, is_read, id DESC)`);
+
   // Additive columns (safe no-op on fresh DB)
   await ensureColumn("driver_wallet_transactions", "status", "status TEXT NOT NULL DEFAULT \"PAID\"");
   await ensureColumn("driver_wallet_transactions", "withdraw_id", "withdraw_id BIGINT");
   await ensureColumn("driver_withdraw_requests", "decided_at", "decided_at BIGINT");
   await ensureColumn("driver_withdraw_requests", "decided_by", "decided_by TEXT");
   await ensureColumn("driver_withdraw_requests", "decision_note", "decision_note TEXT");
+  await ensureColumn("driver_withdraw_requests", "fee", "fee DOUBLE PRECISION DEFAULT 0");
+  await ensureColumn("driver_withdraw_requests", "total", "total DOUBLE PRECISION DEFAULT 0");
 
   // Additive columns for older schemas (safe no-op on fresh DB)
   await ensureColumn('users', 'approved', 'approved INTEGER DEFAULT 0');
@@ -244,6 +259,10 @@ async function initDb() {
   seedSetting('fare_per_min', 0.0);
   seedSetting('fare_min', 3.5);
   seedSetting('commission_rate', 0.10);
+  // Wallet / withdraw rules
+  seedSetting('withdraw_min_amount', 20);
+  seedSetting('withdraw_fee_percent', 0);
+  seedSetting('withdraw_daily_limit', 1000);
 
   // Fare packages (JSON). Additive + backward compatible.
   // Stored in settings to keep migrations minimal.
@@ -801,6 +820,19 @@ async function walletInsertTx({driver_phone, order_id=null, withdraw_id=null, tx
   return r.rows && r.rows[0] ? Number(r.rows[0].id) : null;
 }
 
+async function notifyDriver(driver_phone, title, body){
+  try{
+    const now = Date.now();
+    await db._query(
+      `INSERT INTO driver_notifications (driver_phone, title, body, is_read, created_at)
+       VALUES ($1,$2,$3,0,$4)`,
+      [String(driver_phone||""), String(title||""), String(body||""), now]
+    );
+  }catch(e){
+    console.error('notifyDriver error', e);
+  }
+}
+
 async function walletUpdateBalance(driver_phone, delta){
   const now = Date.now();
   await walletEnsureAccount(driver_phone);
@@ -829,21 +861,47 @@ async function walletCreateWithdraw(driver_phone, amount, card){
   const amt = Number(amount||0);
   if (!Number.isFinite(amt) || amt <= 0) return { error: "INVALID_AMOUNT" };
 
-  const bal = await walletGetBalance(driver_phone);
-  if (amt > bal.balance) return { error: "INSUFFICIENT_FUNDS", balance: bal.balance };
+  // Rules
+  const minAmt = Number(await getSetting('withdraw_min_amount', 20));
+  const feePct = Number(await getSetting('withdraw_fee_percent', 0));
+  const dailyLimit = Number(await getSetting('withdraw_daily_limit', 1000));
+  if (Number.isFinite(minAmt) && minAmt > 0 && amt < minAmt) return { error:"MIN_WITHDRAW", min: minAmt };
 
-  const now = Date.now();
+  const fee = (Number.isFinite(feePct) && feePct > 0) ? Math.round(amt * (feePct/100) * 100) / 100 : 0;
+  const total = Math.round((amt + fee) * 100) / 100;
+
+  // Daily limit (PENDING+PAID today)
+  const nowTs = Date.now();
+  const d = new Date(nowTs);
+  d.setUTCHours(0,0,0,0);
+  const dayStart = d.getTime();
+  if (Number.isFinite(dailyLimit) && dailyLimit > 0){
+    const s = await db._query(
+      `SELECT COALESCE(SUM(total),0) AS s
+       FROM driver_withdraw_requests
+       WHERE driver_phone=$1 AND created_at >= $2 AND status IN ('PENDING','PAID')`,
+      [driver_phone, dayStart]
+    );
+    const used = Number((s.rows && s.rows[0] && s.rows[0].s) ? s.rows[0].s : 0);
+    if (used + total > dailyLimit) return { error:"DAILY_LIMIT", limit: dailyLimit, used };
+  }
+
+  const bal = await walletGetBalance(driver_phone);
+  if (total > bal.balance) return { error: "INSUFFICIENT_FUNDS", balance: bal.balance, required: total };
+
+  const now = nowTs;
   const w = await db._query(
-    `INSERT INTO driver_withdraw_requests (driver_phone, amount, card, status, created_at)
-     VALUES ($1,$2,$3,'PENDING',$4)
+    `INSERT INTO driver_withdraw_requests (driver_phone, amount, fee, total, card, status, created_at)
+     VALUES ($1,$2,$3,$4,$5,'PENDING',$6)
      RETURNING id`,
-    [driver_phone, amt, String(card||""), now]
+    [driver_phone, amt, fee, total, String(card||""), now]
   );
   const withdraw_id = w.rows && w.rows[0] ? Number(w.rows[0].id) : null;
 
   // Reserve funds immediately; tx is pending
-  await walletUpdateBalance(driver_phone, -amt);
-  await walletInsertTx({ driver_phone, withdraw_id, tx_type:"WITHDRAW", amount: -amt, status:"PENDING", note: String(card||"") });
+  await walletUpdateBalance(driver_phone, -total);
+  const note = `${String(card||"")}` + (fee>0 ? ` | fee ${fee.toFixed(2)}` : '');
+  await walletInsertTx({ driver_phone, withdraw_id, tx_type:"WITHDRAW", amount: -total, status:"PENDING", note });
   return { ok:true, withdraw_id };
 }
 
@@ -855,7 +913,9 @@ async function walletDecideWithdraw({withdraw_id, action, admin_phone, note}){
 
   const now = Date.now();
   const driver_phone = String(row.driver_phone||"");
-  const amt = Number(row.amount||0);
+  const reqAmt = Number(row.amount||0);
+  const fee = Number(row.fee||0);
+  const total = Number(row.total||row.amount||0);
 
   if (action === "paid") {
     await db._query(
@@ -866,6 +926,7 @@ async function walletDecideWithdraw({withdraw_id, action, admin_phone, note}){
       "UPDATE driver_wallet_transactions SET status='PAID' WHERE withdraw_id=$1 AND tx_type='WITHDRAW'",
       [withdraw_id]
     );
+    await notifyDriver(driver_phone, 'Çıxarış təsdiqləndi', `Çıxarış #${withdraw_id} Paid. Məbləğ: ${reqAmt.toFixed(2)} AZN${fee>0?` (komissiya ${fee.toFixed(2)})`:''}`);
     return { ok:true, status:"PAID" };
   }
 
@@ -879,8 +940,9 @@ async function walletDecideWithdraw({withdraw_id, action, admin_phone, note}){
       [withdraw_id]
     );
     // Refund reserved funds
-    await walletUpdateBalance(driver_phone, amt);
-    await walletInsertTx({ driver_phone, withdraw_id, tx_type:"WITHDRAW_REFUND", amount: amt, status:"PAID", note: "Withdraw rejected refund" });
+    await walletUpdateBalance(driver_phone, total);
+    await walletInsertTx({ driver_phone, withdraw_id, tx_type:"WITHDRAW_REFUND", amount: total, status:"PAID", note: "Withdraw rejected refund" });
+    await notifyDriver(driver_phone, 'Çıxarış rədd edildi', `Çıxarış #${withdraw_id} Rejected. Məbləğ geri qaytarıldı.`);
     return { ok:true, status:"REJECTED" };
   }
 
@@ -896,6 +958,10 @@ async function walletAdminAdjust({driver_phone, tx_type, amount, note}){
   const delta = type === "PENALTY" ? -amt : amt;
   await walletUpdateBalance(driver_phone, delta);
   await walletInsertTx({ driver_phone, tx_type:type, amount: delta, status:"PAID", note: String(note||"") });
+  await notifyDriver(driver_phone,
+    type === 'BONUS' ? 'Bonus əlavə olundu' : 'Cərimə tətbiq olundu',
+    `${type}: ${Math.abs(delta).toFixed(2)} AZN${note?` • ${String(note)}`:''}`
+  );
   return { ok:true };
 }
 
@@ -916,6 +982,22 @@ app.post('/api/driver/wallet', async (req, res) => {
     );
     const balRow = (balRes.rows && balRes.rows[0]) ? balRes.rows[0] : {balance:0, updated_at:0};
 
+    const pendRes = await db._query(
+      `SELECT COALESCE(SUM(total),0) AS pending
+       FROM driver_withdraw_requests
+       WHERE driver_phone=$1 AND status='PENDING'`,
+      [driver.phone]
+    );
+    const pending = Number((pendRes.rows && pendRes.rows[0] && pendRes.rows[0].pending) ? pendRes.rows[0].pending : 0);
+    const available = Number(balRow.balance||0);
+    const totalBal = available + pending;
+
+    const rules = {
+      min_amount: Number(await getSetting('withdraw_min_amount', 20)),
+      fee_percent: Number(await getSetting('withdraw_fee_percent', 0)),
+      daily_limit: Number(await getSetting('withdraw_daily_limit', 1000)),
+    };
+
     const txRes = await db._query(
       `SELECT id, order_id, withdraw_id, tx_type, amount, status, note, created_at
        FROM driver_wallet_transactions
@@ -925,12 +1007,50 @@ app.post('/api/driver/wallet', async (req, res) => {
       [driver.phone]
     );
 
+    const notifRes = await db._query(
+      `SELECT id, title, body, is_read, created_at
+       FROM driver_notifications
+       WHERE driver_phone=$1 AND is_read=0
+       ORDER BY id DESC
+       LIMIT 10`,
+      [driver.phone]
+    );
+
     return res.json({
       ok:true,
-      balance: Number(balRow.balance||0),
+      balance: available,
+      available_balance: available,
+      pending_balance: pending,
+      total_balance: totalBal,
       updated_at: Number(balRow.updated_at||0),
+      rules,
+      notifications: notifRes.rows||[],
       txs: txRes.rows||[]
     });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({error:'SERVER_ERROR'});
+  }
+});
+
+// Driver: mark notifications read
+app.post('/api/driver/notifications/read', async (req, res) => {
+  try {
+    const phone = String(req.body.phone||'');
+    const password = String(req.body.password||'');
+    const driver = await authUser(phone, password, 'driver');
+    if(!driver) return res.status(401).json({error:'INVALID_LOGIN'});
+    if(!driver.approved) return res.status(403).json({error:'NOT_APPROVED'});
+
+    const ids = Array.isArray(req.body.ids) ? req.body.ids.map(x=>Number(x)).filter(x=>Number.isFinite(x)&&x>0) : [];
+    if(!ids.length) return res.json({ok:true});
+
+    await db._query(
+      `UPDATE driver_notifications SET is_read=1
+       WHERE driver_phone=$1 AND id = ANY($2::bigint[])`,
+      [driver.phone, ids]
+    );
+    return res.json({ok:true});
   } catch (e) {
     console.error(e);
     return res.status(500).json({error:'SERVER_ERROR'});
@@ -968,7 +1088,7 @@ app.get('/api/admin/withdrawals', requireAdmin, async (req, res) => {
 
     const st = status === 'ALL' ? 'ALL' : status;
     const r = await db._query(
-      `SELECT id, driver_phone, amount, card, status, created_at, decided_at, decided_by, decision_note
+      `SELECT id, driver_phone, amount, fee, total, card, status, created_at, decided_at, decided_by, decision_note
          FROM driver_withdraw_requests
         WHERE ($1='ALL' OR status=$1)
         ORDER BY id DESC
