@@ -102,6 +102,17 @@
           <label class="sound-toggle"><input type="checkbox" id="soundOn" checked> Səsli bildiriş</label>
           <button class="secondary" id="focusDriverBtn" style="display:none">Sürücüyə fokus</button>
         </div>
+
+        <!-- Live chat (Passenger ↔ Driver) -->
+        <div id="chatUI" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid rgba(148,163,184,.18)">
+          <div class="pill" style="margin-bottom:8px">Canlı Çat</div>
+          <div id="chatMsgs" style="height:180px;overflow:auto;padding:10px;border:1px solid rgba(148,163,184,.2);border-radius:12px;background:rgba(2,6,23,.35)"></div>
+          <div class="row" style="margin-top:8px;gap:8px">
+            <input id="chatInput" placeholder="Mesaj..." style="flex:1" />
+            <button class="secondary" type="button" onclick="sendChat()" style="width:auto">Göndər</button>
+          </div>
+          <div style="opacity:.65;font-size:12px;margin-top:6px">Qeyd: Çat yalnız aktiv sifariş zamanı görünür.</div>
+        </div>
       </div>
       <div style="margin-top:16px">
         <div class="pill">Son sifarişlər</div>
@@ -508,6 +519,23 @@ async function renderRideUI(order){
     wrap.appendChild(d);
   });
   document.getElementById('rideProgress').style.width = Math.round((idx/4)*100) + '%';
+
+  // Chat visible only while order is active and a driver is assigned
+  const chatUI = document.getElementById('chatUI');
+  if(chatUI){
+    const canChat = !!order.driver_phone && !['completed','cancelled'].includes(cur);
+    chatUI.style.display = canChat ? 'block' : 'none';
+    const inp = document.getElementById('chatInput');
+    if(canChat && inp && !inp.__pt_bound){
+      inp.__pt_bound = true;
+      inp.addEventListener('keydown', (e)=>{
+        if(e.key === 'Enter'){
+          e.preventDefault();
+          sendChat();
+        }
+      });
+    }
+  }
 
   const cur = String(order.status||'').toLowerCase();
   if (cur && cur !== lastAnnouncedStatus){

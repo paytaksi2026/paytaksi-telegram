@@ -516,7 +516,15 @@ async function sendChatDriver(orderId){
 // initial + polling
 loadFeed();
 loadMy();
-setInterval(()=>{ loadFeed(); loadMy(); }, 5000);
+function isTypingChat(){
+  const ae = document.activeElement;
+  return !!(ae && ae.id && String(ae.id).startsWith('chatInput_'));
+}
+// Polling remains for feed/my list, but do NOT re-render while driver is typing in chat.
+setInterval(()=>{
+  loadFeed();
+  if(!isTypingChat()) loadMy();
+}, 5000);
 startLocationLoop();
 </script>
 </body>
