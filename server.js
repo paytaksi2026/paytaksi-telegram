@@ -796,7 +796,8 @@ app.get('/api/orders/feed', async (req, res) => {
       [],
       (err, rows) => {
         if (err) return res.status(500).json({ error: 'DB_ERROR' });
-        let list = (rows || []).map(o => ({...o})).filter(o => allowedSet.has(String(o.fare_package || 'economy').toLowerCase().trim()));
+        // Only show orders from packages the driver has ENABLED (subset of admin-allowed packages)
+        let list = (rows || []).map(o => ({...o})).filter(o => enabledSet.has(String(o.fare_package || 'economy').toLowerCase().trim()));
 
         if (hasLoc) {
           list = list.map(o => {
