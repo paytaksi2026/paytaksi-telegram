@@ -642,14 +642,12 @@ async function loadMyOrders(){
     const dt = new Date(o.created_at).toLocaleString();
     const pkgLine = (o.fare_package) ? `<span class="pill" style="margin-left:6px">${o.fare_package}</span>` : '';
     const driverLine = o.driver_phone ? (() => {
-      const phoneLink = `<a href="tel:${o.driver_phone}" style="color:#93c5fd;text-decoration:none">${o.driver_phone}</a>`;
-      const carName = [o.driver_car_make, o.driver_car_model].filter(Boolean).join(' ').trim();
-      const plate = o.driver_car_plate ? ` • <b>Nömrə:</b> ${o.driver_car_plate}` : '';
-      const color = o.driver_car_color ? ` • <b>Rəng:</b> ${o.driver_car_color}` : '';
-      const year = o.driver_car_year ? ` • <b>İl:</b> ${o.driver_car_year}` : '';
-      const carLine = (carName || plate || color || year) ? `<div style="opacity:.9;margin-top:4px"><b>Avto:</b> ${carName || ''}${plate}${color}${year}</div>` : '';
-      const nameLine = o.driver_name ? ` <span style="opacity:.85">(${o.driver_name})</span>` : '';
-      return `<div style="opacity:.9;margin-top:4px"><b>Sürücü:</b> ${phoneLink}${nameLine}</div>${carLine}`;
+      const tel = `<a href="tel:${o.driver_phone}" style="color:#93c5fd;text-decoration:none">${o.driver_phone}</a>`;
+      const nm = o.driver_name ? ` • ${o.driver_name}` : '';
+      const car = (o.driver_car_make || o.driver_car_model || o.driver_car_plate || o.driver_car_color || o.driver_car_year)
+        ? `<div style="opacity:.9;margin-top:4px"><b>Avto:</b> ${(o.driver_car_make||'')}${(o.driver_car_model?' '+o.driver_car_model:'')}${(o.driver_car_plate?' • '+o.driver_car_plate:'')}${(o.driver_car_color?' • '+o.driver_car_color:'')}${(o.driver_car_year?' • '+o.driver_car_year:'')}</div>`
+        : '';
+      return `<div style="opacity:.9;margin-top:4px"><b>Sürücü:</b> ${tel}${nm}</div>${car}`;
     })() : '';
     const estLine = (o.est_fare != null) ? `<div style="opacity:.9;margin-top:4px"><b>Təxmini:</b> ${Number(o.est_km||0).toFixed(1)} km • ${o.est_fare} AZN</div>` : '';
 

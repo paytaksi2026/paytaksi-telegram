@@ -28,32 +28,33 @@
       <option value="driver">Sürücü</option>
     </select>
 
-    <div class="row" style="margin-top:10px">
-      <input id="phone_prefix" value="+994" disabled style="max-width:110px;opacity:.95" />
-      <input id="phone_tail" placeholder="0XXXXXXXX" inputmode="numeric" autocomplete="tel" maxlength="9" />
+    <div class="row">
+      <input id="phonePrefix" value="+994" readonly />
+      <input id="phoneDigits" placeholder="77XXXXXXX" autocomplete="tel" inputmode="numeric" maxlength="9" pattern="[0-9]{9}" />
     </div>
     <input id="password" type="password" placeholder="Şifrə" autocomplete="current-password" />
     <input id="name" placeholder="Ad Soyad (qeydiyyat üçün)" autocomplete="name" />
 
-    <div id="driverFields" style="display:none;margin-top:8px">
-      <div class="row">
-        <input id="car_make" placeholder="Avtomobil markası (məs: Toyota)" />
-        <input id="car_model" placeholder="Model (məs: Prius)" />
-      </div>
-      <div class="row" style="margin-top:6px">
-        <input id="car_plate" placeholder="Nömrə (məs: 10-AB-123)" />
-        <select id="car_color">
-          <option value="ağ">Rəng: ağ</option>
-          <option value="qara">Rəng: qara</option>
-          <option value="sarı">Rəng: sarı</option>
-          <option value="qırmızı">Rəng: qırmızı</option>
-          <option value="göy">Rəng: göy</option>
-          <option value="yaşıl">Rəng: yaşıl</option>
-          <option value="boz">Rəng: boz</option>
-        </select>
-      </div>
-      <input id="car_year" type="number" min="2007" step="1" placeholder="İstehsal ili (2007+)" style="margin-top:6px" />
+    <div id="driverFields" style="display:none;margin-top:6px">
+    <div class="row">
+      <input id="car_make" placeholder="Avtomobil markası (məs: Toyota)" />
+      <input id="car_model" placeholder="Model (məs: Aqua)" />
     </div>
+    <div class="row" style="margin-top:6px">
+      <input id="car_plate" placeholder="Nömrə (məs: 90 YX 581)" />
+      <select id="car_color">
+        <option value="">Rəng seçin</option>
+        <option value="ağ">ağ</option>
+        <option value="qara">qara</option>
+        <option value="sarı">sarı</option>
+        <option value="qırmızı">qırmızı</option>
+        <option value="göy">göy</option>
+        <option value="yaşıl">yaşıl</option>
+        <option value="boz">boz</option>
+      </select>
+    </div>
+    <input id="car_year" placeholder="İstehsal ili (2007+)" inputmode="numeric" maxlength="4" style="margin-top:6px" />
+  </div>
 
     <div class="row" style="margin-top:6px">
       <button onclick="registerUser()">Qeydiyyat</button>
@@ -67,21 +68,10 @@
 <script>
 function setMsg(t){ msg.textContent = t || ''; }
 
-function buildPhone(){
-  const tail = String(phone_tail.value || '').replace(/\D/g,'').slice(0, 9);
-  phone_tail.value = tail;
-  return '+994' + tail;
+function fullPhone(){
+  const d = String(phoneDigits.value||'').replace(/\D/g,'');
+  return '+994' + d;
 }
-
-function toggleDriverFields(){
-  const isD = (role.value === 'driver');
-  document.getElementById('driverFields').style.display = isD ? 'block' : 'none';
-}
-
-role.addEventListener('change', toggleDriverFields);
-toggleDriverFields();
-
-phone_tail.addEventListener('input', ()=>{ phone_tail.value = String(phone_tail.value||'').replace(/\D/g,'').slice(0,9); });
 
 function saveSession(s){
   localStorage.setItem('pt_session', JSON.stringify(s));
@@ -93,19 +83,11 @@ function clearSession(){ localStorage.removeItem('pt_session'); }
 
 async function registerUser(){
   setMsg('...');
-  const phone = buildPhone();
-  const payload = { phone, password: password.value, role: role.value, name: name.value };
-  if(role.value === 'driver'){
-    payload.car_make = car_make.value;
-    payload.car_model = car_model.value;
-    payload.car_plate = car_plate.value;
-    payload.car_color = car_color.value;
-    payload.car_year = car_year.value;
-  }
   const res = await fetch('/api/register', {
     method:'POST',
     headers:{'Content-Type':'application/json'},
-    body: JSON.stringify(payload)
+    body: JSON.stringify({ phone: fullPhone(), password: password.value, role: role.value, name: name.value,
+      car_make: car_make?.value, car_model: car_model?.value, car_plate: car_plate?.value, car_color: car_color?.value, car_year: car_year?.value })
   });
   const data = await res.json();
   if(data.success){
@@ -122,11 +104,10 @@ async function registerUser(){
 
 async function loginUser(){
   setMsg('...');
-  const phone = buildPhone();
   const res = await fetch('/api/login', {
     method:'POST',
     headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ phone, password: password.value, role: role.value })
+    body: JSON.stringify({ phone: fullPhone(), password: password.value, role: role.value })
   });
   const data = await res.json();
   if(data.pending){
@@ -134,7 +115,7 @@ async function loginUser(){
     return;
   }
   if(data.success){
-    const session = { role: role.value, phone, password: password.value, name: data.name || '', is_online: data.is_online || 0 };
+    const session = { role: role.value, phone: fullPhone(), password: password.value, name: data.name || '', is_online: data.is_online || 0 };
     saveSession(session);
     if(role.value === 'driver') location.href = '/app/driver.html';
     else location.href = '/app/passenger.html';
@@ -142,6 +123,14 @@ async function loginUser(){
     setMsg(data.error || 'ERROR');
   }
 }
+
+role.addEventListener('change', ()=>{
+  driverFields.style.display = (role.value === 'driver') ? 'block' : 'none';
+});
+role.dispatchEvent(new Event('change'));
+
+phoneDigits.addEventListener('input', ()=>{ phoneDigits.value = String(phoneDigits.value||'').replace(/\D/g,'').slice(0,9); });
+car_year.addEventListener('input', ()=>{ car_year.value = String(car_year.value||'').replace(/\D/g,'').slice(0,4); });
 
 // If already logged in, go directly
 const s = getSession();
