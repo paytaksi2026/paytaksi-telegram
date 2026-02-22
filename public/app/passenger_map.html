@@ -305,9 +305,10 @@ async function drawRoute(){
 
       if(typeof r.distance === 'number' && r.distance > 0){
         const km = r.distance / 1000;
-        document.getElementById('estKm').textContent = km.toFixed(2) + ' km';
-        const price = calcFare(km);
-        document.getElementById('estFare').textContent = price.toFixed(2) + ' AZN (təxmini)';
+        document.getElementById('estKm').textContent = Number(km).toFixed(2) + ' km';
+        // Keep estimate consistent with server-side pricing (settings-controlled)
+        const price = calcFare(km, (typeof r.duration === 'number' ? (r.duration/60) : 0));
+        document.getElementById('estFare').textContent = Number(price).toFixed(2) + ' AZN';
       }
       return;
     }
@@ -321,7 +322,8 @@ async function drawRoute(){
 function showEstimate(){
   if(!pickup || !dropoff){ estBox.style.display='none'; return; }
   const km = havKm(pickup.lat, pickup.lon, dropoff.lat, dropoff.lon);
-  const fare = calcFare(km);
+  // Use settings-controlled pricing to stay consistent with server
+  const fare = calcFare(km, 0);
   estBox.style.display='flex';
   estKm.textContent = km.toFixed(1) + ' km (təxmini)';
   estFare.textContent = fare.toFixed(2) + ' AZN (təxmini)';
@@ -427,8 +429,7 @@ async function createOrder(){
   });
   const data = await res.json();
   if(data.success){
-    const ef = (data.est_fare!=null && data.est_fare!=='') ? Number(data.est_fare).toFixed(2) : '';
-    setMsg('Sifariş yaradıldı. ID: ' + data.order_id + (ef ? (' • ' + ef + ' AZN (təxmini)') : ''));
+    setMsg('Sifariş yaradıldı. ID: ' + data.order_id + ' • ' + (data.est_fare ?? '') + ' AZN (təxmini)');
     loadMyOrders();
   } else setMsg(data.error || 'ERROR');
 }
