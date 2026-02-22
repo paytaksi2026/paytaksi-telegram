@@ -8,7 +8,6 @@ const app = express();
 const db = new sqlite3.Database('./database.sqlite');
 
 app.use(bodyParser.json({ limit: '1mb' }));
-app.use(express.static(path.join(__dirname, 'public')));
 
 // ---------------- DB init + lightweight migrations
 function ensureColumn(table, column, ddl) {
@@ -113,7 +112,6 @@ UNIQUE(phone, role)
   ensureColumn('orders', 'updated_at', 'updated_at INTEGER');
   // Estimated pricing (from pickup->dropoff)
   ensureColumn('orders', 'est_km', 'est_km REAL');
-  ensureColumn('orders', 'est_minutes', 'est_minutes REAL');
   ensureColumn('orders', 'est_fare', 'est_fare REAL');
   // Final fare engine (completed)
   ensureColumn('orders', 'real_km', 'real_km REAL');
@@ -236,61 +234,23 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-// ---------------- Public settings (read) + Admin settings (write)
-// NOTE: Several frontend pages expect /api/settings. Keep it as a single source of truth.
-// - GET is public (needed for fare preview on passenger map)
-// - POST is admin-only (uses the admin cookie)
-app.get('/api/settings', async (req, res) => {
-  const settings = {
-    default_radius_km: await getSetting('default_radius_km', 4),
-    fare_base: await getSetting('fare_base', 1.0),
-    fare_per_km: await getSetting('fare_per_km', 0.6),
-    fare_per_min: await getSetting('fare_per_min', 0.15),
-    fare_min: await getSetting('fare_min', 2.0),
-    commission_rate: await getSetting('commission_rate', 0.10),
-  };
 
-  // Backward-compat keys used by older admin UI
-  const commission = Math.round((Number(settings.commission_rate) || 0) * 100);
-
-  res.json({
-    success: true,
-    settings,
-    ...settings,
-    commission,
-  });
-});
-
-app.post('/api/settings', requireAdmin, async (req, res) => {
-  const updates = {};
-  const allowed = ['default_radius_km','fare_base','fare_per_km','fare_per_min','fare_min','commission_rate'];
-
-  // accept legacy key name: commission (% integer)
-  if (req.body && req.body.commission != null && req.body.commission_rate == null) {
-    const pct = Number(req.body.commission);
-    if (!Number.isFinite(pct) || pct < 0 || pct > 100) return res.status(400).json({ error: 'INVALID_VALUE' });
-    req.body.commission_rate = pct / 100;
-  }
-
-  // default_radius_km validation
-  if (req.body.default_radius_km != null) {
-    const r = parseInt(req.body.default_radius_km, 10);
-    if (![2,4,8].includes(r)) return res.status(400).json({ error: 'INVALID_RADIUS' });
-    updates.default_radius_km = r;
-    await setSetting('default_radius_km', r);
-  }
-
-  for (const k of allowed) {
-    if (k === 'default_radius_km') continue;
-    if (req.body[k] != null) {
-      const v = Number(req.body[k]);
-      if (!Number.isFinite(v)) return res.status(400).json({ error: 'INVALID_VALUE' });
-      updates[k] = v;
-      await setSetting(k, v);
+// Protect sensitive admin-only static pages (e.g. pricing) even if someone types the URL
+app.use((req, res, next) => {
+  // Only guard the pricing page (others can stay public/login-gated by UI)
+  if (req.path === '/admin/pricing.html' || req.path === '/admin/pricing') {
+    // Allow only logged-in admin (cookie)
+    const cookies = parseCookies(req);
+    const token = cookies[ADMIN_COOKIE];
+    if (!verifyAdmin(token)) {
+      // Send to admin login page
+      return res.redirect('/admin/index.html');
     }
   }
-  res.json({ success: true, updates });
+  next();
 });
+
+app.use(express.static(path.join(__dirname, 'public')));
 
 // Basic credential check for passenger/driver API calls (MVP)
 function authUser(phone, password, role) {
@@ -442,26 +402,23 @@ app.post('/api/orders/create', async (req, res) => {
 
   // Estimate (km/fare)
   let est_km = havKm(pickup_lat, pickup_lon, dropoff_lat, dropoff_lon);
-  let est_minutes = 0;
   const meta = await osrmRouteMeta(pickup_lon, pickup_lat, dropoff_lon, dropoff_lat);
   if (meta && Number.isFinite(meta.km) && meta.km > 0) est_km = meta.km;
-  if (meta && Number.isFinite(meta.minutes) && meta.minutes > 0) est_minutes = meta.minutes;
 
   const fare_base = await getSetting('fare_base', 1.0);
   const fare_per_km = await getSetting('fare_per_km', 0.6);
-  const fare_per_min = await getSetting('fare_per_min', 0.15);
   const fare_min = await getSetting('fare_min', 2.0);
-  let est_fare = Number(fare_base) + (Number(fare_per_km) * Number(est_km)) + (Number(fare_per_min) * Number(est_minutes));
+  let est_fare = fare_base + (fare_per_km * est_km);
   if (Number.isFinite(fare_min)) est_fare = Math.max(fare_min, est_fare);
 
   const created_at = nowMs();
   db.run(
-    `INSERT INTO orders (passenger_phone, pickup_text, pickup_lat, pickup_lon, dropoff_text, dropoff_lat, dropoff_lon, status, created_at, updated_at, driver_phone, accepted_at, arrived_at, started_at, completed_at, cancelled_at, est_km, est_minutes, est_fare)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'new', ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, ?)`,
-    [passenger.phone, pickup_text, pickup_lat, pickup_lon, dropoff_text, dropoff_lat, dropoff_lon, created_at, created_at, est_km, est_minutes, est_fare],
+    `INSERT INTO orders (passenger_phone, pickup_text, pickup_lat, pickup_lon, dropoff_text, dropoff_lat, dropoff_lon, status, created_at, updated_at, driver_phone, accepted_at, arrived_at, started_at, completed_at, cancelled_at, est_km, est_fare)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'new', ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?)`,
+    [passenger.phone, pickup_text, pickup_lat, pickup_lon, dropoff_text, dropoff_lat, dropoff_lon, created_at, created_at, est_km, est_fare],
     function(err){
       if (err) return res.json({ error: 'DB_ERROR' });
-      res.json({ success: true, order_id: this.lastID, est_km: Number(est_km.toFixed(3)), est_minutes: Number(est_minutes.toFixed(1)), est_fare: Number(est_fare.toFixed(2)) });
+      res.json({ success: true, order_id: this.lastID, est_km: Number(est_km.toFixed(3)), est_fare: Number(est_fare.toFixed(2)) });
     }
   );
 });
@@ -477,7 +434,7 @@ app.get('/api/orders/my', async (req, res) => {
   const base = ['id','pickup_text','dropoff_text','status','driver_phone','created_at'];
   const optional = [
     'pickup_lat','pickup_lon','dropoff_lat','dropoff_lon',
-    'est_km','est_minutes','est_fare',
+    'est_km','est_fare',
     'real_km','real_minutes','final_fare','admin_fee','driver_earn',
     'accepted_at','arrived_at','started_at','completed_at','cancelled_at','updated_at'
   ];
@@ -870,6 +827,50 @@ app.get('/api/admin/drivers', requireAdmin, (req, res) => {
     if (err) return res.status(500).json({ error: 'DB_ERROR' });
     res.json({ success: true, drivers: rows || [] });
   });
+});
+
+
+
+// ---------------- Public settings endpoint for the client (single source of truth for pricing)
+// GET is public (needed for passenger estimate UI), POST is admin-only (updates settings)
+app.get('/api/settings', async (req, res) => {
+  const fare_base = await getSetting('fare_base', 1.0);
+  const fare_per_km = await getSetting('fare_per_km', 0.6);
+  const fare_per_min = await getSetting('fare_per_min', 0.15);
+  const fare_min = await getSetting('fare_min', 2.0);
+  const commission_rate = await getSetting('commission_rate', 0.10);
+
+  // Backward-compatible aliases (some pages expect these names)
+  res.json({
+    success: true,
+    fare_base,
+    fare_per_km,
+    fare_per_min,
+    fare_min,
+    commission_rate,
+    commission: Math.round(Number(commission_rate) * 100) // percent
+  });
+});
+
+app.post('/api/settings', requireAdmin, async (req, res) => {
+  const b = req.body || {};
+  // Accept both new and old field names
+  const fare_base = Number(b.fare_base);
+  const fare_per_km = Number(b.fare_per_km);
+  const fare_per_min = Number(b.fare_per_min);
+  const fare_min = Number(b.fare_min);
+  const commission_rate = (b.commission_rate !== undefined)
+    ? Number(b.commission_rate)
+    : (b.commission !== undefined ? (Number(b.commission) / 100) : NaN);
+
+  // Validate minimally (keep flexible, but avoid NaN)
+  if (Number.isFinite(fare_base)) await setSetting('fare_base', fare_base);
+  if (Number.isFinite(fare_per_km)) await setSetting('fare_per_km', fare_per_km);
+  if (Number.isFinite(fare_per_min)) await setSetting('fare_per_min', fare_per_min);
+  if (Number.isFinite(fare_min)) await setSetting('fare_min', fare_min);
+  if (Number.isFinite(commission_rate)) await setSetting('commission_rate', commission_rate);
+
+  res.json({ success: true });
 });
 
 
