@@ -127,6 +127,29 @@ let debounceT = null;
 let pollTimer = null;
 let driverTimer = null;
 
+async function cancelOrder(orderId){
+  const id = parseInt(orderId, 10);
+  if(!id) return;
+  if(!confirm('Sifarişi ləğv etmək istəyirsiniz?')) return;
+  setMsg('Ləğv edilir...');
+  try{
+    const r = await fetch('/api/orders/cancel', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ phone: s.phone, password: s.password, order_id: id })
+    });
+    const j = await r.json().catch(()=> ({}));
+    if(j && j.success){
+      setMsg('Sifariş ləğv olundu.');
+      loadMyOrders();
+    }else{
+      setMsg((j && (j.error||j.message)) || 'NOT_CANCELLABLE');
+    }
+  }catch(e){
+    setMsg('ERROR');
+  }
+}
+
 function round2(n){ return Math.round((Number(n)||0)*100)/100; }
 
 // Server-only estimate (single source of truth)
@@ -527,6 +550,10 @@ async function loadMyOrders(){
     const pkgLine = (o.fare_package) ? `<span class="pill" style="margin-left:6px">${o.fare_package}</span>` : '';
     const driverLine = o.driver_phone ? `<div style="opacity:.9;margin-top:4px"><b>Sürücü:</b> ${o.driver_phone}</div>` : '';
     const estLine = (o.est_fare != null) ? `<div style="opacity:.9;margin-top:4px"><b>Təxmini:</b> ${Number(o.est_km||0).toFixed(1)} km • ${o.est_fare} AZN</div>` : '';
+
+    const st = String(o.status||'').toLowerCase();
+    const canCancel = (st==='new' || st==='accepted') && !(Number(o.started_at||0) > 0) && st!=='in_progress' && st!=='completed' && st!=='cancelled';
+    const cancelBtn = canCancel ? `<div class="row" style="margin-top:10px"><button class="secondary" onclick="cancelOrder(${o.id})">Sifarişi ləğv et</button></div>` : '';
     return `<div style="padding:10px 0;border-bottom:1px solid rgba(148,163,184,.12)">
       <div><b>#${o.id}</b> <span class="pill">${o.status}</span>${pkgLine}</div>
       <div style="opacity:.9;margin-top:4px"><b>Haradan:</b> ${o.pickup_text}</div>
@@ -534,6 +561,7 @@ async function loadMyOrders(){
       ${estLine}
       ${driverLine}
       <div style="opacity:.65;margin-top:4px">${dt}</div>
+      ${cancelBtn}
     </div>`;
   }).join('');
 

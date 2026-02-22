@@ -774,7 +774,7 @@ app.get('/api/orders/driver/my', async (req, res) => {
   );
 });
 
-// Passenger: cancel order (only if still 'new')
+// Passenger: cancel order (allowed before ride starts)
 app.post('/api/orders/cancel', async (req, res) => {
   const phone = normPhone(req.body.phone);
   const password = String(req.body.password || '');
@@ -786,7 +786,7 @@ app.post('/api/orders/cancel', async (req, res) => {
 
   const ts = nowMs();
   db.run(
-    "UPDATE orders SET status='cancelled', cancelled_at=?, updated_at=? WHERE id=? AND passenger_phone=? AND status='new'",
+    "UPDATE orders SET status='cancelled', cancelled_at=?, updated_at=? WHERE id=? AND passenger_phone=? AND status IN ('new','accepted') AND (started_at IS NULL OR started_at=0)",
     [ts, ts, order_id, passenger.phone],
     function(err){
       if (err) return res.status(500).json({ error: 'DB_ERROR' });
@@ -806,7 +806,10 @@ app.post('/api/orders/status', async (req, res) => {
   if (parseInt(driver.approved, 10) !== 1) return res.status(403).json({ error: 'DRIVER_PENDING' });
 
   const order_id = parseInt(req.body.order_id, 10);
-  const next = String(req.body.status || '');
+  // Backward compatible aliases
+  let next = String(req.body.status || '').toLowerCase().trim();
+  if (next === 'started') next = 'in_progress';
+  if (next === 'finished') next = 'completed';
   if (!order_id) return res.status(400).json({ error: 'ORDER_ID_REQUIRED' });
   if (!['arrived','in_progress','completed','cancelled'].includes(next)) return res.status(400).json({ error: 'BAD_STATUS' });
 
@@ -866,17 +869,13 @@ app.post('/api/orders/status', async (req, res) => {
         if (meta && Number.isFinite(meta.km) && meta.km > 0) km = meta.km;
       }
 
-      const fare_base = await getSetting('fare_base', 1.0);
-      const fare_per_km = await getSetting('fare_per_km', 0.6);
-      const fare_per_min = await getSetting('fare_per_min', 0.15);
-      const fare_min = await getSetting('fare_min', 2.0);
-      const commission_rate = await getSetting('commission_rate', 0.10);
+      // IMPORTANT: use the fare package of this order (single source of truth)
+      const pkgSettings = await getFareSettingsForPackage(ord.fare_package || 'economy');
+      const final_fare = computeFare(pkgSettings, km, minutes);
 
-      let final_fare = Number(fare_base) + (Number(fare_per_km) * km) + (Number(fare_per_min) * minutes);
-      final_fare = Math.max(Number(fare_min), final_fare);
-
-      const admin_fee = final_fare * Number(commission_rate);
-      const driver_earn = final_fare - admin_fee;
+      const cr = Number(pkgSettings.commission_rate) || 0;
+      const admin_fee = Math.round((final_fare * cr) * 100) / 100;
+      const driver_earn = Math.round((final_fare - admin_fee) * 100) / 100;
 
       await dbRun(
         "UPDATE orders SET real_km=?, real_minutes=?, final_fare=?, admin_fee=?, driver_earn=? WHERE id=?",
