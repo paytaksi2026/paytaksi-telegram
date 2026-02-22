@@ -305,10 +305,9 @@ async function drawRoute(){
 
       if(typeof r.distance === 'number' && r.distance > 0){
         const km = r.distance / 1000;
-        document.getElementById('estKm').textContent = Number(km).toFixed(2) + ' km';
-        // Keep estimate consistent with server-side pricing (settings-controlled)
-        const price = calcFare(km, (typeof r.duration === 'number' ? (r.duration/60) : 0));
-        document.getElementById('estFare').textContent = Number(price).toFixed(2) + ' AZN';
+        document.getElementById('estKm').textContent = km.toFixed(2) + ' km';
+        const price = Math.max(START_PRICE, km * PRICE_PER_KM);
+        document.getElementById('estFare').textContent = price.toFixed(2) + ' AZN';
       }
       return;
     }
@@ -322,8 +321,8 @@ async function drawRoute(){
 function showEstimate(){
   if(!pickup || !dropoff){ estBox.style.display='none'; return; }
   const km = havKm(pickup.lat, pickup.lon, dropoff.lat, dropoff.lon);
-  // Use settings-controlled pricing to stay consistent with server
-  const fare = calcFare(km, 0);
+  const base = 1.0, per = 0.6, min = 2.0;
+  const fare = Math.max(min, base + per*km);
   estBox.style.display='flex';
   estKm.textContent = km.toFixed(1) + ' km (təxmini)';
   estFare.textContent = fare.toFixed(2) + ' AZN (təxmini)';
