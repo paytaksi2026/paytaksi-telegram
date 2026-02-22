@@ -306,7 +306,7 @@ async function drawRoute(){
       if(typeof r.distance === 'number' && r.distance > 0){
         const km = r.distance / 1000;
         document.getElementById('estKm').textContent = km.toFixed(2) + ' km';
-        const price = calcFare(km, 0);
+        const price = Math.max(START_PRICE, km * PRICE_PER_KM);
         document.getElementById('estFare').textContent = price.toFixed(2) + ' AZN';
       }
       return;
