@@ -671,6 +671,8 @@ app.get('/api/orders/stream', async (req, res) => {
       cancelled_at: ord.cancelled_at,
       updated_at: ord.updated_at,
     }
+  });
+
 
   // Send recent chat messages
   db.all(
@@ -681,8 +683,6 @@ app.get('/api/orders/stream', async (req, res) => {
       sseWrite(res, 'chat_snapshot', { order_id, messages: items });
     }
   );
-
-  });
 
   // Keep-alive ping (prevents idle timeouts)
   const ka = setInterval(() => {
