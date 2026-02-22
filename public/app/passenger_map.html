@@ -127,6 +127,99 @@ let debounceT = null;
 let pollTimer = null;
 let driverTimer = null;
 
+// Real-time stream (SSE) for active order
+let orderStream = null;
+let orderStreamId = null;
+let lastStreamRefresh = 0;
+
+function stopOrderStream(){
+  try{ if(orderStream) orderStream.close(); }catch(_){/* ignore */}
+  orderStream = null;
+  orderStreamId = null;
+}
+
+function applyDriverLocation(llObj){
+  if(!llObj || !Number.isFinite(llObj.lat) || !Number.isFinite(llObj.lng)) return;
+
+  if(!driverMarker) driverMarker = L.marker([llObj.lat, llObj.lng]).addTo(map).bindPopup('Sürücü');
+  else driverMarker.setLatLng([llObj.lat, llObj.lng]);
+
+  const fb = document.getElementById('focusDriverBtn');
+  if (fb){
+    fb.style.display = 'inline-block';
+    fb.onclick = ()=> map.setView([llObj.lat, llObj.lng], Math.max(map.getZoom(), 14));
+  }
+
+  // live route update (driver -> pickup / driver -> dropoff)
+  if (activeOrderObj){
+    const st0 = String(activeOrderObj.status||'').toLowerCase();
+    const st = (st0==='started') ? 'in_progress' : st0;
+    let dest = null;
+    if (st==='accepted' || st==='arrived' || st==='new'){
+      if (Number.isFinite(activeOrderObj.pickup_lat) && Number.isFinite(activeOrderObj.pickup_lon)){
+        dest = { lat: activeOrderObj.pickup_lat, lng: activeOrderObj.pickup_lon };
+      }
+    } else if (st==='in_progress'){
+      if (Number.isFinite(activeOrderObj.dropoff_lat) && Number.isFinite(activeOrderObj.dropoff_lon)){
+        dest = { lat: activeOrderObj.dropoff_lat, lng: activeOrderObj.dropoff_lon };
+      }
+    }
+    const moved = metersBetween(lastDriverPos, llObj);
+    lastDriverPos = llObj;
+    if (dest && (moved > 25 || !driverRouteLine)){
+      updateOSRMLine(llObj, dest, { weight: 5, opacity: 0.9, dashArray: '8 10' }, driverRouteLine)
+        .then(line => { driverRouteLine = line; })
+        .catch(()=>{});
+    }
+  }
+}
+
+function startOrderStream(orderId){
+  const oid = Number(orderId||0);
+  if(!oid) return;
+  if(orderStream && orderStreamId === oid) return;
+  stopOrderStream();
+  orderStreamId = oid;
+
+  const url = `/api/orders/stream?order_id=${encodeURIComponent(oid)}&phone=${encodeURIComponent(s.phone)}&password=${encodeURIComponent(s.password)}`;
+  try{ orderStream = new EventSource(url); }catch(_){ stopOrderStream(); return; }
+
+  const onOrderUpdate = (ord)=>{
+    if(!ord || Number(ord.id) !== oid) return;
+    activeOrderObj = { ...(activeOrderObj||{}), ...ord };
+    renderRideUI(activeOrderObj);
+
+    const st = String(activeOrderObj.status||'').toLowerCase();
+    if(['completed','cancelled'].includes(st)){
+      loadMyOrders();
+      return;
+    }
+    const now = Date.now();
+    if (now - lastStreamRefresh > 1200){
+      lastStreamRefresh = now;
+      loadMyOrders();
+    }
+  };
+
+  orderStream.addEventListener('snapshot', (ev)=>{
+    try{ const msg = JSON.parse(ev.data||'{}'); onOrderUpdate(msg.order); }catch(_){/* ignore */}
+  });
+  orderStream.addEventListener('status', (ev)=>{
+    try{ const msg = JSON.parse(ev.data||'{}'); onOrderUpdate(msg.order); }catch(_){/* ignore */}
+  });
+  orderStream.addEventListener('location', (ev)=>{
+    try{
+      const msg = JSON.parse(ev.data||'{}');
+      if(Number(msg.order_id) !== oid) return;
+      const loc = msg.location || {};
+      applyDriverLocation({ lat: Number(loc.lat), lng: Number(loc.lng) });
+    }catch(_){/* ignore */}
+  });
+  orderStream.onerror = ()=>{
+    // polling remains as fallback
+  };
+}
+
 async function cancelOrder(orderId){
   const id = parseInt(orderId, 10);
   if(!id) return;
@@ -570,6 +663,7 @@ async function loadMyOrders(){
     activeOrderObj = active;
     activeOrderId = active.id;
     renderRideUI(active);
+    startOrderStream(activeOrderId);
     await refreshDriverLocation();
     if (!driverTimer){
       driverTimer = setInterval(refreshDriverLocation, 2000);
@@ -578,6 +672,7 @@ async function loadMyOrders(){
     activeOrderObj = null;
     activeOrderId = null;
     renderRideUI(null);
+    stopOrderStream();
     if (driverTimer){ clearInterval(driverTimer); driverTimer=null; }
     if(driverMarker){ map.removeLayer(driverMarker); driverMarker=null; }
     if(driverRouteLine){ map.removeLayer(driverRouteLine); driverRouteLine=null; }
@@ -596,41 +691,12 @@ async function trackDriver(driverPhone){
 async function refreshDriverLocation(){
   try{
     if(!activeOrderId) return;
-    const res = await fetch('/api/orders/driver_location?order_id=' + encodeURIComponent(activeOrderId));
+    const res = await fetch('/api/orders/driver_location?order_id=' + encodeURIComponent(activeOrderId) + '&phone=' + encodeURIComponent(s.phone) + '&password=' + encodeURIComponent(s.password));
     const data = await res.json().catch(()=> ({}));
     if(!data.success || !data.location) return;
     const llObj = { lat: data.location.lat, lng: data.location.lng };
     if(!Number.isFinite(llObj.lat) || !Number.isFinite(llObj.lng)) return;
-
-    if(!driverMarker) driverMarker = L.marker([llObj.lat, llObj.lng]).addTo(map).bindPopup('Sürücü');
-    else driverMarker.setLatLng([llObj.lat, llObj.lng]);
-
-    const fb = document.getElementById('focusDriverBtn');
-    if (fb){
-      fb.style.display = 'inline-block';
-      fb.onclick = ()=> map.setView([llObj.lat, llObj.lng], Math.max(map.getZoom(), 14));
-    }
-
-    // live route update (driver -> pickup / driver -> dropoff)
-    if (activeOrderObj){
-      const st0 = String(activeOrderObj.status||'').toLowerCase();
-      const st = (st0==='started') ? 'in_progress' : st0;
-      let dest = null;
-      if (st==='accepted' || st==='arrived' || st==='new'){
-        if (Number.isFinite(activeOrderObj.pickup_lat) && Number.isFinite(activeOrderObj.pickup_lon)){
-          dest = { lat: activeOrderObj.pickup_lat, lng: activeOrderObj.pickup_lon };
-        }
-      } else if (st==='in_progress'){
-        if (Number.isFinite(activeOrderObj.dropoff_lat) && Number.isFinite(activeOrderObj.dropoff_lon)){
-          dest = { lat: activeOrderObj.dropoff_lat, lng: activeOrderObj.dropoff_lon };
-        }
-      }
-      const moved = metersBetween(lastDriverPos, llObj);
-      lastDriverPos = llObj;
-      if (dest && (moved > 25 || !driverRouteLine)){
-        driverRouteLine = await updateOSRMLine(llObj, dest, { weight: 5, opacity: 0.9, dashArray: '8 10' }, driverRouteLine);
-      }
-    }
+    applyDriverLocation(llObj);
   }catch(e){}
 }
 

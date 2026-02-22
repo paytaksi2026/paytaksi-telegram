@@ -7,6 +7,28 @@ const crypto = require('crypto');
 const app = express();
 const db = new sqlite3.Database('./database.sqlite');
 
+// ---------------- Real-time (SSE): order status + driver location
+// Lightweight server-sent events. Clients subscribe per order_id.
+const sseOrderClients = new Map(); // order_id -> Set(res)
+
+function sseWrite(res, event, data){
+  try{
+    if (event) res.write(`event: ${event}\n`);
+    res.write(`data: ${JSON.stringify(data ?? {})}\n\n`);
+  }catch(_){ /* ignore */ }
+}
+
+function sseBroadcast(orderId, event, data){
+  const key = String(orderId);
+  const set = sseOrderClients.get(key);
+  if (!set || set.size === 0) return;
+  for (const r of Array.from(set)){
+    if (!r || r.writableEnded) { set.delete(r); continue; }
+    sseWrite(r, event, data);
+  }
+  if (set.size === 0) sseOrderClients.delete(key);
+}
+
 app.use(bodyParser.json({ limit: '1mb' }));
 
 // ---------------- DB init + lightweight migrations
@@ -588,6 +610,73 @@ app.post('/api/driver/set-packages', async (req, res) => {
 
 // ---------------- Orders (MVP)
 
+// Passenger: real-time stream for a single order (status + driver_location)
+// Usage (browser): new EventSource(`/api/orders/stream?order_id=1&phone=...&password=...`)
+app.get('/api/orders/stream', async (req, res) => {
+  const phone = normPhone(req.query.phone);
+  const password = String(req.query.password || '');
+  const passenger = await authUser(phone, password, 'passenger');
+  if (!passenger) return res.status(401).json({ error: 'INVALID_CREDENTIALS' });
+
+  const order_id = parseInt(req.query.order_id, 10);
+  if (!order_id) return res.status(400).json({ error: 'ORDER_ID_REQUIRED' });
+
+  // Ensure passenger owns the order
+  const ord = await new Promise((resolve)=>{
+    db.get(
+      "SELECT id, passenger_phone, status, driver_phone, fare_package, accepted_at, arrived_at, started_at, completed_at, cancelled_at, updated_at FROM orders WHERE id=?",
+      [order_id],
+      (e,row)=> resolve(e ? null : (row||null))
+    );
+  });
+  if (!ord) return res.status(404).json({ error: 'NOT_FOUND' });
+  if (String(ord.passenger_phone || '') !== passenger.phone) return res.status(403).json({ error: 'FORBIDDEN' });
+
+  // SSE headers
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  // Some proxies buffer; this header helps on certain setups
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders && res.flushHeaders();
+
+  // Register
+  const key = String(order_id);
+  if (!sseOrderClients.has(key)) sseOrderClients.set(key, new Set());
+  sseOrderClients.get(key).add(res);
+
+  // Send initial snapshot
+  sseWrite(res, 'snapshot', {
+    order: {
+      id: ord.id,
+      status: ord.status,
+      driver_phone: ord.driver_phone,
+      fare_package: ord.fare_package,
+      accepted_at: ord.accepted_at,
+      arrived_at: ord.arrived_at,
+      started_at: ord.started_at,
+      completed_at: ord.completed_at,
+      cancelled_at: ord.cancelled_at,
+      updated_at: ord.updated_at,
+    }
+  });
+
+  // Keep-alive ping (prevents idle timeouts)
+  const ka = setInterval(() => {
+    if (res.writableEnded) return;
+    try{ res.write(': ping\n\n'); }catch(_){/* ignore */}
+  }, 25000);
+
+  req.on('close', () => {
+    clearInterval(ka);
+    const set = sseOrderClients.get(key);
+    if (set) {
+      set.delete(res);
+      if (set.size === 0) sseOrderClients.delete(key);
+    }
+  });
+});
+
 app.post('/api/orders/create', async (req, res) => {
   const passenger = await authUser(req.body.phone, req.body.password, 'passenger');
   if (!passenger) return res.json({ error: 'INVALID_CREDENTIALS' });
@@ -740,6 +829,16 @@ app.post('/api/orders/accept', async (req, res) => {
     function(err){
       if (err) return res.status(500).json({ error: 'DB_ERROR' });
       if (this.changes === 0) return res.status(409).json({ error: 'NOT_AVAILABLE' });
+
+      // Real-time notify passenger
+      db.get(
+        "SELECT id, status, driver_phone, accepted_at, arrived_at, started_at, completed_at, cancelled_at, updated_at FROM orders WHERE id=?",
+        [order_id],
+        (e2, row2) => {
+          if (!e2 && row2) sseBroadcast(order_id, 'status', { order: row2 });
+        }
+      );
+
       res.json({ success: true });
     }
   );
@@ -791,6 +890,16 @@ app.post('/api/orders/cancel', async (req, res) => {
     function(err){
       if (err) return res.status(500).json({ error: 'DB_ERROR' });
       if (this.changes === 0) return res.status(409).json({ error: 'NOT_CANCELLABLE' });
+
+      // Real-time notify (if passenger has multiple tabs)
+      db.get(
+        "SELECT id, status, driver_phone, accepted_at, arrived_at, started_at, completed_at, cancelled_at, updated_at FROM orders WHERE id=?",
+        [order_id],
+        (e2, row2) => {
+          if (!e2 && row2) sseBroadcast(order_id, 'status', { order: row2 });
+        }
+      );
+
       res.json({ success: true });
     }
   );
@@ -849,6 +958,15 @@ app.post('/api/orders/status', async (req, res) => {
     vals.push(order_id);
     await dbRun(`UPDATE orders SET ${sets.join(', ')} WHERE id=?`, vals);
 
+    // Real-time notify passenger about status change ASAP
+    try {
+      const snap = await dbGet(
+        "SELECT id, status, driver_phone, accepted_at, arrived_at, started_at, completed_at, cancelled_at, updated_at, fare_package FROM orders WHERE id=?",
+        [order_id]
+      );
+      if (snap) sseBroadcast(order_id, 'status', { order: snap });
+    } catch(_){ /* ignore */ }
+
     // If ride started, reset track points (additive)
     if (next === 'in_progress') {
       await dbRun('DELETE FROM order_track_points WHERE order_id=?', [order_id]);
@@ -881,6 +999,15 @@ app.post('/api/orders/status', async (req, res) => {
         "UPDATE orders SET real_km=?, real_minutes=?, final_fare=?, admin_fee=?, driver_earn=? WHERE id=?",
         [km, minutes, final_fare, admin_fee, driver_earn, order_id]
       );
+
+      // Real-time notify with final fare
+      try {
+        const snap2 = await dbGet(
+          "SELECT id, status, driver_phone, accepted_at, arrived_at, started_at, completed_at, cancelled_at, updated_at, fare_package, real_km, real_minutes, final_fare, admin_fee, driver_earn FROM orders WHERE id=?",
+          [order_id]
+        );
+        if (snap2) sseBroadcast(order_id, 'status', { order: snap2, fare: { real_km: snap2.real_km, real_minutes: snap2.real_minutes, final_fare: snap2.final_fare, admin_fee: snap2.admin_fee, driver_earn: snap2.driver_earn } });
+      } catch(_){ /* ignore */ }
 
       return res.json({
         success: true,
@@ -920,6 +1047,17 @@ app.post('/api/driver/location', async (req, res) => {
     [driver.phone, lat, lng, ts],
     (err) => {
       if (err) return res.status(500).json({ error: 'DB_ERROR' });
+
+      // Real-time: broadcast driver location to passenger if there's an active order
+      db.get(
+        "SELECT id FROM orders WHERE driver_phone=? AND status IN ('accepted','arrived','in_progress') ORDER BY id DESC LIMIT 1",
+        [driver.phone],
+        (eAct, act) => {
+          if (!eAct && act && act.id) {
+            sseBroadcast(act.id, 'location', { order_id: act.id, location: { lat, lng, updated_at: ts } });
+          }
+        }
+      );
 
       // If driver has an active in-progress order, append GPS track point and update real_km/minutes
       db.get(
