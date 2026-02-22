@@ -42,6 +42,7 @@ db.serialize(() => {
     is_online INTEGER DEFAULT 0,     -- driver presence: 0/1
     
     driver_radius_km INTEGER DEFAULT 4, -- driver radius (km)
+    allowed_packages TEXT DEFAULT 'economy,comfort,business', -- driver allowed fare packages
 UNIQUE(phone, role)
   )`);
 
@@ -49,6 +50,7 @@ UNIQUE(phone, role)
   ensureColumn('users', 'approved', 'approved INTEGER DEFAULT 0');
   ensureColumn('users', 'is_online', 'is_online INTEGER DEFAULT 0');
   ensureColumn('users', 'driver_radius_km', 'driver_radius_km INTEGER DEFAULT 4');
+  ensureColumn('users', 'allowed_packages', "allowed_packages TEXT DEFAULT 'economy,comfort,business'");
 
   // Settings (default radius & pricing) - additive
   db.run(`CREATE TABLE IF NOT EXISTS settings (
@@ -142,6 +144,35 @@ function normPhone(phone) {
 }
 function nowMs() {
   return Date.now();
+}
+
+function parseAllowedPackages(raw){
+  // Accept comma string or JSON array string
+  if (raw == null) return [];
+  const s = String(raw).trim();
+  if (!s) return [];
+  try {
+    const arr = JSON.parse(s);
+    if (Array.isArray(arr)) return arr.map(x=>String(x).toLowerCase().trim()).filter(Boolean);
+  } catch(_){/* ignore */}
+  return s.split(',').map(x=>String(x).toLowerCase().trim()).filter(Boolean);
+}
+
+async function normalizeAllowedPackages(input){
+  const pkgs = await getFarePackages();
+  const valid = new Set(Object.keys(pkgs || {}).map(x=>String(x).toLowerCase().trim()).filter(Boolean));
+  const list = parseAllowedPackages(input).filter(x=>valid.has(x));
+  // ensure at least economy
+  const out = Array.from(new Set(list.length ? list : ['economy']));
+  return out;
+}
+
+async function defaultAllowedPackages(){
+  const pkgs = await getFarePackages();
+  const ids = Object.keys(pkgs || {}).map(x=>String(x).toLowerCase().trim()).filter(Boolean);
+  const order = { economy: 1, comfort: 2, business: 3 };
+  ids.sort((a,b)=> (order[a]||99)-(order[b]||99));
+  return ids.length ? ids : ['economy'];
 }
 
 async function getSetting(key, defVal){
@@ -414,7 +445,7 @@ function authUser(phone, password, role) {
     if (!phone || !password) return resolve(null);
 
     db.get(
-      "SELECT id, phone, role, name, approved, is_online, driver_radius_km FROM users WHERE phone=? AND password=? AND role=?",
+      "SELECT id, phone, role, name, approved, is_online, driver_radius_km, allowed_packages FROM users WHERE phone=? AND password=? AND role=?",
       [phone, password, role],
       (err, row) => {
         if (err || !row) return resolve(null);
@@ -441,12 +472,15 @@ app.post('/api/register', async (req, res) => {
   const defaultRadius = await getSetting('default_radius_km', 4);
   const driver_radius_km = (role === 'driver') ? Number(defaultRadius) : 0;
 
+  // For drivers, default allowed packages is all packages currently configured.
+  const allowed_packages = (role === 'driver') ? (await defaultAllowedPackages()).join(',') : '';
+
   db.run(
-    "INSERT INTO users (phone, password, role, name, approved, is_online, driver_radius_km) VALUES (?, ?, ?, ?, ?, ?, ?)",
-    [phone, password, role, name, approved, is_online, driver_radius_km],
+    "INSERT INTO users (phone, password, role, name, approved, is_online, driver_radius_km, allowed_packages) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    [phone, password, role, name, approved, is_online, driver_radius_km, allowed_packages],
     function (err) {
       if (err) return res.json({ error: "PHONE_ROLE_EXISTS" });
-      res.json({ success: true, role, approved, driver_radius_km });
+      res.json({ success: true, role, approved, driver_radius_km, allowed_packages: parseAllowedPackages(allowed_packages) });
     }
   );
 });
@@ -468,12 +502,13 @@ app.post('/api/login', (req, res) => {
 
       const approved = parseInt(row.approved, 10) || 0;
       const is_online = parseInt(row.is_online, 10) || 0;
+      const allowed_packages = parseAllowedPackages(row.allowed_packages);
 
       if (role === "driver" && approved === 0) {
         return res.json({ pending: true, name: row.name || "", role });
       }
 
-      return res.json({ success: true, name: row.name || "", role, is_online, driver_radius_km: Number(row.driver_radius_km||0) });
+      return res.json({ success: true, name: row.name || "", role, is_online, driver_radius_km: Number(row.driver_radius_km||0), allowed_packages });
     }
   );
 });
@@ -510,7 +545,8 @@ app.post('/api/driver/status', async (req, res) => {
     approved: parseInt(user.approved,10) || 0,
     is_online: parseInt(user.is_online,10) || 0,
     name: user.name || '',
-    driver_radius_km: Number(user.driver_radius_km||0)
+    driver_radius_km: Number(user.driver_radius_km||0),
+    allowed_packages: parseAllowedPackages(user.allowed_packages)
   });
 });
 
@@ -528,6 +564,24 @@ app.post('/api/driver/set-radius', async (req, res) => {
   db.run("UPDATE users SET driver_radius_km=? WHERE id=?", [r, user.id], function(e2){
     if (e2) return res.json({ error: "DB_ERROR" });
     res.json({ success: true, driver_radius_km: r });
+  });
+});
+
+
+// Driver: set allowed fare packages (economy/comfort/business)
+app.post('/api/driver/set-packages', async (req, res) => {
+  const user = await authUser(req.body.phone, req.body.password, 'driver');
+  if (!user) return res.json({ error: "INVALID_CREDENTIALS" });
+  const approved = parseInt(user.approved, 10) || 0;
+  if (approved === 0) return res.json({ error: "DRIVER_NOT_APPROVED" });
+
+  const wanted = req.body.allowed_packages ?? req.body.packages ?? req.body.allowed;
+  const list = await normalizeAllowedPackages(wanted);
+  const value = list.join(',');
+
+  db.run("UPDATE users SET allowed_packages=? WHERE id=?", [value, user.id], function(e2){
+    if (e2) return res.json({ error: "DB_ERROR" });
+    res.json({ success: true, allowed_packages: list });
   });
 });
 
@@ -617,6 +671,10 @@ app.get('/api/orders/feed', async (req, res) => {
   if (parseInt(driver.approved, 10) !== 1) return res.status(403).json({ error: 'DRIVER_PENDING' });
   if (parseInt(driver.is_online, 10) !== 1) return res.status(403).json({ error: 'DRIVER_OFFLINE' });
 
+  // Filter new orders by driver's allowed packages
+  const allowedList = await normalizeAllowedPackages(driver.allowed_packages);
+  const allowedSet = new Set(allowedList);
+
   const radiusKm = (Number(driver.driver_radius_km) > 0) ? Number(driver.driver_radius_km) : await getSetting('default_radius_km', 4);
 
   db.get("SELECT lat, lng, updated_at FROM driver_locations WHERE driver_phone=?", [driver.phone], (eLoc, loc) => {
@@ -630,7 +688,7 @@ app.get('/api/orders/feed', async (req, res) => {
       [],
       (err, rows) => {
         if (err) return res.status(500).json({ error: 'DB_ERROR' });
-        let list = (rows || []).map(o => ({...o}));
+        let list = (rows || []).map(o => ({...o})).filter(o => allowedSet.has(String(o.fare_package || 'economy').toLowerCase().trim()));
 
         if (hasLoc) {
           list = list.map(o => {
@@ -644,6 +702,7 @@ app.get('/api/orders/feed', async (req, res) => {
         res.json({
           success: true,
           radius_km: Number(radiusKm),
+          allowed_packages: allowedList,
           driver_location: hasLoc ? { lat: loc.lat, lng: loc.lng, updated_at: loc.updated_at } : null,
           orders: list
         });
@@ -663,6 +722,16 @@ app.post('/api/orders/accept', async (req, res) => {
 
   const order_id = parseInt(req.body.order_id, 10);
   if (!order_id) return res.status(400).json({ error: 'ORDER_ID_REQUIRED' });
+
+  // Enforce driver's allowed packages (server-side)
+  const allowedList = await normalizeAllowedPackages(driver.allowed_packages);
+  const allowedSet = new Set(allowedList);
+  const orderPkgRow = await new Promise((resolve)=>{
+    db.get("SELECT id, fare_package, status FROM orders WHERE id=?", [order_id], (e,row)=> resolve(row||null));
+  });
+  if (!orderPkgRow) return res.status(404).json({ error: 'NOT_FOUND' });
+  const pkgId = String(orderPkgRow.fare_package || 'economy').toLowerCase().trim();
+  if (!allowedSet.has(pkgId)) return res.status(403).json({ error: 'PACKAGE_NOT_ALLOWED' });
 
   const accepted_at = nowMs();
   db.run(
@@ -981,10 +1050,31 @@ app.get('/api/admin/drivers', requireAdmin, (req, res) => {
   if (status === 'pending') where += " AND approved=0";
   if (status === 'approved') where += " AND approved=1";
 
-  db.all(`SELECT id, phone, name, approved, is_online FROM users WHERE ${where} ORDER BY approved ASC, is_online DESC, id DESC`, [], (err, rows) => {
+  db.all(`SELECT id, phone, name, approved, is_online, allowed_packages FROM users WHERE ${where} ORDER BY approved ASC, is_online DESC, id DESC`, [], (err, rows) => {
     if (err) return res.status(500).json({ error: 'DB_ERROR' });
-    res.json({ success: true, drivers: rows || [] });
+    const list = (rows || []).map(r => ({
+      ...r,
+      allowed_packages: parseAllowedPackages(r.allowed_packages)
+    }));
+    res.json({ success: true, drivers: list });
   });
+});
+
+// Admin: set driver's allowed packages
+app.post('/api/admin/driver/packages', requireAdmin, async (req, res) => {
+  try{
+    const id = parseInt(req.body.id, 10);
+    if (!id) return res.status(400).json({ error:'ID_REQUIRED' });
+    const wanted = req.body.allowed_packages ?? req.body.packages ?? req.body.allowed;
+    const list = await normalizeAllowedPackages(wanted);
+    const value = list.join(',');
+    db.run("UPDATE users SET allowed_packages=? WHERE id=? AND role='driver'", [value, id], function(err){
+      if (err) return res.status(500).json({ error:'DB_ERROR' });
+      res.json({ success:true, changes: this.changes || 0, allowed_packages: list });
+    });
+  }catch(e){
+    res.status(500).json({ error:'DB_ERROR' });
+  }
 });
 
 

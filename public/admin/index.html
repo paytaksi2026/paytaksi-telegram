@@ -81,6 +81,7 @@
               <th>Telefon</th>
               <th>Status</th>
               <th>Online</th>
+              <th>Paketlər</th>
               <th>Action</th>
             </tr>
           </thead>
@@ -137,17 +138,32 @@ async function loadDrivers(status){
   const list = (data && data.drivers) ? data.drivers : [];
   const tb = document.getElementById('tbody');
   tb.innerHTML = '';
+  const pkgs = await getFarePackages();
   for(const d of list){
     const tr = document.createElement('tr');
     const statusText = d.approved ? 'Approved' : 'Pending';
     const badgeClass = d.approved ? 'badge approved' : 'badge pending';
     const onlineText = d.is_online ? 'ONLINE' : 'OFFLINE';
+    const allowed = new Set((d.allowed_packages||[]).map(x=>String(x).toLowerCase().trim()).filter(Boolean));
+    const pkgHtml = pkgs.map(p=>{
+      const id = String(p.id||'').toLowerCase().trim();
+      const checked = allowed.size ? allowed.has(id) : (id==='economy');
+      return `<label style="margin-right:8px;white-space:nowrap;cursor:pointer">
+        <input type="checkbox" data-driver="${d.id}" data-pkg="${id}" ${checked?'checked':''} /> ${esc(p.name||id)}
+      </label>`;
+    }).join('');
     tr.innerHTML = `
       <td>${d.id}</td>
       <td>${(d.name||'')}</td>
       <td>${d.phone}</td>
       <td><span class="${badgeClass}">${statusText}</span></td>
       <td>${onlineText}</td>
+      <td>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+          ${pkgHtml}
+          <button class="secondary" style="padding:6px 10px" onclick="saveDriverPkgs(${d.id})">Yadda saxla</button>
+        </div>
+      </td>
       <td>
         ${d.approved ? '' : `<button onclick="approve(${d.id})">Approve</button>`}
         <button class="danger" onclick="delDriver(${d.id})">Sil</button>
@@ -156,6 +172,37 @@ async function loadDrivers(status){
     tb.appendChild(tr);
   }
   setText('msg', 'Drivers: ' + list.length);
+}
+
+function esc(s){ return String(s||'').replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])); }
+
+async function getFarePackages(){
+  try{
+    const r = await fetch('/api/fare-packages');
+    const j = await r.json().catch(()=> ({}));
+    if(j && j.success && Array.isArray(j.packages)) return j.packages;
+  }catch(e){}
+  return [
+    {id:'economy', name:'Ekonom'},
+    {id:'comfort', name:'Komfort'},
+    {id:'business', name:'Biznes'}
+  ];
+}
+
+async function saveDriverPkgs(driverId){
+  const checks = Array.from(document.querySelectorAll(`input[type=checkbox][data-driver='${driverId}'][data-pkg]`));
+  const list = checks.filter(c=>c.checked).map(c=>c.getAttribute('data-pkg')).filter(Boolean);
+  if(list.length===0){
+    const eco = checks.find(c=>c.getAttribute('data-pkg')==='economy');
+    if(eco){ eco.checked = true; list.push('economy'); }
+  }
+  setText('msg','...');
+  try{
+    const r = await api('/api/admin/driver/packages', { id: driverId, allowed_packages: list });
+    setText('msg', 'Yadda saxlanıldı.');
+  }catch(e){
+    setText('msg', (e && e.error) ? e.error : 'ERROR');
+  }
 }
 async function approve(id){
   setText('msg','...');

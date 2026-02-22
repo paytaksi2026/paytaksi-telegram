@@ -45,6 +45,12 @@
 
       <a href="/admin" class="badge" style="text-decoration:none;color:#e5e7eb">Admin Panel</a>
     </div>
+
+    <div style="margin-top:10px">
+      <div style="opacity:.85;font-size:13px;margin-bottom:6px">İcazə verilən paketlər:</div>
+      <div class="row" id="pkgBox"></div>
+      <div style="opacity:.65;font-size:12px;margin-top:6px">Qeyd: Seçdiyiniz paketlərə uyğun sifarişlər sizə görünəcək.</div>
+    </div>
     <div class="msg" id="msg"></div>
 
 	<div style="margin-top:12px">
@@ -94,13 +100,70 @@ async function refreshDriverMeta(){
     if(data && data.success){
       const r = Number(data.driver_radius_km||s.driver_radius_km||4);
       s.driver_radius_km = r;
+      s.allowed_packages = Array.isArray(data.allowed_packages) ? data.allowed_packages : (s.allowed_packages||[]);
       localStorage.setItem('pt_session', JSON.stringify(s));
       const sel = document.getElementById('radiusSelect');
       if(sel) sel.value = String([2,4,8].includes(r)?r:4);
+      await renderPackagePrefs();
     }
   }catch(e){}
 }
 refreshDriverMeta();
+
+async function getFarePackages(){
+  try{
+    const r = await fetch('/api/fare-packages');
+    const j = await r.json();
+    if(j && j.success && Array.isArray(j.packages)) return j.packages;
+  }catch(e){}
+  return [
+    {id:'economy', name:'Ekonom'},
+    {id:'comfort', name:'Komfort'},
+    {id:'business', name:'Biznes'}
+  ];
+}
+
+async function renderPackagePrefs(){
+  const box = document.getElementById('pkgBox');
+  if(!box) return;
+  const pkgs = await getFarePackages();
+  const allowed = new Set((s.allowed_packages||[]).map(x=>String(x).toLowerCase().trim()).filter(Boolean));
+  box.innerHTML = pkgs.map(p=>{
+    const id = String(p.id||'').toLowerCase().trim();
+    const checked = allowed.size ? allowed.has(id) : (id==='economy');
+    return `<label class="pill" style="cursor:pointer;user-select:none">
+      <input type="checkbox" data-pkg="${id}" ${checked?'checked':''} style="margin-right:8px;vertical-align:middle" onchange="savePackages()" />
+      ${esc(p.name||id)}
+    </label>`;
+  }).join('');
+}
+
+async function savePackages(){
+  const box = document.getElementById('pkgBox');
+  if(!box) return;
+  const checks = Array.from(box.querySelectorAll('input[type=checkbox][data-pkg]'));
+  const list = checks.filter(c=>c.checked).map(c=>c.getAttribute('data-pkg')).filter(Boolean);
+  if(list.length===0){
+    // keep at least economy
+    const eco = checks.find(c=>c.getAttribute('data-pkg')==='economy');
+    if(eco){ eco.checked = true; list.push('economy'); }
+  }
+  setMsg('...');
+  try{
+    const res = await fetch('/api/driver/set-packages', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password, allowed_packages:list })});
+    const data = await res.json();
+    if(data && data.success){
+      s.allowed_packages = data.allowed_packages || list;
+      localStorage.setItem('pt_session', JSON.stringify(s));
+      setMsg('Paketlər yadda saxlandı.');
+      loadFeed();
+    }else{
+      setMsg((data && data.error) ? data.error : 'ERROR');
+    }
+  }catch(e){
+    setMsg('ERROR');
+  }
+}
 
 async function goOnline(){
   setMsg('...');
@@ -238,7 +301,7 @@ async function loadFeed(){
     const dt = new Date(o.created_at).toLocaleString();
     return `<div style="padding:12px;border:1px solid rgba(148,163,184,.18);border-radius:12px;margin-bottom:10px;background:rgba(2,6,23,.35)">
       <div class="row" style="justify-content:space-between">
-        <div><b>#${o.id}</b> <span class="badge">${esc(o.status)}</span></div>
+        <div><b>#${o.id}</b> <span class="badge">${esc(o.status)}</span> ${o.fare_package?`<span class="badge">${esc(o.fare_package)}</span>`:''}</div>
         <button onclick="acceptOrder(${o.id})">Qəbul et</button>
       </div>
       <div style="margin-top:8px;opacity:.9"><b>Haradan:</b> ${esc(o.pickup_text)}</div>
