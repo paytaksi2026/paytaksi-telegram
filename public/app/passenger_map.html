@@ -40,6 +40,10 @@
   .sound-toggle { display:flex; align-items:center; gap:8px; font-size:12px; color:#cbd5e1; user-select:none; }
   .sound-toggle input { transform: translateY(1px); }
   .est{margin-top:10px;display:flex;gap:8px;flex-wrap:wrap}
+  .pkgbar{margin-top:12px;display:flex;gap:10px;flex-wrap:wrap}
+  .pkgbtn{flex:1;min-width:120px;padding:10px 12px;border-radius:12px;border:1px solid rgba(148,163,184,.25);background:rgba(2,6,23,.45);color:#e5e7eb;cursor:pointer;font-weight:700}
+  .pkgbtn small{display:block;font-weight:400;opacity:.8;margin-top:2px}
+  .pkgbtn.active{background:rgba(34,197,94,.18);border-color:rgba(34,197,94,.4)}
 </style>
 
 <link rel="stylesheet" href="/assets/bolt.css" />
@@ -71,6 +75,8 @@
       <label style="opacity:.85">Haraya</label>
       <input id="to" placeholder="Ünvan yaz..." />
       <div id="toSug" class="suggest" style="display:none"></div>
+
+      <div class="pkgbar" id="pkgBar" style="display:none"></div>
 
       <div class="est" id="estBox" style="display:none">
         <span class="pill" id="estKm"></span>
@@ -125,13 +131,59 @@ function round2(n){ return Math.round((Number(n)||0)*100)/100; }
 
 // Server-only estimate (single source of truth)
 let lastEstimateReqId = 0;
+let farePackages = [];
+let selectedPackageId = 'economy';
+
+function setSelectedPackage(id){
+  selectedPackageId = String(id || 'economy');
+  // Update UI
+  const bar = document.getElementById('pkgBar');
+  if(bar){
+    Array.from(bar.querySelectorAll('.pkgbtn')).forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.id === selectedPackageId);
+    });
+  }
+  // Refresh estimate immediately
+  showEstimate();
+  drawRoute();
+}
+
+async function loadPackages(){
+  try{
+    const r = await fetch('/api/fare-packages');
+    const j = await r.json().catch(()=>null);
+    if(j && j.success && Array.isArray(j.packages) && j.packages.length){
+      farePackages = j.packages;
+    }
+  }catch(e){}
+
+  if(!farePackages.length){
+    farePackages = [{ id:'economy', name:'Ekonom' }];
+  }
+
+  const bar = document.getElementById('pkgBar');
+  if(!bar) return;
+  bar.style.display = 'flex';
+
+  bar.innerHTML = farePackages.map(p=>{
+    const id = String(p.id||'').toLowerCase();
+    const name = p.name || id;
+    return `<button class="pkgbtn" type="button" data-id="${id}" onclick="setSelectedPackage('${id}')">${name}</button>`;
+  }).join('');
+
+  // Keep previously selected if exists, else first
+  const exists = farePackages.some(p => String(p.id).toLowerCase() === selectedPackageId);
+  if(!exists) selectedPackageId = String(farePackages[0].id||'economy');
+  setSelectedPackage(selectedPackageId);
+}
+
 async function estimateFare(km, minutes){
   const rid = ++lastEstimateReqId;
   try{
     const r = await fetch('/api/estimate', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ km, minutes })
+      body: JSON.stringify({ km, minutes, package_id: selectedPackageId })
     });
     const j = await r.json().catch(()=>null);
     if(rid !== lastEstimateReqId) return null; // newer request exists
@@ -418,11 +470,12 @@ async function createOrder(){
   const res = await fetch('/api/orders/create', {
     method:'POST',
     headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ phone: s.phone, password: s.password, pickup, dropoff })
+    body: JSON.stringify({ phone: s.phone, password: s.password, pickup, dropoff, package_id: selectedPackageId })
   });
   const data = await res.json();
   if(data.success){
-    setMsg('Sifariş yaradıldı. ID: ' + data.order_id + ' • ' + (data.est_fare ?? '') + ' AZN (təxmini)');
+    const pkg = data.package_name ? ` • ${data.package_name}` : '';
+    setMsg('Sifariş yaradıldı. ID: ' + data.order_id + pkg + ' • ' + (data.est_fare ?? '') + ' AZN (təxmini)');
     loadMyOrders();
   } else setMsg(data.error || 'ERROR');
 }
@@ -436,10 +489,11 @@ async function loadMyOrders(){
 
   box.innerHTML = data.orders.map(o => {
     const dt = new Date(o.created_at).toLocaleString();
+    const pkgLine = (o.fare_package) ? `<span class="pill" style="margin-left:6px">${o.fare_package}</span>` : '';
     const driverLine = o.driver_phone ? `<div style="opacity:.9;margin-top:4px"><b>Sürücü:</b> ${o.driver_phone}</div>` : '';
     const estLine = (o.est_fare != null) ? `<div style="opacity:.9;margin-top:4px"><b>Təxmini:</b> ${Number(o.est_km||0).toFixed(1)} km • ${o.est_fare} AZN</div>` : '';
     return `<div style="padding:10px 0;border-bottom:1px solid rgba(148,163,184,.12)">
-      <div><b>#${o.id}</b> <span class="pill">${o.status}</span></div>
+      <div><b>#${o.id}</b> <span class="pill">${o.status}</span>${pkgLine}</div>
       <div style="opacity:.9;margin-top:4px"><b>Haradan:</b> ${o.pickup_text}</div>
       <div style="opacity:.9;margin-top:4px"><b>Haraya:</b> ${o.dropoff_text}</div>
       ${estLine}
@@ -522,6 +576,7 @@ function startPolling(){
   pollTimer = setInterval(loadMyOrders, 5000);
 }
 
+loadPackages();
 initMap();
 useMyLocation();
 loadMyOrders();

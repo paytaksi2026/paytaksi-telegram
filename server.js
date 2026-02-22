@@ -69,6 +69,15 @@ UNIQUE(phone, role)
   seedSetting('fare_min', 2.0);
   seedSetting('commission_rate', 0.10);
 
+  // Fare packages (JSON). Additive + backward compatible.
+  // Stored in settings to keep migrations minimal.
+  // Default packages are derived from the base fare settings above.
+  seedSetting('fare_packages_json', JSON.stringify({
+    economy:  { name: 'Ekonom',  fare_base: 1.0, fare_per_km: 0.6, fare_per_min: 0.15, fare_min: 2.0, commission_rate: 0.10 },
+    comfort:  { name: 'Komfort', fare_base: 2.0, fare_per_km: 0.75, fare_per_min: 0.20, fare_min: 3.0, commission_rate: 0.10 },
+    business: { name: 'Biznes',  fare_base: 4.0, fare_per_km: 0.95, fare_per_min: 0.25, fare_min: 5.0, commission_rate: 0.10 }
+  }));
+
 
   db.run(`CREATE TABLE IF NOT EXISTS orders (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -114,6 +123,7 @@ UNIQUE(phone, role)
   ensureColumn('orders', 'est_km', 'est_km REAL');
   ensureColumn('orders', 'est_minutes', 'est_minutes REAL');
   ensureColumn('orders', 'est_fare', 'est_fare REAL');
+  ensureColumn('orders', 'fare_package', "fare_package TEXT DEFAULT 'economy'");
   // Final fare engine (completed)
   ensureColumn('orders', 'real_km', 'real_km REAL');
   ensureColumn('orders', 'real_minutes', 'real_minutes REAL');
@@ -169,6 +179,72 @@ async function getFareSettings(){
   };
 }
 
+// Fare packages (stored as JSON in settings)
+async function getFarePackages(){
+  const raw = await getSetting('fare_packages_json', '');
+  let obj = null;
+  try { obj = JSON.parse(String(raw||'')); } catch(_) { obj = null; }
+
+  // Fallback: build economy from base fare settings
+  if (!obj || typeof obj !== 'object') {
+    const base = await getFareSettings();
+    obj = {
+      economy: { name: 'Ekonom', ...base, commission_rate: await getSetting('commission_rate', 0.10) }
+    };
+  }
+
+  // Ensure required fields & sane numbers
+  const normPkg = (p, defName) => {
+    p = (p && typeof p === 'object') ? p : {};
+    return {
+      name: String(p.name || defName || '').slice(0, 32) || defName || 'Paket',
+      fare_base: Number(p.fare_base) || 0,
+      fare_per_km: Number(p.fare_per_km) || 0,
+      fare_per_min: Number(p.fare_per_min) || 0,
+      fare_min: Number(p.fare_min) || 0,
+      commission_rate: Number(p.commission_rate) || 0,
+    };
+  };
+
+  // Normalize known packages if present
+  const out = {};
+  for (const [id, p] of Object.entries(obj)) {
+    if (!id) continue;
+    out[String(id).toLowerCase().trim()] = normPkg(p, (p && p.name) ? String(p.name) : id);
+  }
+
+  // Ensure at least economy exists
+  if (!out.economy) {
+    const base = await getFareSettings();
+    out.economy = normPkg({ name:'Ekonom', ...base, commission_rate: await getSetting('commission_rate', 0.10) }, 'Ekonom');
+  }
+  return out;
+}
+
+async function setFarePackages(packagesObj){
+  try {
+    await setSetting('fare_packages_json', JSON.stringify(packagesObj || {}));
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+async function getFareSettingsForPackage(packageId){
+  const pkgs = await getFarePackages();
+  const id = String(packageId || 'economy').toLowerCase().trim();
+  const p = pkgs[id] || pkgs.economy;
+  return {
+    package_id: pkgs[id] ? id : 'economy',
+    name: p.name,
+    fare_base: Number(p.fare_base)||0,
+    fare_per_km: Number(p.fare_per_km)||0,
+    fare_per_min: Number(p.fare_per_min)||0,
+    fare_min: Number(p.fare_min)||0,
+    commission_rate: Number(p.commission_rate)||0,
+  };
+}
+
 function computeFare(settings, km, minutes){
   const s = settings || { fare_base:0, fare_per_km:0, fare_per_min:0, fare_min:0 };
   km = Number(km) || 0;
@@ -204,6 +280,7 @@ async function osrmRouteMeta(pickup_lon, pickup_lat, dropoff_lon, dropoff_lat){
 app.post('/api/estimate', async (req, res) => {
   try{
     const b = req.body || {};
+    const package_id = String(b.package_id || b.package || 'economy');
 
     // Option A: km/min passed directly
     let km = Number(b.km);
@@ -235,11 +312,13 @@ app.post('/api/estimate', async (req, res) => {
     km = Math.max(0, km);
     minutes = Math.max(0, minutes);
 
-    const settings = await getFareSettings();
+    const settings = await getFareSettingsForPackage(package_id);
     const fare = computeFare(settings, km, minutes);
 
     res.json({
       success: true,
+      package_id: settings.package_id,
+      package_name: settings.name,
       km: Number(km.toFixed(3)),
       minutes: Number(minutes.toFixed(1)),
       fare,
@@ -459,6 +538,8 @@ app.post('/api/orders/create', async (req, res) => {
   const passenger = await authUser(req.body.phone, req.body.password, 'passenger');
   if (!passenger) return res.json({ error: 'INVALID_CREDENTIALS' });
 
+  const package_id = String(req.body.package_id || req.body.package || 'economy');
+
   const pickup = req.body.pickup || {};
   const dropoff = req.body.dropoff || {};
 
@@ -483,17 +564,17 @@ app.post('/api/orders/create', async (req, res) => {
     if (Number.isFinite(meta.minutes) && meta.minutes > 0) est_minutes = meta.minutes;
   }
 
-  const fareSettings = await getFareSettings();
+  const fareSettings = await getFareSettingsForPackage(package_id);
   const est_fare = computeFare(fareSettings, est_km, est_minutes);
 
   const created_at = nowMs();
   db.run(
-    `INSERT INTO orders (passenger_phone, pickup_text, pickup_lat, pickup_lon, dropoff_text, dropoff_lat, dropoff_lon, status, created_at, updated_at, driver_phone, accepted_at, arrived_at, started_at, completed_at, cancelled_at, est_km, est_minutes, est_fare)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'new', ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, ?)`,
-    [passenger.phone, pickup_text, pickup_lat, pickup_lon, dropoff_text, dropoff_lat, dropoff_lon, created_at, created_at, est_km, est_minutes, est_fare],
+    `INSERT INTO orders (passenger_phone, pickup_text, pickup_lat, pickup_lon, dropoff_text, dropoff_lat, dropoff_lon, status, created_at, updated_at, driver_phone, accepted_at, arrived_at, started_at, completed_at, cancelled_at, est_km, est_minutes, est_fare, fare_package)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'new', ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, ?, ?)`,
+    [passenger.phone, pickup_text, pickup_lat, pickup_lon, dropoff_text, dropoff_lat, dropoff_lon, created_at, created_at, est_km, est_minutes, est_fare, fareSettings.package_id],
     function(err){
       if (err) return res.json({ error: 'DB_ERROR' });
-      res.json({ success: true, order_id: this.lastID, est_km: Number(est_km.toFixed(3)), est_minutes: Number(est_minutes.toFixed(1)), est_fare: Number(est_fare.toFixed(2)) });
+      res.json({ success: true, order_id: this.lastID, package_id: fareSettings.package_id, package_name: fareSettings.name, est_km: Number(est_km.toFixed(3)), est_minutes: Number(est_minutes.toFixed(1)), est_fare: Number(est_fare.toFixed(2)) });
     }
   );
 });
@@ -509,6 +590,7 @@ app.get('/api/orders/my', async (req, res) => {
   const base = ['id','pickup_text','dropoff_text','status','driver_phone','created_at'];
   const optional = [
     'pickup_lat','pickup_lon','dropoff_lat','dropoff_lon',
+    'fare_package',
     'est_km','est_fare',
     'real_km','real_minutes','final_fare','admin_fee','driver_earn',
     'accepted_at','arrived_at','started_at','completed_at','cancelled_at','updated_at'
@@ -544,7 +626,7 @@ app.get('/api/orders/feed', async (req, res) => {
     const hasLoc = !!(loc && Number.isFinite(loc.lat) && Number.isFinite(loc.lng));
 
     db.all(
-      "SELECT id, passenger_phone, pickup_text, dropoff_text, pickup_lat, pickup_lon, dropoff_lat, dropoff_lon, est_km, est_fare, status, created_at FROM orders WHERE status='new' ORDER BY id DESC LIMIT 50",
+      "SELECT id, passenger_phone, pickup_text, dropoff_text, pickup_lat, pickup_lon, dropoff_lat, dropoff_lon, est_km, est_minutes, est_fare, fare_package, status, created_at FROM orders WHERE status='new' ORDER BY id DESC LIMIT 50",
       [],
       (err, rows) => {
         if (err) return res.status(500).json({ error: 'DB_ERROR' });
@@ -606,6 +688,7 @@ app.get('/api/orders/driver/my', async (req, res) => {
   const base = ['id','passenger_phone','pickup_text','dropoff_text','status','driver_phone','created_at'];
   const optional = [
     'pickup_lat','pickup_lon','dropoff_lat','dropoff_lon',
+    'fare_package',
     'est_km','est_fare',
     'real_km','real_minutes','final_fare','admin_fee','driver_earn',
     'accepted_at','arrived_at','started_at','completed_at','cancelled_at','updated_at'
@@ -909,11 +992,13 @@ app.get('/api/admin/drivers', requireAdmin, (req, res) => {
 // ---------------- Public settings endpoint for the client (single source of truth for pricing)
 // GET is public (needed for passenger estimate UI), POST is admin-only (updates settings)
 app.get('/api/settings', async (req, res) => {
-  const fare_base = await getSetting('fare_base', 1.0);
-  const fare_per_km = await getSetting('fare_per_km', 0.6);
-  const fare_per_min = await getSetting('fare_per_min', 0.15);
-  const fare_min = await getSetting('fare_min', 2.0);
-  const commission_rate = await getSetting('commission_rate', 0.10);
+  // Backward compatible: return economy package as the "default" pricing.
+  const eco = await getFareSettingsForPackage('economy');
+  const fare_base = eco.fare_base;
+  const fare_per_km = eco.fare_per_km;
+  const fare_per_min = eco.fare_per_min;
+  const fare_min = eco.fare_min;
+  const commission_rate = eco.commission_rate;
 
   // Backward-compatible aliases (some pages expect these names)
   res.json({
@@ -939,13 +1024,88 @@ app.post('/api/settings', requireAdmin, async (req, res) => {
     : (b.commission !== undefined ? (Number(b.commission) / 100) : NaN);
 
   // Validate minimally (keep flexible, but avoid NaN)
+  // Keep legacy keys updated
   if (Number.isFinite(fare_base)) await setSetting('fare_base', fare_base);
   if (Number.isFinite(fare_per_km)) await setSetting('fare_per_km', fare_per_km);
   if (Number.isFinite(fare_per_min)) await setSetting('fare_per_min', fare_per_min);
   if (Number.isFinite(fare_min)) await setSetting('fare_min', fare_min);
   if (Number.isFinite(commission_rate)) await setSetting('commission_rate', commission_rate);
 
+  // Also update economy package so all clients stay consistent.
+  const pkgs = await getFarePackages();
+  pkgs.economy = pkgs.economy || { name:'Ekonom' };
+  if (Number.isFinite(fare_base)) pkgs.economy.fare_base = fare_base;
+  if (Number.isFinite(fare_per_km)) pkgs.economy.fare_per_km = fare_per_km;
+  if (Number.isFinite(fare_per_min)) pkgs.economy.fare_per_min = fare_per_min;
+  if (Number.isFinite(fare_min)) pkgs.economy.fare_min = fare_min;
+  if (Number.isFinite(commission_rate)) pkgs.economy.commission_rate = commission_rate;
+  await setFarePackages(pkgs);
+
   res.json({ success: true });
+});
+
+
+// ---------------- Fare packages API
+// Public: list packages for passenger UI
+app.get('/api/fare-packages', async (req, res) => {
+  try{
+    const pkgs = await getFarePackages();
+    const list = Object.entries(pkgs).map(([id, p]) => ({
+      id,
+      name: p.name,
+      fare_base: p.fare_base,
+      fare_per_km: p.fare_per_km,
+      fare_per_min: p.fare_per_min,
+      fare_min: p.fare_min,
+      commission_rate: p.commission_rate,
+      commission: Math.round(Number(p.commission_rate||0) * 100),
+    }));
+    // stable ordering
+    const order = { economy: 1, comfort: 2, business: 3 };
+    list.sort((a,b)=> (order[a.id]||99) - (order[b.id]||99));
+    res.json({ success:true, packages: list });
+  }catch(e){
+    res.status(500).json({ success:false, error:'DB_ERROR' });
+  }
+});
+
+// Admin: update one package (keeps changes additive)
+app.post('/api/fare-packages', requireAdmin, async (req, res) => {
+  try{
+    const b = req.body || {};
+    const id = String(b.id || b.package_id || '').toLowerCase().trim();
+    if (!id) return res.status(400).json({ success:false, error:'MISSING_ID' });
+
+    const pkgs = await getFarePackages();
+    const cur = pkgs[id] || { name: (b.name || id) };
+
+    const upd = {
+      name: (b.name != null ? String(b.name) : cur.name),
+      fare_base: Number.isFinite(Number(b.fare_base)) ? Number(b.fare_base) : Number(cur.fare_base)||0,
+      fare_per_km: Number.isFinite(Number(b.fare_per_km)) ? Number(b.fare_per_km) : Number(cur.fare_per_km)||0,
+      fare_per_min: Number.isFinite(Number(b.fare_per_min)) ? Number(b.fare_per_min) : Number(cur.fare_per_min)||0,
+      fare_min: Number.isFinite(Number(b.fare_min)) ? Number(b.fare_min) : Number(cur.fare_min)||0,
+      commission_rate: (b.commission_rate != null)
+        ? Number(b.commission_rate)
+        : (b.commission != null ? (Number(b.commission)/100) : (Number(cur.commission_rate)||0)),
+    };
+
+    pkgs[id] = upd;
+    await setFarePackages(pkgs);
+
+    // Keep legacy keys in sync with economy to avoid any UI drift
+    if (id === 'economy'){
+      await setSetting('fare_base', upd.fare_base);
+      await setSetting('fare_per_km', upd.fare_per_km);
+      await setSetting('fare_per_min', upd.fare_per_min);
+      await setSetting('fare_min', upd.fare_min);
+      await setSetting('commission_rate', upd.commission_rate);
+    }
+
+    res.json({ success:true });
+  }catch(e){
+    res.status(500).json({ success:false, error:'DB_ERROR' });
+  }
 });
 
 
