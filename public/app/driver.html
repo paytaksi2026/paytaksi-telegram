@@ -355,18 +355,52 @@ async function loadMy(){
     const dt = new Date(o.created_at).toLocaleString();
     const at = o.accepted_at ? new Date(o.accepted_at).toLocaleString() : '';
     let actions = '';
+    let chat = '';
     if(o.status==='accepted'){
+      chat = `
+      <div style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(148,163,184,.18)">
+        <div class="pill" style="margin-bottom:8px">Canlı Çat</div>
+        <div id="chatMsgs_${o.id}" style="height:160px;overflow:auto;padding:10px;border:1px solid rgba(148,163,184,.2);border-radius:12px;background:rgba(2,6,23,.35)"></div>
+        <div class="row" style="margin-top:8px;gap:8px">
+          <input id="chatInput_${o.id}" placeholder="Mesaj..." style="flex:1;padding:10px 12px;border-radius:12px;border:1px solid rgba(148,163,184,.25);background:rgba(2,6,23,.55);color:#e5e7eb" />
+          <button class="secondary" onclick="sendChatDriver(${o.id})">Göndər</button>
+        </div>
+      </div>
+`;
+
       actions = `<div class="row" style="margin-top:10px">
         <button class="secondary" onclick="setOrderStatus(${o.id},'arrived')">Gəldim</button>
         <button class="secondary" onclick="setOrderStatus(${o.id},'in_progress')">Başla</button>
         <button class="secondary" onclick="setOrderStatus(${o.id},'cancelled')">Ləğv et</button>
       </div>`;
     } else if(o.status==='arrived'){
+      chat = `
+      <div style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(148,163,184,.18)">
+        <div class="pill" style="margin-bottom:8px">Canlı Çat</div>
+        <div id="chatMsgs_${o.id}" style="height:160px;overflow:auto;padding:10px;border:1px solid rgba(148,163,184,.2);border-radius:12px;background:rgba(2,6,23,.35)"></div>
+        <div class="row" style="margin-top:8px;gap:8px">
+          <input id="chatInput_${o.id}" placeholder="Mesaj..." style="flex:1;padding:10px 12px;border-radius:12px;border:1px solid rgba(148,163,184,.25);background:rgba(2,6,23,.55);color:#e5e7eb" />
+          <button class="secondary" onclick="sendChatDriver(${o.id})">Göndər</button>
+        </div>
+      </div>
+`;
+
       actions = `<div class="row" style="margin-top:10px">
         <button class="secondary" onclick="setOrderStatus(${o.id},'in_progress')">Başla</button>
         <button class="secondary" onclick="setOrderStatus(${o.id},'cancelled')">Ləğv et</button>
       </div>`;
     } else if(o.status==='in_progress'){
+      chat = `
+      <div style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(148,163,184,.18)">
+        <div class="pill" style="margin-bottom:8px">Canlı Çat</div>
+        <div id="chatMsgs_${o.id}" style="height:160px;overflow:auto;padding:10px;border:1px solid rgba(148,163,184,.2);border-radius:12px;background:rgba(2,6,23,.35)"></div>
+        <div class="row" style="margin-top:8px;gap:8px">
+          <input id="chatInput_${o.id}" placeholder="Mesaj..." style="flex:1;padding:10px 12px;border-radius:12px;border:1px solid rgba(148,163,184,.25);background:rgba(2,6,23,.55);color:#e5e7eb" />
+          <button class="secondary" onclick="sendChatDriver(${o.id})">Göndər</button>
+        </div>
+      </div>
+`;
+
       actions = `<div class="row" style="margin-top:10px">
         <button onclick="setOrderStatus(${o.id},'completed')">Bitir</button>
       </div>`;
@@ -380,10 +414,104 @@ async function loadMy(){
       ${at ? `<div style="margin-top:6px;opacity:.75"><b>Qəbul:</b> ${at}</div>` : ''}
       ${o.final_fare!=null ? `<div style="margin-top:6px;opacity:.85"><b>Yekun:</b> ${Number(o.final_fare).toFixed(2)} AZN • <b>Sizin:</b> ${Number(o.driver_earn||0).toFixed(2)} AZN</div>` : ''}
       <div style="margin-top:6px;opacity:.65">${dt}</div>
+      ${chat}
       ${actions}
     </div>`;
   }).join('');
+
+  const activeMy = (data.orders||[]).find(x=>['accepted','arrived','in_progress'].includes(String(x.status||'')));
+  if(activeMy && activeMy.id){
+    startDriverStream(activeMy.id);
+  }else{
+    stopDriverStream();
+  }
 }
+
+
+let drvStream = null;
+let drvStreamOrderId = null;
+
+function stopDriverStream(){
+  try{ if(drvStream) drvStream.close(); }catch(_){}
+  drvStream = null; drvStreamOrderId = null;
+}
+
+function renderChatBox(orderId, messages){
+  const box = document.getElementById('chatMsgs_' + orderId);
+  if(!box) return;
+  box.innerHTML = '';
+  (messages||[]).forEach(m => appendChatBox(orderId, m, true));
+  box.scrollTop = box.scrollHeight + 999;
+}
+
+function appendChatBox(orderId, m, isBatch){
+  const box = document.getElementById('chatMsgs_' + orderId);
+  if(!box || !m) return;
+  const role = String(m.sender_role||'').toLowerCase();
+  const mine = (role === 'driver');
+  const wrap = document.createElement('div');
+  wrap.style.margin = '6px 0';
+  wrap.style.display = 'flex';
+  wrap.style.justifyContent = mine ? 'flex-end' : 'flex-start';
+
+  const bubble = document.createElement('div');
+  bubble.style.maxWidth = '78%';
+  bubble.style.padding = '8px 10px';
+  bubble.style.borderRadius = '14px';
+  bubble.style.border = '1px solid rgba(148,163,184,.25)';
+  bubble.style.background = mine ? 'rgba(34,197,94,.18)' : 'rgba(148,163,184,.10)';
+  bubble.textContent = String(m.message||'');
+  wrap.appendChild(bubble);
+  box.appendChild(wrap);
+  if(!isBatch) box.scrollTop = box.scrollHeight + 999;
+}
+
+function startDriverStream(orderId){
+  const oid = Number(orderId||0);
+  if(!oid) return;
+  if(drvStream && drvStreamOrderId === oid) return;
+  stopDriverStream();
+  drvStreamOrderId = oid;
+  const url = `/api/driver/orders/stream?order_id=${encodeURIComponent(oid)}&phone=${encodeURIComponent(s.phone)}&password=${encodeURIComponent(s.password)}`;
+  try{ drvStream = new EventSource(url); }catch(_){ stopDriverStream(); return; }
+
+  drvStream.addEventListener('chat_snapshot', (ev)=>{
+    try{
+      const msg = JSON.parse(ev.data||'{}');
+      if(Number(msg.order_id)!==oid) return;
+      renderChatBox(oid, msg.messages||[]);
+    }catch(_){}
+  });
+  drvStream.addEventListener('chat_message', (ev)=>{
+    try{
+      const msg = JSON.parse(ev.data||'{}');
+      if(Number(msg.order_id)!==oid) return;
+      if(msg.message) appendChatBox(oid, msg.message);
+    }catch(_){}
+  });
+  drvStream.onerror = ()=>{};
+}
+
+async function sendChatDriver(orderId){
+  const oid = Number(orderId||0);
+  if(!oid) return;
+  const inp = document.getElementById('chatInput_' + oid);
+  if(!inp) return;
+  const txt = String(inp.value||'').trim();
+  if(!txt) return;
+  inp.value = '';
+  try{
+    const r = await fetch('/api/orders/messages/send', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ order_id: oid, phone: s.phone, password: s.password, message: txt })
+    });
+    const j = await r.json().catch(()=>null);
+    if(!r.ok){ setMsg((j&&j.error)?j.error:'Xəta'); return; }
+    if(j && j.message) appendChatBox(oid, j.message);
+  }catch(e){ setMsg('Şəbəkə xətası'); }
+}
+
 
 // initial + polling
 loadFeed();

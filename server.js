@@ -135,6 +135,18 @@ UNIQUE(phone, role)
   )`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_order_track_points_order ON order_track_points(order_id, id)`);
 
+  // Order chat messages (Passenger <-> Driver)
+  db.run(`CREATE TABLE IF NOT EXISTS order_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    order_id INTEGER NOT NULL,
+    sender_role TEXT NOT NULL,        -- passenger | driver
+    sender_phone TEXT NOT NULL,
+    message TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  )`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_order_messages_order ON order_messages(order_id, id)`);
+
+
   // Additive columns for order lifecycle
   ensureColumn('orders', 'driver_phone', 'driver_phone TEXT');
   ensureColumn('orders', 'accepted_at', 'accepted_at INTEGER');
@@ -659,6 +671,17 @@ app.get('/api/orders/stream', async (req, res) => {
       cancelled_at: ord.cancelled_at,
       updated_at: ord.updated_at,
     }
+
+  // Send recent chat messages
+  db.all(
+    "SELECT id, order_id, sender_role, sender_phone, message, created_at FROM order_messages WHERE order_id=? ORDER BY id DESC LIMIT 30",
+    [order_id],
+    (e, rows) => {
+      const items = (rows || []).slice().reverse();
+      sseWrite(res, 'chat_snapshot', { order_id, messages: items });
+    }
+  );
+
   });
 
   // Keep-alive ping (prevents idle timeouts)
@@ -676,6 +699,71 @@ app.get('/api/orders/stream', async (req, res) => {
     }
   });
 });
+
+
+// Driver: real-time stream for an assigned order (status + chat + passenger events)
+// Usage: new EventSource(`/api/driver/orders/stream?order_id=1&phone=...&password=...`)
+app.get('/api/driver/orders/stream', async (req, res) => {
+  const phone = normPhone(req.query.phone);
+  const password = String(req.query.password || '');
+  const driver = await authUser(phone, password, 'driver');
+  if (!driver) return res.status(401).json({ error: 'INVALID_CREDENTIALS' });
+  if (parseInt(driver.approved, 10) !== 1) return res.status(403).json({ error: 'DRIVER_PENDING' });
+
+  const order_id = parseInt(req.query.order_id, 10);
+  if (!order_id) return res.status(400).json({ error: 'ORDER_ID_REQUIRED' });
+
+  const ord = await new Promise((resolve)=>{
+    db.get(
+      "SELECT id, passenger_phone, status, driver_phone, fare_package, accepted_at, arrived_at, started_at, completed_at, cancelled_at, updated_at FROM orders WHERE id=?",
+      [order_id],
+      (e,row)=> resolve(e ? null : (row||null))
+    );
+  });
+  if (!ord) return res.status(404).json({ error: 'NOT_FOUND' });
+  if (String(ord.driver_phone || '') !== driver.phone) return res.status(403).json({ error: 'FORBIDDEN' });
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders && res.flushHeaders();
+
+  const key = String(order_id);
+  if (!sseOrderClients.has(key)) sseOrderClients.set(key, new Set());
+  sseOrderClients.get(key).add(res);
+
+  sseWrite(res, 'snapshot', { order: {
+    id: ord.id, status: ord.status, driver_phone: ord.driver_phone, passenger_phone: ord.passenger_phone,
+    fare_package: ord.fare_package, accepted_at: ord.accepted_at, arrived_at: ord.arrived_at,
+    started_at: ord.started_at, completed_at: ord.completed_at, cancelled_at: ord.cancelled_at, updated_at: ord.updated_at,
+  }});
+
+  // Send recent chat
+  db.all(
+    "SELECT id, order_id, sender_role, sender_phone, message, created_at FROM order_messages WHERE order_id=? ORDER BY id DESC LIMIT 30",
+    [order_id],
+    (e, rows) => {
+      const items = (rows || []).slice().reverse();
+      sseWrite(res, 'chat_snapshot', { order_id, messages: items });
+    }
+  );
+
+  const ka = setInterval(() => {
+    if (res.writableEnded) return;
+    try{ res.write(': ping\n\n'); }catch(_){/* ignore */}
+  }, 25000);
+
+  req.on('close', () => {
+    clearInterval(ka);
+    const set = sseOrderClients.get(key);
+    if (set) {
+      set.delete(res);
+      if (set.size === 0) sseOrderClients.delete(key);
+    }
+  });
+});
+
 
 app.post('/api/orders/create', async (req, res) => {
   const passenger = await authUser(req.body.phone, req.body.password, 'passenger');
@@ -1026,6 +1114,76 @@ app.post('/api/orders/status', async (req, res) => {
     console.error(e);
     res.status(500).json({ error: 'DB_ERROR' });
   }
+});
+
+
+
+// Shared: get messages for an order (passenger or assigned driver)
+app.get('/api/orders/messages', async (req, res) => {
+  const phone = normPhone(req.query.phone);
+  const password = String(req.query.password || '');
+  const order_id = parseInt(req.query.order_id, 10);
+  if (!order_id) return res.status(400).json({ error: 'ORDER_ID_REQUIRED' });
+
+  let u = await authUser(phone, password, 'passenger');
+  let role = 'passenger';
+  if (!u) { u = await authUser(phone, password, 'driver'); role = 'driver'; }
+  if (!u) return res.status(401).json({ error: 'INVALID_CREDENTIALS' });
+
+  const ord = await new Promise((resolve)=>{
+    db.get("SELECT id, passenger_phone, driver_phone FROM orders WHERE id=?", [order_id], (e,row)=> resolve(e?null:(row||null)));
+  });
+  if (!ord) return res.status(404).json({ error: 'NOT_FOUND' });
+  if (role === 'passenger' && String(ord.passenger_phone||'') !== u.phone) return res.status(403).json({ error: 'FORBIDDEN' });
+  if (role === 'driver' && String(ord.driver_phone||'') !== u.phone) return res.status(403).json({ error: 'FORBIDDEN' });
+
+  db.all(
+    "SELECT id, order_id, sender_role, sender_phone, message, created_at FROM order_messages WHERE order_id=? ORDER BY id ASC LIMIT 200",
+    [order_id],
+    (e, rows) => {
+      if (e) return res.status(500).json({ error: 'DB_ERROR' });
+      res.json({ success: true, messages: rows || [] });
+    }
+  );
+});
+
+// Shared: send message (passenger or assigned driver)
+app.post('/api/orders/messages/send', async (req, res) => {
+  const phone = normPhone(req.body.phone);
+  const password = String(req.body.password || '');
+  const order_id = parseInt(req.body.order_id, 10);
+  const message = String(req.body.message || '').trim();
+  if (!order_id) return res.status(400).json({ error: 'ORDER_ID_REQUIRED' });
+  if (!message) return res.status(400).json({ error: 'MESSAGE_REQUIRED' });
+  if (message.length > 500) return res.status(400).json({ error: 'MESSAGE_TOO_LONG' });
+
+  let u = await authUser(phone, password, 'passenger');
+  let role = 'passenger';
+  if (!u) { u = await authUser(phone, password, 'driver'); role = 'driver'; }
+  if (!u) return res.status(401).json({ error: 'INVALID_CREDENTIALS' });
+
+  const ord = await new Promise((resolve)=>{
+    db.get("SELECT id, passenger_phone, driver_phone, status FROM orders WHERE id=?", [order_id], (e,row)=> resolve(e?null:(row||null)));
+  });
+  if (!ord) return res.status(404).json({ error: 'NOT_FOUND' });
+  if (role === 'passenger' && String(ord.passenger_phone||'') !== u.phone) return res.status(403).json({ error: 'FORBIDDEN' });
+  if (role === 'driver' && String(ord.driver_phone||'') !== u.phone) return res.status(403).json({ error: 'FORBIDDEN' });
+
+  const st = String(ord.status||'').toLowerCase();
+  if (['completed','cancelled'].includes(st)) return res.status(400).json({ error: 'ORDER_CLOSED' });
+
+  const ts = nowMs();
+  db.run(
+    "INSERT INTO order_messages (order_id, sender_role, sender_phone, message, created_at) VALUES (?, ?, ?, ?, ?)",
+    [order_id, role, u.phone, message, ts],
+    function(err){
+      if (err) return res.status(500).json({ error: 'DB_ERROR' });
+      const msgObj = { id: this.lastID, order_id, sender_role: role, sender_phone: u.phone, message, created_at: ts };
+      // Broadcast to all order subscribers (passenger + driver)
+      sseBroadcast(order_id, 'chat_message', { order_id, message: msgObj });
+      res.json({ success: true, message: msgObj });
+    }
+  );
 });
 
 

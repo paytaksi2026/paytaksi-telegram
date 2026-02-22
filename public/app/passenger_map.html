@@ -118,6 +118,8 @@ let routeLine = null;
 let lastRouteKey = '';
 let driverRouteLine = null;
 let lastDriverPos = null;
+let driverTrail = [];
+let driverTrailLine = null;
 let lastAnnouncedStatus = '';
 let pickup = null;
 let dropoff = null;
@@ -138,11 +140,86 @@ function stopOrderStream(){
   orderStreamId = null;
 }
 
+function clearDriverTrail(){
+  driverTrail = [];
+  if (driverTrailLine){
+    try{ map.removeLayer(driverTrailLine); }catch(_){}
+  }
+  driverTrailLine = null;
+}
+
+function renderChat(messages){
+  const box = document.getElementById('chatMsgs');
+  if(!box) return;
+  box.innerHTML = '';
+  (messages||[]).forEach(m => appendChat(m, true));
+  // scroll to bottom
+  box.scrollTop = box.scrollHeight + 999;
+}
+
+function appendChat(m, isBatch){
+  const box = document.getElementById('chatMsgs');
+  if(!box || !m) return;
+  const role = String(m.sender_role || '').toLowerCase();
+  const mine = (role === 'passenger');
+  const wrap = document.createElement('div');
+  wrap.style.margin = '6px 0';
+  wrap.style.display = 'flex';
+  wrap.style.justifyContent = mine ? 'flex-end' : 'flex-start';
+
+  const bubble = document.createElement('div');
+  bubble.style.maxWidth = '78%';
+  bubble.style.padding = '8px 10px';
+  bubble.style.borderRadius = '14px';
+  bubble.style.border = '1px solid rgba(148,163,184,.25)';
+  bubble.style.background = mine ? 'rgba(34,197,94,.18)' : 'rgba(148,163,184,.10)';
+  bubble.textContent = String(m.message || '');
+
+  wrap.appendChild(bubble);
+  box.appendChild(wrap);
+  if(!isBatch) box.scrollTop = box.scrollHeight + 999;
+}
+
+async function sendChat(){
+  const oid = Number(orderStreamId || (activeOrderObj && activeOrderObj.id) || 0);
+  if(!oid) return;
+  const inp = document.getElementById('chatInput');
+  if(!inp) return;
+  const txt = String(inp.value || '').trim();
+  if(!txt) return;
+  inp.value = '';
+  try{
+    const r = await fetch('/api/orders/messages/send', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ order_id: oid, phone: s.phone, password: s.password, message: txt })
+    });
+    const j = await r.json().catch(()=>null);
+    if(!r.ok){
+      setMsg((j && j.error) ? j.error : 'Xəta');
+      return;
+    }
+    // optimistic: server will broadcast chat_message; but append if needed
+    if (j && j.message) appendChat(j.message);
+  }catch(e){
+    setMsg('Şəbəkə xətası');
+  }
+}
+
+
 function applyDriverLocation(llObj){
   if(!llObj || !Number.isFinite(llObj.lat) || !Number.isFinite(llObj.lng)) return;
 
   if(!driverMarker) driverMarker = L.marker([llObj.lat, llObj.lng]).addTo(map).bindPopup('Sürücü');
   else driverMarker.setLatLng([llObj.lat, llObj.lng]);
+
+
+  // Store trail for passenger view (polyline of driver movement)
+  driverTrail.push([llObj.lat, llObj.lng]);
+  if (driverTrail.length > 500) driverTrail.shift(); // keep last points
+  if (!driverTrailLine) driverTrailLine = L.polyline(driverTrail, { weight: 3, opacity: 0.7 }).addTo(map);
+  else driverTrailLine.setLatLngs(driverTrail);
+
 
   const fb = document.getElementById('focusDriverBtn');
   if (fb){
@@ -191,6 +268,8 @@ function startOrderStream(orderId){
 
     const st = String(activeOrderObj.status||'').toLowerCase();
     if(['completed','cancelled'].includes(st)){
+      stopOrderStream();
+      clearDriverTrail();
       loadMyOrders();
       return;
     }
@@ -213,6 +292,21 @@ function startOrderStream(orderId){
       if(Number(msg.order_id) !== oid) return;
       const loc = msg.location || {};
       applyDriverLocation({ lat: Number(loc.lat), lng: Number(loc.lng) });
+    }catch(_){/* ignore */}
+  });
+
+  orderStream.addEventListener('chat_snapshot', (ev)=>{
+    try{
+      const msg = JSON.parse(ev.data||'{}');
+      if(Number(msg.order_id)!==oid) return;
+      renderChat(msg.messages||[]);
+    }catch(_){/* ignore */}
+  });
+  orderStream.addEventListener('chat_message', (ev)=>{
+    try{
+      const msg = JSON.parse(ev.data||'{}');
+      if(Number(msg.order_id)!==oid) return;
+      if(msg.message) appendChat(msg.message);
     }catch(_){/* ignore */}
   });
   orderStream.onerror = ()=>{
