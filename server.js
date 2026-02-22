@@ -178,13 +178,13 @@ function normPhone(phone) {
 }
 
 // Accept only Azerbaijan mobile numbers in the format +994XXXXXXXXX
-// (fixed prefix +994; the remaining 8 chars must be digits)
+// (fixed prefix +994; the remaining 9 chars must be digits)
 function normAzPhone(phone){
   const s = String(phone || '').trim();
   if (!s) return null;
-  if (/^\+994\d{8}$/.test(s)) return s;
+  if (/^\+994\d{9}$/.test(s)) return s;
   const digits = s.replace(/\D/g, '');
-  if (/^9945\d{8}$/.test(digits)) return '+' + digits;
+  if (/^994\d{9}$/.test(digits)) return '+' + digits;
   return null;
 }
 
