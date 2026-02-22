@@ -156,41 +156,6 @@ UNIQUE(phone, role)
   ensureColumn('orders', 'final_fare', 'final_fare REAL');
   ensureColumn('orders', 'admin_fee', 'admin_fee REAL');
   ensureColumn('orders', 'driver_earn', 'driver_earn REAL');
-
-  // ---------------- Wallet (driver earnings + admin fees) - additive
-  // Stores wallet balances per (role, phone).
-  db.run(`CREATE TABLE IF NOT EXISTS wallet_balances (
-    role TEXT NOT NULL,
-    phone TEXT NOT NULL,
-    balance REAL NOT NULL DEFAULT 0,
-    updated_at INTEGER NOT NULL,
-    PRIMARY KEY(role, phone)
-  )`);
-  db.run(`CREATE TABLE IF NOT EXISTS wallet_transactions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    role TEXT NOT NULL,
-    phone TEXT NOT NULL,
-    type TEXT NOT NULL,               -- credit | debit | adjust | withdraw
-    amount REAL NOT NULL,
-    ref_order_id INTEGER,
-    note TEXT,
-    created_at INTEGER NOT NULL
-  )`);
-  db.run(`CREATE INDEX IF NOT EXISTS idx_wallet_tx_role_phone ON wallet_transactions(role, phone, id)`);
-
-  // Driver withdrawal requests (MVP: log-only)
-  db.run(`CREATE TABLE IF NOT EXISTS withdrawal_requests (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    role TEXT NOT NULL,
-    phone TEXT NOT NULL,
-    amount REAL NOT NULL,
-    method TEXT,
-    details TEXT,
-    status TEXT NOT NULL DEFAULT 'pending', -- pending | approved | rejected | paid
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER
-  )`);
-  db.run(`CREATE INDEX IF NOT EXISTS idx_withdrawal_requests_status ON withdrawal_requests(status, id)`);
 });
 
 // ---------------- Helpers
@@ -203,105 +168,6 @@ function normPhone(phone) {
 }
 function nowMs() {
   return Date.now();
-}
-
-// ---------------- Wallet helpers
-const ADMIN_WALLET_PHONE = '__admin__';
-
-function toMoney(n){
-  const x = Number(n);
-  if(!Number.isFinite(x)) return 0;
-  return Math.round(x * 100) / 100;
-}
-
-async function ensureWalletRow(role, phone){
-  role = String(role||'').toLowerCase().trim();
-  phone = String(phone||'').trim();
-  const t = nowMs();
-  return await new Promise((resolve)=>{
-    db.run(
-      "INSERT INTO wallet_balances(role,phone,balance,updated_at) VALUES (?,?,0,?) ON CONFLICT(role,phone) DO UPDATE SET updated_at=updated_at",
-      [role, phone, t],
-      ()=> resolve(true)
-    );
-  });
-}
-
-async function getWalletBalance(role, phone){
-  await ensureWalletRow(role, phone);
-  return await new Promise((resolve)=>{
-    db.get("SELECT balance FROM wallet_balances WHERE role=? AND phone=?", [role, phone], (e,row)=>{
-      if(e||!row) return resolve(0);
-      resolve(toMoney(row.balance));
-    });
-  });
-}
-
-async function walletTx(role, phone, type, amount, refOrderId=null, note=null){
-  role = String(role||'').toLowerCase().trim();
-  phone = String(phone||'').trim();
-  const amt = Number(amount);
-  if(!Number.isFinite(amt) || amt === 0) return false;
-  await ensureWalletRow(role, phone);
-  const t = nowMs();
-  return await new Promise((resolve)=>{
-    db.serialize(()=>{
-      db.run(
-        "INSERT INTO wallet_transactions(role,phone,type,amount,ref_order_id,note,created_at) VALUES (?,?,?,?,?,?,?)",
-        [role, phone, String(type||'').trim(), amt, refOrderId, note, t]
-      );
-      db.run(
-        "UPDATE wallet_balances SET balance = balance + ?, updated_at=? WHERE role=? AND phone=?",
-        [amt, t, role, phone],
-        (e)=> resolve(!e)
-      );
-    });
-  });
-}
-
-async function getWalletTransactions(role, phone, limit=30){
-  await ensureWalletRow(role, phone);
-  const lim = Math.max(1, Math.min(100, Number(limit)||30));
-  return await new Promise((resolve)=>{
-    db.all(
-      "SELECT id,type,amount,ref_order_id,note,created_at FROM wallet_transactions WHERE role=? AND phone=? ORDER BY id DESC LIMIT ?",
-      [role, phone, lim],
-      (e, rows)=> resolve((rows||[]).map(r=>({
-        id:r.id,
-        type:r.type,
-        amount:toMoney(r.amount),
-        ref_order_id:r.ref_order_id,
-        note:r.note||'',
-        created_at:r.created_at
-      })))
-    );
-  });
-}
-
-async function walletCreditOnceForOrder(orderId, driverPhone, adminFee, driverEarn){
-  const oid = Number(orderId);
-  if(!Number.isFinite(oid) || oid<=0) return false;
-  const t = nowMs();
-  // Skip if already credited for this order
-  const already = await new Promise((resolve)=>{
-    db.get(
-      "SELECT id FROM wallet_transactions WHERE ref_order_id=? AND note='order_complete' LIMIT 1",
-      [oid],
-      (e,row)=> resolve(!!row)
-    );
-  });
-  if(already) return true;
-
-  const adminAmt = toMoney(adminFee);
-  const driverAmt = toMoney(driverEarn);
-  // Record admin fee (platform wallet) and driver earnings
-  if(adminAmt > 0){
-    await walletTx('admin', ADMIN_WALLET_PHONE, 'credit', adminAmt, oid, 'order_complete');
-  }
-  if(driverAmt !== 0){
-    await walletTx('driver', driverPhone, 'credit', driverAmt, oid, 'order_complete');
-  }
-  return true;
 }
 
 function parseAllowedPackages(raw){
@@ -677,68 +543,6 @@ app.post('/api/login', (req, res) => {
       }
 
       return res.json({ success: true, name: row.name || "", role, is_online, driver_radius_km: Number(row.driver_radius_km||0), allowed_packages, enabled_packages });
-    }
-  );
-});
-
-// ---------------- Wallet (MVP)
-// Returns balance + recent transactions for the authenticated user.
-app.post('/api/wallet', async (req, res) => {
-  const role = normRole(req.body.role);
-  const user = await authUser(req.body.phone, req.body.password, role);
-  if (!user) return res.status(401).json({ error: 'INVALID_CREDENTIALS' });
-  if (role === 'driver' && parseInt(user.approved, 10) !== 1) return res.status(403).json({ error: 'DRIVER_PENDING' });
-
-  const phone = user.phone;
-  const balance = await getWalletBalance(role, phone);
-  const tx = await getWalletTransactions(role, phone, 30);
-
-  // Pending withdrawals (drivers only)
-  let withdrawals = [];
-  if (role === 'driver') {
-    withdrawals = await new Promise((resolve)=>{
-      db.all(
-        "SELECT id, amount, method, details, status, created_at, updated_at FROM withdrawal_requests WHERE role='driver' AND phone=? ORDER BY id DESC LIMIT 20",
-        [phone],
-        (e, rows)=> resolve((rows||[]).map(r=>({
-          id:r.id,
-          amount: toMoney(r.amount),
-          method: r.method||'',
-          details: r.details||'',
-          status: r.status||'pending',
-          created_at: r.created_at,
-          updated_at: r.updated_at||null
-        })))
-      );
-    });
-  }
-
-  return res.json({ success: true, role, phone, balance, transactions: tx, withdrawals });
-});
-
-// Driver creates a withdrawal request (log-only MVP)
-app.post('/api/driver/withdraw/request', async (req, res) => {
-  const driver = await authUser(req.body.phone, req.body.password, 'driver');
-  if (!driver) return res.status(401).json({ error: 'INVALID_CREDENTIALS' });
-  if (parseInt(driver.approved, 10) !== 1) return res.status(403).json({ error: 'DRIVER_PENDING' });
-
-  const amount = toMoney(req.body.amount);
-  const method = String(req.body.method || '').trim();
-  const details = String(req.body.details || '').trim();
-  if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: 'BAD_AMOUNT' });
-  if (!method) return res.status(400).json({ error: 'METHOD_REQUIRED' });
-
-  const bal = await getWalletBalance('driver', driver.phone);
-  if (amount > bal) return res.status(400).json({ error: 'INSUFFICIENT_BALANCE', balance: bal });
-
-  const ts = nowMs();
-  db.run(
-    "INSERT INTO withdrawal_requests(role,phone,amount,method,details,status,created_at) VALUES ('driver',?,?,?,?, 'pending', ?)",
-    [driver.phone, amount, method, details, ts],
-    function(e){
-      if(e) return res.status(500).json({ error: 'DB_ERROR' });
-      // NOTE: In MVP we do NOT debit balance automatically until admin marks as paid.
-      return res.json({ success: true, request_id: this.lastID });
     }
   );
 });
@@ -1216,11 +1020,6 @@ app.post('/api/orders/status', async (req, res) => {
         [km, minutes, final_fare, admin_fee, driver_earn, order_id]
       );
 
-      // Wallet credit (MVP): credit driver earnings + platform admin fee exactly once.
-      try{
-        await walletCreditOnceForOrder(order_id, driver.phone, admin_fee, driver_earn);
-      }catch(_){ /* do not block completion */ }
-
       // Real-time notify with final fare
       try {
         const snap2 = await dbGet(
@@ -1610,74 +1409,6 @@ app.get('/api/admin/stats', requireAdmin, (req, res) => {
       res.json({ success: true, stats: row });
     }
   );
-});
-
-// Admin: list withdrawal requests
-app.get('/api/admin/withdrawals', requireAdmin, (req, res) => {
-  const limit = Math.max(1, Math.min(200, Number(req.query.limit)||100));
-  const status = String(req.query.status||'').trim();
-  const where = status ? "WHERE status=?" : "";
-  const params = status ? [status] : [];
-  db.all(
-    `SELECT id, role, phone, amount, method, details, status, created_at, updated_at FROM withdrawal_requests ${where} ORDER BY id DESC LIMIT ?`,
-    [...params, limit],
-    (e, rows) => {
-      if (e) return res.status(500).json({ error: 'DB_ERROR' });
-      res.json({ success: true, items: (rows||[]).map(r=>({
-        id:r.id,
-        role:r.role,
-        phone:r.phone,
-        amount: toMoney(r.amount),
-        method:r.method||'',
-        details:r.details||'',
-        status:r.status||'pending',
-        created_at:r.created_at,
-        updated_at:r.updated_at||null
-      })) });
-    }
-  );
-});
-
-// Admin: update withdrawal status. When marking as paid, debit driver wallet once.
-app.post('/api/admin/withdrawals/status', requireAdmin, async (req, res) => {
-  const id = Number(req.body.id);
-  const next = String(req.body.status||'').trim().toLowerCase();
-  if(!Number.isFinite(id) || id<=0) return res.status(400).json({ error: 'BAD_ID' });
-  if(!['pending','approved','rejected','paid'].includes(next)) return res.status(400).json({ error: 'BAD_STATUS' });
-
-  db.get("SELECT * FROM withdrawal_requests WHERE id=?", [id], async (e, row) => {
-    if(e) return res.status(500).json({ error: 'DB_ERROR' });
-    if(!row) return res.status(404).json({ error: 'NOT_FOUND' });
-
-    const ts = nowMs();
-    db.run("UPDATE withdrawal_requests SET status=?, updated_at=? WHERE id=?", [next, ts, id], async (e2)=>{
-      if(e2) return res.status(500).json({ error: 'DB_ERROR' });
-
-      // Debit wallet only when paid, and only once
-      if(next === 'paid' && row.role === 'driver'){
-        try{
-          const already = await new Promise((resolve)=>{
-            db.get(
-              "SELECT id FROM wallet_transactions WHERE note='withdraw_paid' AND ref_order_id IS NULL AND role='driver' AND phone=? AND amount=? LIMIT 1",
-              [row.phone, -toMoney(row.amount)],
-              (e3, r3)=> resolve(!!r3)
-            );
-          });
-          if(!already){
-            await walletTx('driver', row.phone, 'withdraw', -toMoney(row.amount), null, 'withdraw_paid');
-          }
-        }catch(_){ /* ignore */ }
-      }
-      res.json({ success: true });
-    });
-  });
-});
-
-// Admin: view platform wallet (admin fees)
-app.get('/api/admin/wallet', requireAdmin, async (req, res) => {
-  const balance = await getWalletBalance('admin', ADMIN_WALLET_PHONE);
-  const tx = await getWalletTransactions('admin', ADMIN_WALLET_PHONE, 50);
-  res.json({ success: true, role: 'admin', phone: ADMIN_WALLET_PHONE, balance, transactions: tx });
 });
 
 app.post('/api/admin/approve', requireAdmin, (req, res) => {

@@ -53,34 +53,6 @@
     </div>
     <div class="msg" id="msg"></div>
 
-    <div style="margin-top:12px" class="card">
-      <div class="row" style="justify-content:space-between;align-items:flex-end">
-        <div>
-          <h3 style="margin:0">Wallet</h3>
-          <div style="opacity:.75;font-size:13px">Qazancınız burada toplanır. Çıxarış sorğusu göndərə bilərsiniz.</div>
-        </div>
-        <span class="badge" id="walletBal">Balans: ...</span>
-      </div>
-
-      <div class="row" style="margin-top:10px">
-        <input id="wdAmount" placeholder="Məbləğ (AZN)" style="flex:1;min-width:160px;padding:10px 12px;border-radius:10px;border:1px solid rgba(148,163,184,.25);background:rgba(2,6,23,.55);color:#e5e7eb" />
-        <select id="wdMethod" style="flex:1;min-width:170px;padding:10px 12px;border-radius:10px;border:1px solid rgba(148,163,184,.25);background:rgba(2,6,23,.55);color:#e5e7eb">
-          <option value="">Çıxarış üsulu</option>
-          <option value="bank_card">Bank kartı</option>
-          <option value="iban">IBAN</option>
-          <option value="cash">Nağd</option>
-        </select>
-        <input id="wdDetails" placeholder="Kart/IBAN məlumatı" style="flex:2;min-width:220px;padding:10px 12px;border-radius:10px;border:1px solid rgba(148,163,184,.25);background:rgba(2,6,23,.55);color:#e5e7eb" />
-        <button onclick="sendWithdraw()">Sorğu göndər</button>
-      </div>
-      <div id="walletMsg" style="margin-top:8px;opacity:.9;min-height:18px"></div>
-
-      <div style="margin-top:10px;opacity:.85;font-size:13px">Son əməliyyatlar:</div>
-      <div id="walletTx" style="margin-top:6px"></div>
-      <div style="margin-top:10px;opacity:.85;font-size:13px">Çıxarış sorğuları:</div>
-      <div id="walletWd" style="margin-top:6px"></div>
-    </div>
-
 	<div style="margin-top:12px">
 	  <div class="row" style="justify-content:space-between">
 	    <span class="pill" id="mapInfo">Xəritə: GPS + marşrut (OSRM)</span>
@@ -115,7 +87,6 @@ function getSession(){ try{ return JSON.parse(localStorage.getItem('pt_session')
 function logout(){ localStorage.removeItem('pt_session'); location.href='/'; }
 function setMsg(t){ document.getElementById('msg').textContent = t||''; }
 function setSt(on){ const el=document.getElementById('st'); el.textContent = on? 'ONLINE':'OFFLINE'; }
-function setWalletMsg(t){ const el=document.getElementById('walletMsg'); if(el) el.textContent = t||''; }
 
 const s = getSession();
 if(!s || s.role !== 'driver'){ location.href='/'; }
@@ -139,63 +110,6 @@ async function refreshDriverMeta(){
   }catch(e){}
 }
 refreshDriverMeta();
-
-// Wallet
-async function loadWallet(){
-  try{
-    const res = await fetch('/api/wallet', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ role:'driver', phone:s.phone, password:s.password })});
-    const data = await res.json();
-    if(!data || !data.success) return;
-    const balEl = document.getElementById('walletBal');
-    if(balEl) balEl.textContent = 'Balans: ' + Number(data.balance||0).toFixed(2) + ' AZN';
-
-    const txEl = document.getElementById('walletTx');
-    if(txEl){
-      const items = (data.transactions||[]).slice(0,30);
-      txEl.innerHTML = items.length ? items.map(x=>{
-        const sign = (Number(x.amount)||0) >= 0 ? '+' : '';
-        const t = new Date(Number(x.created_at||0));
-        const when = isNaN(t.getTime()) ? '' : (t.toLocaleString());
-        const ref = x.ref_order_id ? (' • Order #' + x.ref_order_id) : '';
-        const note = x.note ? (' • ' + esc(x.note)) : '';
-        return `<div class="pill" style="display:block;margin:6px 0">${esc(x.type||'tx')} • <b>${sign}${Number(x.amount||0).toFixed(2)} AZN</b>${ref}${note}<span style="opacity:.65"> • ${esc(when)}</span></div>`;
-      }).join('') : '<div style="opacity:.7">Hələ əməliyyat yoxdur.</div>';
-    }
-
-    const wdEl = document.getElementById('walletWd');
-    if(wdEl){
-      const items = (data.withdrawals||[]).slice(0,20);
-      wdEl.innerHTML = items.length ? items.map(w=>{
-        const t = new Date(Number(w.created_at||0));
-        const when = isNaN(t.getTime()) ? '' : t.toLocaleString();
-        return `<div class="pill" style="display:block;margin:6px 0">#${w.id} • <b>${Number(w.amount||0).toFixed(2)} AZN</b> • ${esc(w.method||'')} • <span style="opacity:.8">${esc(w.status||'pending')}</span><span style="opacity:.65"> • ${esc(when)}</span></div>`;
-      }).join('') : '<div style="opacity:.7">Sorğu yoxdur.</div>';
-    }
-  }catch(e){ /* ignore */ }
-}
-
-async function sendWithdraw(){
-  const amount = Number((document.getElementById('wdAmount')?.value||'').replace(',','.'));
-  const method = document.getElementById('wdMethod')?.value||'';
-  const details = document.getElementById('wdDetails')?.value||'';
-  setWalletMsg('...');
-  try{
-    const res = await fetch('/api/driver/withdraw/request', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password, amount, method, details })});
-    const data = await res.json();
-    if(data && data.success){
-      setWalletMsg('Sorğu göndərildi.');
-      // do not clear details automatically
-      await loadWallet();
-    }else{
-      setWalletMsg((data && data.error) ? data.error : 'ERROR');
-    }
-  }catch(e){
-    setWalletMsg('ERROR');
-  }
-}
-
-loadWallet();
-setInterval(loadWallet, 15000);
 
 async function getFarePackages(){
   try{
