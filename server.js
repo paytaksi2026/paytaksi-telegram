@@ -179,6 +179,47 @@ async function initDb() {
   )`);
   await db._query(`CREATE INDEX IF NOT EXISTS idx_order_track_points_order ON order_track_points(order_id, id)`);
 
+  // Wallet tables (driver earnings / withdrawals)
+  await db._query(`CREATE TABLE IF NOT EXISTS driver_wallet_accounts (
+    driver_phone TEXT PRIMARY KEY,
+    balance DOUBLE PRECISION NOT NULL DEFAULT 0,
+    updated_at BIGINT NOT NULL
+  )`);
+
+  await db._query(`CREATE TABLE IF NOT EXISTS driver_wallet_transactions (
+    id BIGSERIAL PRIMARY KEY,
+    driver_phone TEXT NOT NULL,
+    order_id BIGINT,
+    withdraw_id BIGINT,
+    tx_type TEXT NOT NULL, -- EARNING | WITHDRAW | WITHDRAW_REFUND | BONUS | PENALTY
+    amount DOUBLE PRECISION NOT NULL,
+    status TEXT NOT NULL DEFAULT "PAID", -- PENDING | PAID | REJECTED
+    note TEXT,
+    created_at BIGINT NOT NULL
+  )`);
+  await db._query(`CREATE INDEX IF NOT EXISTS idx_wallet_tx_driver_id ON driver_wallet_transactions(driver_phone, id DESC)`);
+  await db._query(`CREATE INDEX IF NOT EXISTS idx_wallet_tx_order ON driver_wallet_transactions(order_id, id DESC)`);
+
+  await db._query(`CREATE TABLE IF NOT EXISTS driver_withdraw_requests (
+    id BIGSERIAL PRIMARY KEY,
+    driver_phone TEXT NOT NULL,
+    amount DOUBLE PRECISION NOT NULL,
+    card TEXT,
+    status TEXT NOT NULL DEFAULT "PENDING", -- PENDING | PAID | REJECTED
+    created_at BIGINT NOT NULL,
+    decided_at BIGINT,
+    decided_by TEXT,
+    decision_note TEXT
+  )`);
+  await db._query(`CREATE INDEX IF NOT EXISTS idx_withdraw_status ON driver_withdraw_requests(status, id DESC)`);
+
+  // Additive columns (safe no-op on fresh DB)
+  await ensureColumn("driver_wallet_transactions", "status", "status TEXT NOT NULL DEFAULT \"PAID\"");
+  await ensureColumn("driver_wallet_transactions", "withdraw_id", "withdraw_id BIGINT");
+  await ensureColumn("driver_withdraw_requests", "decided_at", "decided_at BIGINT");
+  await ensureColumn("driver_withdraw_requests", "decided_by", "decided_by TEXT");
+  await ensureColumn("driver_withdraw_requests", "decision_note", "decision_note TEXT");
+
   // Additive columns for older schemas (safe no-op on fresh DB)
   await ensureColumn('users', 'approved', 'approved INTEGER DEFAULT 0');
   await ensureColumn('users', 'is_online', 'is_online INTEGER DEFAULT 0');
@@ -730,12 +771,140 @@ app.post('/api/driver/set-packages', async (req, res) => {
   });
 });
 
+// ---------------- Wallet helpers
+async function walletEnsureAccount(driver_phone){
+  const now = Date.now();
+  await db._query(
+    "INSERT INTO driver_wallet_accounts (driver_phone, balance, updated_at) VALUES ($1, 0, $2) ON CONFLICT (driver_phone) DO NOTHING",
+    [driver_phone, now]
+  );
+}
+
+async function walletGetBalance(driver_phone){
+  await walletEnsureAccount(driver_phone);
+  const r = await db._query(
+    "SELECT balance, updated_at FROM driver_wallet_accounts WHERE driver_phone=$1",
+    [driver_phone]
+  );
+  const row = (r.rows && r.rows[0]) ? r.rows[0] : {balance:0, updated_at:0};
+  return { balance: Number(row.balance||0), updated_at: Number(row.updated_at||0) };
+}
+
+async function walletInsertTx({driver_phone, order_id=null, withdraw_id=null, tx_type, amount, status="PAID", note=null}){
+  const now = Date.now();
+  const r = await db._query(
+    `INSERT INTO driver_wallet_transactions (driver_phone, order_id, withdraw_id, tx_type, amount, status, note, created_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+     RETURNING id`,
+    [driver_phone, order_id, withdraw_id, tx_type, amount, status, note, now]
+  );
+  return r.rows && r.rows[0] ? Number(r.rows[0].id) : null;
+}
+
+async function walletUpdateBalance(driver_phone, delta){
+  const now = Date.now();
+  await walletEnsureAccount(driver_phone);
+  await db._query(
+    "UPDATE driver_wallet_accounts SET balance = balance + $1, updated_at=$2 WHERE driver_phone=$3",
+    [delta, now, driver_phone]
+  );
+}
+
+async function walletCreditEarning(driver_phone, order_id, amount){
+  const amt = Number(amount||0);
+  if (!Number.isFinite(amt) || amt <= 0) return;
+  await walletEnsureAccount(driver_phone);
+
+  const exists = await db._query(
+    "SELECT 1 FROM driver_wallet_transactions WHERE driver_phone=$1 AND order_id=$2 AND tx_type='EARNING' LIMIT 1",
+    [driver_phone, order_id]
+  );
+  if (exists.rows && exists.rows.length) return;
+
+  await walletUpdateBalance(driver_phone, amt);
+  await walletInsertTx({ driver_phone, order_id, tx_type:"EARNING", amount: amt, status:"PAID", note:`Order #${order_id} earning` });
+}
+
+async function walletCreateWithdraw(driver_phone, amount, card){
+  const amt = Number(amount||0);
+  if (!Number.isFinite(amt) || amt <= 0) return { error: "INVALID_AMOUNT" };
+
+  const bal = await walletGetBalance(driver_phone);
+  if (amt > bal.balance) return { error: "INSUFFICIENT_FUNDS", balance: bal.balance };
+
+  const now = Date.now();
+  const w = await db._query(
+    `INSERT INTO driver_withdraw_requests (driver_phone, amount, card, status, created_at)
+     VALUES ($1,$2,$3,'PENDING',$4)
+     RETURNING id`,
+    [driver_phone, amt, String(card||""), now]
+  );
+  const withdraw_id = w.rows && w.rows[0] ? Number(w.rows[0].id) : null;
+
+  // Reserve funds immediately; tx is pending
+  await walletUpdateBalance(driver_phone, -amt);
+  await walletInsertTx({ driver_phone, withdraw_id, tx_type:"WITHDRAW", amount: -amt, status:"PENDING", note: String(card||"") });
+  return { ok:true, withdraw_id };
+}
+
+async function walletDecideWithdraw({withdraw_id, action, admin_phone, note}){
+  const w = await db._query("SELECT * FROM driver_withdraw_requests WHERE id=$1", [withdraw_id]);
+  const row = w.rows && w.rows[0] ? w.rows[0] : null;
+  if (!row) return { error:"NOT_FOUND" };
+  if (String(row.status||"").toUpperCase() !== "PENDING") return { error:"NOT_PENDING", status: row.status };
+
+  const now = Date.now();
+  const driver_phone = String(row.driver_phone||"");
+  const amt = Number(row.amount||0);
+
+  if (action === "paid") {
+    await db._query(
+      "UPDATE driver_withdraw_requests SET status='PAID', decided_at=$1, decided_by=$2, decision_note=$3 WHERE id=$4",
+      [now, admin_phone, String(note||""), withdraw_id]
+    );
+    await db._query(
+      "UPDATE driver_wallet_transactions SET status='PAID' WHERE withdraw_id=$1 AND tx_type='WITHDRAW'",
+      [withdraw_id]
+    );
+    return { ok:true, status:"PAID" };
+  }
+
+  if (action === "rejected") {
+    await db._query(
+      "UPDATE driver_withdraw_requests SET status='REJECTED', decided_at=$1, decided_by=$2, decision_note=$3 WHERE id=$4",
+      [now, admin_phone, String(note||""), withdraw_id]
+    );
+    await db._query(
+      "UPDATE driver_wallet_transactions SET status='REJECTED' WHERE withdraw_id=$1 AND tx_type='WITHDRAW'",
+      [withdraw_id]
+    );
+    // Refund reserved funds
+    await walletUpdateBalance(driver_phone, amt);
+    await walletInsertTx({ driver_phone, withdraw_id, tx_type:"WITHDRAW_REFUND", amount: amt, status:"PAID", note: "Withdraw rejected refund" });
+    return { ok:true, status:"REJECTED" };
+  }
+
+  return { error:"INVALID_ACTION" };
+}
+
+async function walletAdminAdjust({driver_phone, tx_type, amount, note}){
+  const amt = Number(amount||0);
+  if (!Number.isFinite(amt) || amt <= 0) return { error:"INVALID_AMOUNT" };
+  const type = String(tx_type||"").toUpperCase();
+  if (!["BONUS","PENALTY"].includes(type)) return { error:"INVALID_TYPE" };
+
+  const delta = type === "PENALTY" ? -amt : amt;
+  await walletUpdateBalance(driver_phone, delta);
+  await walletInsertTx({ driver_phone, tx_type:type, amount: delta, status:"PAID", note: String(note||"") });
+  return { ok:true };
+}
+
 // Driver Wallet (earnings)
 app.post('/api/driver/wallet', async (req, res) => {
   try {
     const phone = String(req.body.phone||'');
     const password = String(req.body.password||'');
-    const driver = await authUser('driver', phone, password);
+    const driver = await authUser(phone, password, 'driver');
     if(!driver) return res.status(401).json({error:'INVALID_LOGIN'});
     if(!driver.approved) return res.status(403).json({error:'NOT_APPROVED'});
 
@@ -748,7 +917,7 @@ app.post('/api/driver/wallet', async (req, res) => {
     const balRow = (balRes.rows && balRes.rows[0]) ? balRes.rows[0] : {balance:0, updated_at:0};
 
     const txRes = await db._query(
-      `SELECT id, order_id, tx_type, amount, note, created_at
+      `SELECT id, order_id, withdraw_id, tx_type, amount, status, note, created_at
        FROM driver_wallet_transactions
        WHERE driver_phone=$1
        ORDER BY id DESC
@@ -768,6 +937,85 @@ app.post('/api/driver/wallet', async (req, res) => {
   }
 });
 
+
+// Driver: create withdraw request
+app.post('/api/driver/withdraw/request', async (req, res) => {
+  try {
+    const phone = String(req.body.phone||'');
+    const password = String(req.body.password||'');
+    const driver = await authUser(phone, password, 'driver');
+    if(!driver) return res.status(401).json({error:'INVALID_LOGIN'});
+    if(!driver.approved) return res.status(403).json({error:'NOT_APPROVED'});
+
+    const amount = Number(req.body.amount||0);
+    const card = String(req.body.card||'').trim();
+    if(!card) return res.status(400).json({error:'CARD_REQUIRED'});
+
+    const r = await walletCreateWithdraw(driver.phone, amount, card);
+    if(r.error) return res.status(400).json(r);
+    return res.json({ok:true, withdraw_id:r.withdraw_id});
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({error:'SERVER_ERROR'});
+  }
+});
+
+// Admin: list withdrawals
+app.get('/api/admin/withdrawals', requireAdmin, async (req, res) => {
+  try {
+    const status = String(req.query.status||'PENDING').toUpperCase();
+    const lim = Math.min(200, Math.max(1, parseInt(req.query.limit||'50',10)||50));
+
+    const st = status === 'ALL' ? 'ALL' : status;
+    const r = await db._query(
+      `SELECT id, driver_phone, amount, card, status, created_at, decided_at, decided_by, decision_note
+         FROM driver_withdraw_requests
+        WHERE ($1='ALL' OR status=$1)
+        ORDER BY id DESC
+        LIMIT $2`,
+      [st, lim]
+    );
+    return res.json({ok:true, items:r.rows||[]});
+  } catch(e){
+    console.error(e);
+    return res.status(500).json({error:'SERVER_ERROR'});
+  }
+});
+
+// Admin: decide withdrawal (paid/rejected)
+app.post('/api/admin/withdrawals/decide', requireAdmin, async (req, res) => {
+  try {
+    const id = Number(req.body.id||0);
+    const action = String(req.body.action||'').toLowerCase();
+    const note = String(req.body.note||'');
+    if(!id) return res.status(400).json({error:'ID_REQUIRED'});
+    if(!['paid','rejected'].includes(action)) return res.status(400).json({error:'INVALID_ACTION'});
+
+    const r = await walletDecideWithdraw({withdraw_id:id, action, admin_phone: 'admin', note});
+    if(r.error) return res.status(400).json(r);
+    return res.json({ok:true, status:r.status});
+  } catch(e){
+    console.error(e);
+    return res.status(500).json({error:'SERVER_ERROR'});
+  }
+});
+
+// Admin: wallet adjust (BONUS/PENALTY)
+app.post('/api/admin/wallet/adjust', requireAdmin, async (req, res) => {
+  try {
+    const driver_phone = String(req.body.driver_phone||'').trim();
+    const tx_type = String(req.body.tx_type||req.body.type||'').toUpperCase();
+    const amount = Number(req.body.amount||0);
+    const note = String(req.body.note||'');
+    if(!driver_phone) return res.status(400).json({error:'DRIVER_REQUIRED'});
+    const r = await walletAdminAdjust({driver_phone, tx_type, amount, note});
+    if(r.error) return res.status(400).json(r);
+    return res.json({ok:true});
+  } catch(e){
+    console.error(e);
+    return res.status(500).json({error:'SERVER_ERROR'});
+  }
+});
 
 // ---------------- Orders (MVP)
 

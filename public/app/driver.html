@@ -63,6 +63,17 @@
       </div>
       <div style="margin-top:8px; opacity:.85;">Balans: <b><span id="walletBal">0.00</span> AZN</b></div>
       <div style="margin-top:4px; opacity:.7; font-size:12px;" id="walletUpdated"></div>
+
+      <div style="margin-top:12px; padding:10px; border:1px solid rgba(255,255,255,0.08); border-radius:12px;">
+        <div style="font-weight:600; margin-bottom:8px;">💳 Çıxarış (Withdraw)</div>
+        <div class="row" style="gap:8px; flex-wrap:wrap;">
+          <input id="wdAmount" class="secondary" style="flex:1; min-width:140px; padding:10px 12px; border-radius:10px;" placeholder="Məbləğ (AZN)" inputmode="decimal">
+          <input id="wdCard" class="secondary" style="flex:2; min-width:200px; padding:10px 12px; border-radius:10px;" placeholder="Kart/IBAN" >
+          <button id="wdBtn">Göndər</button>
+        </div>
+        <div style="opacity:.65; font-size:12px; margin-top:6px;">Qeyd: Sorğu yaradılır və admin təsdiq edəndə status PAID olur. Rədd edilərsə balans geri qaytarılır.</div>
+        <div id="wdMsg" style="margin-top:8px; font-size:13px;"></div>
+      </div>
       <div style="margin-top:12px; opacity:.85; font-size:13px;">Son əməliyyatlar</div>
       <div id="walletTxs" style="margin-top:8px; display:flex; flex-direction:column; gap:8px;"></div>
     </div>
@@ -129,6 +140,38 @@ walletBtn.onclick = ()=>{
 };
 walletRefreshBtn.onclick = ()=> loadWallet(true);
 
+const wdBtn = document.getElementById('wdBtn');
+const wdAmount = document.getElementById('wdAmount');
+const wdCard = document.getElementById('wdCard');
+const wdMsg = document.getElementById('wdMsg');
+
+wdBtn && (wdBtn.onclick = async ()=>{
+  wdMsg.textContent = '';
+  const amt = Number(String(wdAmount.value||'').replace(',','.'));
+  const card = String(wdCard.value||'').trim();
+  if(!amt || amt<=0){ wdMsg.textContent='Məbləğ düzgün deyil.'; return; }
+  if(!card){ wdMsg.textContent='Kart/IBAN daxil edin.'; return; }
+  wdBtn.disabled = true;
+  try{
+    const r = await fetch('/api/driver/withdraw/request',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({phone:s.phone, password:s.password, amount: amt, card})
+    });
+    const j = await r.json();
+    if(j && j.ok){
+      wdMsg.textContent = 'Sorğu göndərildi (PENDING).';
+      wdAmount.value = '';
+      await loadWallet(true);
+    } else {
+      wdMsg.textContent = (j && j.error) ? ('Xəta: ' + j.error + (j.balance!==undefined? (' (balans: '+fmtAZN(j.balance)+')'):'')) : 'Xəta oldu.';
+    }
+  }catch(e){
+    wdMsg.textContent = 'Xəta oldu.';
+  } finally {
+    wdBtn.disabled = false;
+  }
+});
+
 function fmtAZN(n){
   const x = Number(n||0);
   return (Math.round(x*100)/100).toFixed(2);
@@ -163,14 +206,18 @@ async function loadWallet(force){
       const when = fmtDate(tx.created_at);
       const note = esc(tx.note||'');
       const type = esc(tx.tx_type||'');
+      const stx = String(tx.status||'').toUpperCase();
+      const raw = Number(tx.amount||0);
+      const sign = raw>=0 ? '+' : '';
+      const badge = stx ? (`<span class="badge" style="margin-left:8px; opacity:.9;">${esc(stx)}</span>`) : '';
       const row = document.createElement('div');
       row.style.padding='10px';
       row.style.border='1px solid rgba(255,255,255,0.08)';
       row.style.borderRadius='12px';
       row.innerHTML = `
         <div style="display:flex; justify-content:space-between; gap:10px;">
-          <div style="font-weight:600;">${type} ${oid}</div>
-          <div style="font-weight:700;">+${amt} AZN</div>
+          <div style="font-weight:600;"> </div>
+          <div style="font-weight:700;">${sign}${amt} AZN</div>
         </div>
         <div style="opacity:.75; font-size:12px; margin-top:4px;">${note}</div>
         <div style="opacity:.6; font-size:11px; margin-top:4px;">${when}</div>
