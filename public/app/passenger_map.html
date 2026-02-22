@@ -318,19 +318,7 @@ async function drawRoute(){
   map.fitBounds(routeLine.getBounds(), {padding:[20,20]});
 }
 
-
-  
- 
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  /*function showEstimate(){
+  function showEstimate(){
   if(!pickup || !dropoff){ estBox.style.display='none'; return; }
   const km = havKm(pickup.lat, pickup.lon, dropoff.lat, dropoff.lon);
   const base = 1.0, per = 0.6, min = 2.0;
@@ -339,36 +327,8 @@ async function drawRoute(){
   estKm.textContent = km.toFixed(1) + ' km (təxmini)';
   estFare.textContent = fare.toFixed(2) + ' AZN (təxmini)';
 }
-*/
-
-
-
-
-
-
-
-async function showEstimate() {
-  if (!pickup || !dropoff) {
-    estBox.style.display = 'none';
-    return;
-  }
-
-  const km = havKm(pickup.lat, pickup.lon, dropoff.lat, dropoff.lon);
-
-  const res = await fetch(/api/calculate?km=${km});
-  const data = await res.json();
-
-  estBox.style.display = 'flex';
-  estKm.textContent = km.toFixed(1) + ' km (təxmini)';
-  estFare.textContent = data.fare.toFixed(2) + ' AZN (təxmini)';
-}
-
-
-
-
 
   
-
   
 function initMap(lat=40.4093, lon=49.8671){
   map = L.map('map').setView([lat, lon], 13);
