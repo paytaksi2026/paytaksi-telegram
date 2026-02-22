@@ -1087,9 +1087,9 @@ app.post('/api/orders/status', async (req, res) => {
       // reset real tracking fields
       sets.push('real_km=?'); vals.push(0);
       sets.push('real_minutes=?'); vals.push(0);
-      sets.push('final_fare=?'); vals.push(0);
-      sets.push('admin_fee=?'); vals.push(0);
-      sets.push('driver_earn=?'); vals.push(0);
+      sets.push('final_fare=NULL');
+      sets.push('admin_fee=NULL');
+      sets.push('driver_earn=NULL');
     }
     if (next === 'completed') { sets.push('completed_at=?'); vals.push(ts); }
     if (next === 'cancelled') { sets.push('cancelled_at=?'); vals.push(ts); }

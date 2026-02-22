@@ -85,6 +85,17 @@
 	<script>
 function getSession(){ try{ return JSON.parse(localStorage.getItem('pt_session')||'null'); }catch(e){ return null; } }
 function logout(){ localStorage.removeItem('pt_session'); location.href='/'; }
+
+
+function fmtTs(v){
+  if(v===null || v===undefined || v==='') return '';
+  const n = Number(v);
+  if(!Number.isFinite(n)) return '';
+  const ms = n < 1e12 ? n*1000 : n; // seconds -> ms
+  const d = new Date(ms);
+  if(Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString();
+}
 function setMsg(t){ document.getElementById('msg').textContent = t||''; }
 function setSt(on){ const el=document.getElementById('st'); el.textContent = on? 'ONLINE':'OFFLINE'; }
 
@@ -304,7 +315,7 @@ async function loadFeed(){
     return;
   }
   box.innerHTML = data.orders.map(o=>{
-    const dt = new Date(o.created_at).toLocaleString();
+    const dt = fmtTs(o.created_at);
     return `<div style="padding:12px;border:1px solid rgba(148,163,184,.18);border-radius:12px;margin-bottom:10px;background:rgba(2,6,23,.35)">
       <div class="row" style="justify-content:space-between">
         <div><b>#${o.id}</b> <span class="badge">${esc(o.status)}</span> ${o.fare_package?`<span class="badge">${esc(o.fare_package)}</span>`:''}</div>
@@ -314,7 +325,7 @@ async function loadFeed(){
       ${o.pickup_distance_km!=null ? `<div style="margin-top:6px;opacity:.8"><b>Məsafə:</b> ${Number(o.pickup_distance_km).toFixed(2)} km</div>` : ''}
       ${o.est_fare!=null ? `<div style="margin-top:6px;opacity:.8"><b>Təxmini:</b> ${Number(o.est_km||0).toFixed(1)} km • ${Number(o.est_fare).toFixed(2)} AZN</div>` : ''}
       <div style="margin-top:6px;opacity:.9"><b>Haraya:</b> ${esc(o.dropoff_text)}</div>
-      ${o.final_fare!=null ? `<div style="margin-top:6px;opacity:.85"><b>Yekun:</b> ${Number(o.final_fare).toFixed(2)} AZN • <b>Sizin:</b> ${Number(o.driver_earn||0).toFixed(2)} AZN</div>` : ''}
+      ${(o.status==='completed' && o.final_fare!=null) ? `<div style="margin-top:6px;opacity:.85"><b>Yekun:</b> ${Number(o.final_fare).toFixed(2)} AZN • <b>Sizin:</b> ${Number(o.driver_earn||0).toFixed(2)} AZN</div>` : `<div style="margin-top:6px;opacity:.85"><b>Təxmini:</b> ${Number(o.est_fare||0).toFixed(2)} AZN</div>`}
       <div style="margin-top:6px;opacity:.65">${dt}</div>
     </div>`;
   }).join('');
@@ -358,8 +369,8 @@ async function loadMy(){
     return;
   }
   box.innerHTML = data.orders.map(o=>{
-    const dt = new Date(o.created_at).toLocaleString();
-    const at = o.accepted_at ? new Date(o.accepted_at).toLocaleString() : '';
+    const dt = fmtTs(o.created_at);
+    const at = o.accepted_at ? fmtTs(o.accepted_at) : '';
     let actions = '';
     if(o.status==='accepted'){
       actions = `<div class="row" style="margin-top:10px">
@@ -384,7 +395,7 @@ async function loadMy(){
       ${o.est_fare!=null ? `<div style="margin-top:6px;opacity:.8"><b>Təxmini:</b> ${Number(o.est_km||0).toFixed(1)} km • ${Number(o.est_fare).toFixed(2)} AZN</div>` : ''}
       <div style="margin-top:6px;opacity:.9"><b>Haraya:</b> ${esc(o.dropoff_text)}</div>
       ${at ? `<div style="margin-top:6px;opacity:.75"><b>Qəbul:</b> ${at}</div>` : ''}
-      ${o.final_fare!=null ? `<div style="margin-top:6px;opacity:.85"><b>Yekun:</b> ${Number(o.final_fare).toFixed(2)} AZN • <b>Sizin:</b> ${Number(o.driver_earn||0).toFixed(2)} AZN</div>` : ''}
+      ${(o.status==='completed' && o.final_fare!=null) ? `<div style="margin-top:6px;opacity:.85"><b>Yekun:</b> ${Number(o.final_fare).toFixed(2)} AZN • <b>Sizin:</b> ${Number(o.driver_earn||0).toFixed(2)} AZN</div>` : `<div style="margin-top:6px;opacity:.85"><b>Təxmini:</b> ${Number(o.est_fare||0).toFixed(2)} AZN</div>`}
       <div style="margin-top:6px;opacity:.65">${dt}</div>
       ${actions}
     </div>`;

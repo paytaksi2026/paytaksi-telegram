@@ -113,6 +113,17 @@
 
 <script>
 const NOMINATIM = 'https://nominatim.openstreetmap.org';
+
+
+function fmtTs(v){
+  if(v===null || v===undefined || v==='') return '';
+  const n = Number(v);
+  if(!Number.isFinite(n)) return '';
+  const ms = n < 1e12 ? n*1000 : n; // seconds -> ms
+  const d = new Date(ms);
+  if(Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString();
+}
 let map, meMarker, fromMarker, toMarker, driverMarker;
 let routeLine = null;
 let lastRouteKey = '';
@@ -650,7 +661,7 @@ async function loadMyOrders(){
   if(!orders.length){ box.innerHTML = '<div style="opacity:.7">Hələ sifariş yoxdur.</div>'; return; }
 
   box.innerHTML = orders.map(o => {
-    const dt = new Date(o.created_at).toLocaleString();
+    const dt = fmtTs(o.created_at);
     const pkgLine = (o.fare_package) ? `<span class="pill" style="margin-left:6px">${o.fare_package}</span>` : '';
     const driverLine = o.driver_phone ? (() => {
       const tel = `<a href="tel:${o.driver_phone}" style="color:#93c5fd;text-decoration:none">${o.driver_phone}</a>`;
