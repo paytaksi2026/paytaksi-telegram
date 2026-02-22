@@ -1019,9 +1019,6 @@ app.post('/api/driver/wallet', async (req, res) => {
     return res.json({
       ok:true,
       balance: available,
-      available_balance: available,
-      pending_balance: pending,
-      total_balance: totalBal,
       updated_at: Number(balRow.updated_at||0),
       rules,
       notifications: notifRes.rows||[],
