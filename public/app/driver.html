@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="az">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sürücü Paneli - PayTaksi</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  body{margin:0;background:#0b1220;color:#e5e7eb;font-family:Arial,Helvetica,sans-serif}
+  .wrap{max-width:980px;margin:0 auto;padding:18px}
+  .card{background:rgba(15,23,42,.75);border:1px solid rgba(148,163,184,.2);border-radius:14px;padding:16px;box-shadow:0 10px 30px rgba(0,0,0,.35)}
+  button{padding:10px 12px;border-radius:10px;border:none;background:#22c55e;color:#081014;font-weight:700;cursor:pointer}
+  button.secondary{background:rgba(148,163,184,.15);color:#e5e7eb;border:1px solid rgba(148,163,184,.25)}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .badge{display:inline-block;padding:4px 10px;border-radius:999px;border:1px solid rgba(148,163,184,.25);background:rgba(148,163,184,.10);font-size:12px}
+  .msg{min-height:22px;margin-top:10px}
+  .pill{display:inline-block;padding:6px 10px;border-radius:999px;border:1px solid rgba(148,163,184,.25);background:rgba(148,163,184,.10);font-size:12px}
+  #map{height:340px;border-radius:14px;overflow:hidden;border:1px solid rgba(148,163,184,.22);background:rgba(2,6,23,.35)}
+</style>
+
+<link rel="stylesheet" href="/assets/bolt.css" />
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <div class="row" style="justify-content:space-between">
+      <div>
+        <h2 style="margin:0">Sürücü Paneli</h2>
+        <div style="opacity:.85" id="who"></div>
+      </div>
+      <div class="row">
+        <button class="secondary" onclick="logout()">Çıxış</button>
+      </div>
+    </div>
+
+    <p style="margin-top:14px">Status: <span class="badge" id="st">OFFLINE</span></p>
+    <div class="row">
+      <button onclick="goOnline()">Online ol</button>
+      <button class="secondary" onclick="goOffline()">Offline ol</button>
+      <select id="radiusSelect" class="secondary" style="padding:10px 12px;border-radius:10px;border:1px solid rgba(148,163,184,.25);background:rgba(2,6,23,.55);color:#e5e7eb" onchange="changeRadius()">
+        <option value="2">2 km</option>
+        <option value="4">4 km</option>
+        <option value="8">8 km</option>
+      </select>
+
+      <a href="/admin" class="badge" style="text-decoration:none;color:#e5e7eb">Admin Panel</a>
+    </div>
+
+    <div style="margin-top:10px">
+      <div style="opacity:.85;font-size:13px;margin-bottom:6px">İcazə verilən paketlər:</div>
+      <div class="row" id="pkgBox"></div>
+      <div style="opacity:.65;font-size:12px;margin-top:6px">Qeyd: Seçdiyiniz paketlərə uyğun sifarişlər sizə görünəcək.</div>
+    </div>
+    <div class="msg" id="msg"></div>
+
+	<div style="margin-top:12px">
+	  <div class="row" style="justify-content:space-between">
+	    <span class="pill" id="mapInfo">Xəritə: GPS + marşrut (OSRM)</span>
+	    <a class="secondary" id="navBtn" target="_blank" rel="noreferrer" style="display:none">Naviqasiya</a>
+	  </div>
+	  <div id="map" style="margin-top:10px"></div>
+	  <div style="margin-top:8px;opacity:.75;font-size:12px">Aktiv sifariş olduqda yol xətti “düz xətt” yox, real marşrutla çəkilir.</div>
+	</div>
+
+    <hr style="border:none;border-top:1px solid rgba(148,163,184,.18);margin:16px 0" />
+
+    <div class="row" style="justify-content:space-between;align-items:flex-end">
+      <div>
+        <h3 style="margin:0">Yeni sifarişlər</h3>
+        <div style="opacity:.75;font-size:13px">Sifarişi qəbul etmək üçün “Qəbul et” basın.</div>
+      </div>
+      <div class="row">
+        <button class="secondary" onclick="loadFeed()">Yenilə</button>
+      </div>
+    </div>
+    <div id="feed" style="margin-top:10px"></div>
+
+    <hr style="border:none;border-top:1px solid rgba(148,163,184,.18);margin:16px 0" />
+    <h3 style="margin:0">Mənim qəbul etdiklərim</h3>
+    <div id="my" style="margin-top:10px"></div>
+  </div>
+</div>
+
+	<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+	<script>
+function getSession(){ try{ return JSON.parse(localStorage.getItem('pt_session')||'null'); }catch(e){ return null; } }
+function logout(){ localStorage.removeItem('pt_session'); location.href='/'; }
+function setMsg(t){ document.getElementById('msg').textContent = t||''; }
+function setSt(on){ const el=document.getElementById('st'); el.textContent = on? 'ONLINE':'OFFLINE'; }
+
+const s = getSession();
+if(!s || s.role !== 'driver'){ location.href='/'; }
+document.getElementById('who').textContent = 'Hörmətli ' + (s.name||'') + ' (' + (s.phone||'') + ')';
+setSt(!!s.is_online);
+
+async function refreshDriverMeta(){
+  try{
+    const res = await fetch('/api/driver/status', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password })});
+    const data = await res.json();
+    if(data && data.success){
+      const r = Number(data.driver_radius_km||s.driver_radius_km||4);
+      s.driver_radius_km = r;
+      s.allowed_packages = Array.isArray(data.allowed_packages) ? data.allowed_packages : (s.allowed_packages||[]);
+      s.enabled_packages = Array.isArray(data.enabled_packages) ? data.enabled_packages : (s.enabled_packages||s.allowed_packages||[]);
+      localStorage.setItem('pt_session', JSON.stringify(s));
+      const sel = document.getElementById('radiusSelect');
+      if(sel) sel.value = String([2,4,8].includes(r)?r:4);
+      await renderPackagePrefs();
+    }
+  }catch(e){}
+}
+refreshDriverMeta();
+
+async function getFarePackages(){
+  try{
+    const r = await fetch('/api/fare-packages');
+    const j = await r.json();
+    if(j && j.success && Array.isArray(j.packages)) return j.packages;
+  }catch(e){}
+  return [
+    {id:'economy', name:'Ekonom'},
+    {id:'comfort', name:'Komfort'},
+    {id:'business', name:'Biznes'}
+  ];
+}
+
+async function renderPackagePrefs(){
+  const box = document.getElementById('pkgBox');
+  if(!box) return;
+  const pkgs = await getFarePackages();
+  const allowed = new Set((s.allowed_packages||[]).map(x=>String(x).toLowerCase().trim()).filter(Boolean));
+  const enabled = new Set((s.enabled_packages||s.allowed_packages||[]).map(x=>String(x).toLowerCase().trim()).filter(Boolean));
+  box.innerHTML = pkgs.map(p=>{
+    const id = String(p.id||'').toLowerCase().trim();
+    const isAllowed = allowed.size ? allowed.has(id) : (id==='economy');
+    const checked = enabled.size ? enabled.has(id) : isAllowed;
+    const dis = isAllowed ? '' : 'disabled';
+    const hint = isAllowed ? '' : ' (admin icazə verməyib)';
+    return `<label class="pill" style="cursor:${isAllowed?'pointer':'not-allowed'};user-select:none;opacity:${isAllowed?1:0.55}">
+      <input type="checkbox" data-pkg="${id}" ${checked?'checked':''} ${dis} style="margin-right:8px;vertical-align:middle" onchange="savePackages()" />
+      ${esc(p.name||id)}${hint}
+    </label>`;
+  }).join('');
+}
+
+async function savePackages(){
+  const box = document.getElementById('pkgBox');
+  if(!box) return;
+  const checks = Array.from(box.querySelectorAll('input[type=checkbox][data-pkg]'));
+  const list = checks.filter(c=>c.checked).map(c=>c.getAttribute('data-pkg')).filter(Boolean);
+  if(list.length===0){
+    // keep at least one enabled package (first allowed)
+    const firstAllowed = checks.find(c=>!c.disabled);
+    if(firstAllowed){ firstAllowed.checked = true; list.push(firstAllowed.getAttribute('data-pkg')); }
+  }
+  setMsg('...');
+  try{
+    const res = await fetch('/api/driver/set-packages', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password, enabled_packages:list })});
+    const data = await res.json();
+    if(data && data.success){
+      s.allowed_packages = data.allowed_packages || (s.allowed_packages||[]);
+      s.enabled_packages = data.enabled_packages || list;
+      localStorage.setItem('pt_session', JSON.stringify(s));
+      setMsg('Paketlər yadda saxlandı.');
+      loadFeed();
+    }else{
+      setMsg((data && data.error) ? data.error : 'ERROR');
+    }
+  }catch(e){
+    setMsg('ERROR');
+  }
+}
+
+async function goOnline(){
+  setMsg('...');
+  const res = await fetch('/api/driver/online', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password })});
+  const data = await res.json();
+  if(data.success){ s.is_online=1; localStorage.setItem('pt_session', JSON.stringify(s)); setSt(true); setMsg('Online oldunuz.'); }
+  else if(data.error==='DRIVER_NOT_APPROVED'){ setMsg('Admin təsdiqi yoxdur.'); }
+  else setMsg(data.error||'ERROR');
+}
+async function changeRadius(){
+  const r = Number(document.getElementById('radiusSelect').value);
+  setMsg('...');
+  const res = await fetch('/api/driver/set-radius', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password, radius_km:r })});
+  const data = await res.json();
+  if(data.success){ setMsg('Radius: ' + data.driver_radius_km + ' km'); }
+  else setMsg(data.error||'ERROR');
+}
+
+async function goOffline(){
+  setMsg('...');
+  const res = await fetch('/api/driver/offline', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password })});
+  const data = await res.json();
+  if(data.success){ s.is_online=0; localStorage.setItem('pt_session', JSON.stringify(s)); setSt(false); setMsg('Offline oldunuz.'); }
+  else setMsg(data.error||'ERROR');
+}
+
+function esc(s){ return String(s||'').replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])); }
+
+let lastLocSentAt = 0;
+
+// Map state
+let map, meMarker, pickupMarker, dropoffMarker, routeToPickup, routePickupToDropoff;
+let lastPos = null;
+
+function ensureMap(lat=40.4093, lng=49.8671){
+  if(map) return;
+  map = L.map('map').setView([lat,lng], 13);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(map);
+  meMarker = L.marker([lat,lng]).addTo(map).bindPopup('Siz');
+}
+
+async function osrmPolyline(aLat,aLng,bLat,bLng){
+  const url = `https://router.project-osrm.org/route/v1/driving/${aLng},${aLat};${bLng},${bLat}?overview=full&geometries=geojson`;
+  const r = await fetch(url);
+  if(!r.ok) throw new Error('OSRM_ERROR');
+  const j = await r.json();
+  const coords = j.routes?.[0]?.geometry?.coordinates || [];
+  return coords.map(c=>[c[1],c[0]]);
+}
+
+async function updateRouteForOrder(o){
+  if(!o) return;
+  const pLat = Number(o.pickup_lat), pLng = Number(o.pickup_lon);
+  const dLat = Number(o.dropoff_lat), dLng = Number(o.dropoff_lon);
+  if(!isFinite(pLat)||!isFinite(pLng)||!isFinite(dLat)||!isFinite(dLng)) return;
+
+  if(!lastPos){
+    document.getElementById('mapInfo').textContent = 'GPS gözlənilir...';
+    ensureMap(pLat,pLng);
+    return;
+  }
+
+  ensureMap(lastPos.lat, lastPos.lng);
+  if(meMarker) meMarker.setLatLng([lastPos.lat,lastPos.lng]);
+
+  if(pickupMarker) pickupMarker.remove();
+  if(dropoffMarker) dropoffMarker.remove();
+  pickupMarker = L.marker([pLat,pLng]).addTo(map).bindPopup('Götürmə');
+  dropoffMarker = L.marker([dLat,dLng]).addTo(map).bindPopup('Təyinat');
+
+  if(routeToPickup) routeToPickup.remove();
+  if(routePickupToDropoff) routePickupToDropoff.remove();
+
+  try{
+    const poly1 = await osrmPolyline(lastPos.lat,lastPos.lng,pLat,pLng);
+    routeToPickup = L.polyline(poly1, { weight: 5 }).addTo(map);
+    const poly2 = await osrmPolyline(pLat,pLng,dLat,dLng);
+    routePickupToDropoff = L.polyline(poly2, { weight: 5, dashArray: '8 10' }).addTo(map);
+    const g = L.featureGroup([meMarker, pickupMarker, dropoffMarker, routeToPickup, routePickupToDropoff]);
+    map.fitBounds(g.getBounds().pad(0.15));
+    document.getElementById('mapInfo').textContent = `Marşrut: Siz → Götürmə → Təyinat (Sifariş #${o.id})`;
+    const nav = `https://www.google.com/maps/dir/?api=1&origin=${lastPos.lat},${lastPos.lng}&destination=${dLat},${dLng}&waypoints=${pLat},${pLng}&travelmode=driving`;
+    const nb = document.getElementById('navBtn');
+    nb.href = nav;
+    nb.style.display = 'inline-block';
+  }catch(e){
+    document.getElementById('mapInfo').textContent = 'Marşrut çəkilmədi (internet/OSRM).';
+    console.warn(e);
+  }
+}
+
+async function setOrderStatus(id, status){
+  setMsg('...');
+  const res = await fetch('/api/orders/status', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password, order_id:id, status })});
+  const data = await res.json();
+  if(data.success){
+    setMsg('OK');
+    loadMy();
+    loadFeed();
+  } else {
+    setMsg(data.error || 'ERROR');
+  }
+}
+
+function startLocationLoop(){
+  if(!('geolocation' in navigator)) return;
+  navigator.geolocation.watchPosition(async (pos)=>{
+    const now = Date.now();
+    if(now - lastLocSentAt < 5000) return;
+    lastLocSentAt = now;
+    lastPos = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+    ensureMap(lastPos.lat, lastPos.lng);
+    if(meMarker) meMarker.setLatLng([lastPos.lat, lastPos.lng]);
+    try{
+      await fetch('/api/driver/location', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password, lat: pos.coords.latitude, lng: pos.coords.longitude })});
+    }catch(e){/* ignore */}
+  }, ()=>{}, {enableHighAccuracy:true, maximumAge:5000, timeout:8000});
+}
+
+async function loadFeed(){
+  const box = document.getElementById('feed');
+  box.innerHTML = '<div style="opacity:.75">Yüklənir...</div>';
+  const qs = new URLSearchParams({ phone: s.phone, password: s.password });
+  const res = await fetch('/api/orders/feed?' + qs.toString());
+  const data = await res.json();
+  if(!data.success){
+    box.innerHTML = `<div style="opacity:.85">${esc(data.error||'ERROR')}</div>`;
+    return;
+  }
+  if(!data.orders || data.orders.length===0){
+    box.innerHTML = '<div style="opacity:.75">Hazırda yeni sifariş yoxdur.</div>';
+    return;
+  }
+  box.innerHTML = data.orders.map(o=>{
+    const dt = new Date(o.created_at).toLocaleString();
+    return `<div style="padding:12px;border:1px solid rgba(148,163,184,.18);border-radius:12px;margin-bottom:10px;background:rgba(2,6,23,.35)">
+      <div class="row" style="justify-content:space-between">
+        <div><b>#${o.id}</b> <span class="badge">${esc(o.status)}</span> ${o.fare_package?`<span class="badge">${esc(o.fare_package)}</span>`:''}</div>
+        <button onclick="acceptOrder(${o.id})">Qəbul et</button>
+      </div>
+      <div style="margin-top:8px;opacity:.9"><b>Haradan:</b> ${esc(o.pickup_text)}</div>
+      ${o.pickup_distance_km!=null ? `<div style="margin-top:6px;opacity:.8"><b>Məsafə:</b> ${Number(o.pickup_distance_km).toFixed(2)} km</div>` : ''}
+      ${o.est_fare!=null ? `<div style="margin-top:6px;opacity:.8"><b>Təxmini:</b> ${Number(o.est_km||0).toFixed(1)} km • ${Number(o.est_fare).toFixed(2)} AZN</div>` : ''}
+      <div style="margin-top:6px;opacity:.9"><b>Haraya:</b> ${esc(o.dropoff_text)}</div>
+      ${o.final_fare!=null ? `<div style="margin-top:6px;opacity:.85"><b>Yekun:</b> ${Number(o.final_fare).toFixed(2)} AZN • <b>Sizin:</b> ${Number(o.driver_earn||0).toFixed(2)} AZN</div>` : ''}
+      <div style="margin-top:6px;opacity:.65">${dt}</div>
+    </div>`;
+  }).join('');
+
+	// marşrutu aktiv sifariş üçün çək (accepted/arrived/in_progress)
+	const active = (data.orders||[]).find(x=>['accepted','arrived','in_progress'].includes(x.status));
+	if(active){
+		updateRouteForOrder(active);
+	}else{
+		document.getElementById('mapInfo').textContent = 'Xəritə: aktiv sifariş yoxdur';
+		document.getElementById('navBtn').style.display = 'none';
+		ensureMap();
+	}
+}
+
+async function acceptOrder(id){
+  setMsg('Qəbul edilir...');
+  const res = await fetch('/api/orders/accept', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password, order_id:id })});
+  const data = await res.json();
+  if(data.success){
+    setMsg('Sifariş qəbul olundu.');
+    loadFeed();
+    loadMy();
+  } else {
+    setMsg(data.error || 'ERROR');
+  }
+}
+
+async function loadMy(){
+  const box = document.getElementById('my');
+  box.innerHTML = '<div style="opacity:.75">Yüklənir...</div>';
+  const qs = new URLSearchParams({ phone: s.phone, password: s.password });
+  const res = await fetch('/api/orders/driver/my?' + qs.toString());
+  const data = await res.json();
+  if(!data.success){
+    box.innerHTML = `<div style="opacity:.85">${esc(data.error||'ERROR')}</div>`;
+    return;
+  }
+  if(!data.orders || data.orders.length===0){
+    box.innerHTML = '<div style="opacity:.75">Hələ sifariş qəbul etməmisiniz.</div>';
+    return;
+  }
+  box.innerHTML = data.orders.map(o=>{
+    const dt = new Date(o.created_at).toLocaleString();
+    const at = o.accepted_at ? new Date(o.accepted_at).toLocaleString() : '';
+    let actions = '';
+    if(o.status==='accepted'){
+      actions = `<div class="row" style="margin-top:10px">
+        <button class="secondary" onclick="setOrderStatus(${o.id},'arrived')">Gəldim</button>
+        <button class="secondary" onclick="setOrderStatus(${o.id},'in_progress')">Başla</button>
+        <button class="secondary" onclick="setOrderStatus(${o.id},'cancelled')">Ləğv et</button>
+      </div>`;
+    } else if(o.status==='arrived'){
+      actions = `<div class="row" style="margin-top:10px">
+        <button class="secondary" onclick="setOrderStatus(${o.id},'in_progress')">Başla</button>
+        <button class="secondary" onclick="setOrderStatus(${o.id},'cancelled')">Ləğv et</button>
+      </div>`;
+    } else if(o.status==='in_progress'){
+      actions = `<div class="row" style="margin-top:10px">
+        <button onclick="setOrderStatus(${o.id},'completed')">Bitir</button>
+      </div>`;
+    }
+    return `<div style="padding:12px;border:1px solid rgba(148,163,184,.18);border-radius:12px;margin-bottom:10px;background:rgba(2,6,23,.35)">
+      <div><b>#${o.id}</b> <span class="badge">${esc(o.status)}</span></div>
+      <div style="margin-top:8px;opacity:.9"><b>Haradan:</b> ${esc(o.pickup_text)}</div>
+      ${o.pickup_distance_km!=null ? `<div style="margin-top:6px;opacity:.8"><b>Məsafə:</b> ${Number(o.pickup_distance_km).toFixed(2)} km</div>` : ''}
+      ${o.est_fare!=null ? `<div style="margin-top:6px;opacity:.8"><b>Təxmini:</b> ${Number(o.est_km||0).toFixed(1)} km • ${Number(o.est_fare).toFixed(2)} AZN</div>` : ''}
+      <div style="margin-top:6px;opacity:.9"><b>Haraya:</b> ${esc(o.dropoff_text)}</div>
+      ${at ? `<div style="margin-top:6px;opacity:.75"><b>Qəbul:</b> ${at}</div>` : ''}
+      ${o.final_fare!=null ? `<div style="margin-top:6px;opacity:.85"><b>Yekun:</b> ${Number(o.final_fare).toFixed(2)} AZN • <b>Sizin:</b> ${Number(o.driver_earn||0).toFixed(2)} AZN</div>` : ''}
+      <div style="margin-top:6px;opacity:.65">${dt}</div>
+      ${actions}
+    </div>`;
+  }).join('');
+}
+
+// initial + polling
+loadFeed();
+loadMy();
+setInterval(()=>{ loadFeed(); loadMy(); }, 5000);
+startLocationLoop();
+</script>
+</body>
+</html>

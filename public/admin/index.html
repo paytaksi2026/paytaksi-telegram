@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="az">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>PayTaksi Admin</title>
+  <style>
+    body{margin:0;background:#0b1220;color:#e5e7eb;font-family:Arial,Helvetica,sans-serif}
+    .wrap{max-width:980px;margin:0 auto;padding:22px}
+    .card{background:rgba(15,23,42,.75);border:1px solid rgba(148,163,184,.2);border-radius:14px;padding:16px;box-shadow:0 10px 30px rgba(0,0,0,.35)}
+    h1{margin:0 0 10px 0}
+    .row{display:flex;gap:10px;flex-wrap:wrap}
+    input,select,button{padding:10px 12px;border-radius:10px;border:1px solid rgba(148,163,184,.25);background:rgba(2,6,23,.55);color:#e5e7eb}
+    button{cursor:pointer;border:none;background:#22c55e;color:#081014;font-weight:700}
+    button.secondary{background:rgba(148,163,184,.15);color:#e5e7eb;border:1px solid rgba(148,163,184,.25)}
+    button.danger{background:#ef4444;color:#fff}
+    .msg{margin-top:10px;min-height:22px}
+    table{width:100%;border-collapse:collapse;margin-top:12px}
+    th,td{padding:10px;border-bottom:1px solid rgba(148,163,184,.15);text-align:left;font-size:14px}
+    th{opacity:.85}
+    .badge{display:inline-block;padding:4px 10px;border-radius:999px;font-size:12px;border:1px solid rgba(148,163,184,.25)}
+    .pending{background:rgba(234,179,8,.15)}
+    .approved{background:rgba(34,197,94,.15)}
+    .topbar{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+    .hidden{display:none}
+  </style>
+
+<link rel="stylesheet" href="/assets/bolt.css" />
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div class="topbar">
+        <h1>PayTaksi Admin</h1>
+        <div class="row">
+          <button class="secondary" onclick="loadDrivers('pending')">Pending</button>
+          <button class="secondary" onclick="loadDrivers('approved')">Approved</button>
+          <button class="secondary" onclick="loadDrivers('all')">All</button>
+          <button class="danger" onclick="logout()">Çıxış</button>
+        </div>
+      </div>
+
+      <div id="loginBox" class="card" style="margin-top:14px;background:rgba(2,6,23,.35)">
+        <h3 style="margin:0 0 10px 0">Admin giriş</h3>
+        <div class="row">
+          <input id="u" placeholder="username" />
+          <input id="p" placeholder="password" type="password" />
+          <button onclick="login()">Daxil ol</button>
+        </div>
+        <div class="msg" id="loginMsg"></div>
+      </div>
+
+      <div id="panelBox" class="hidden" style="margin-top:14px">
+        <div class="row">
+          <input id="quickPhone" placeholder="Telefon ilə təsdiqlə (+994...)" style="flex:1" />
+          <button onclick="approveByPhone()">Approve</button>
+        </div>
+        <div class="msg" id="msg"></div>
+
+        <hr style="border:none;border-top:1px solid rgba(148,163,184,.18);margin:14px 0" />
+        <h3 style="margin:0 0 10px 0">Sistem Ayarları</h3>
+        <div class="row" style="align-items:center">
+          <label style="opacity:.85">Default driver radius:</label>
+          <select id="defRadius">
+            <option value="2">2 km</option>
+            <option value="4">4 km</option>
+            <option value="8">8 km</option>
+          </select>
+          <button class="secondary" onclick="saveSettings()">Yadda saxla</button>
+          <button class="secondary" onclick="loadStats()">Statistika</button>
+          <button class="secondary" onclick="location.href='/admin/pricing.html'">Tariflər (Pricing)</button>
+        </div>
+        <div class="msg" id="statMsg"></div>
+        <div id="statsBox" style="opacity:.9"></div>
+
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Ad</th>
+              <th>Telefon</th>
+              <th>Status</th>
+              <th>Online</th>
+              <th>Paketlər</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+<script>
+async function api(url, body){
+  const res = await fetch(url, {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: body ? JSON.stringify(body) : '{}'
+  });
+  const data = await res.json().catch(()=> ({}));
+  if(!res.ok) throw data;
+  return data;
+}
+function setText(id, t){ document.getElementById(id).textContent = t || ''; }
+
+async function login(){
+  setText('loginMsg','...');
+  try{
+    await api('/api/admin/login', { username: u.value, password: p.value });
+    setText('loginMsg','OK');
+    loginBox.classList.add('hidden');
+    panelBox.classList.remove('hidden');
+    loadDrivers('pending');
+    loadSettings();
+  }catch(e){
+    setText('loginMsg', (e && e.error) ? e.error : 'LOGIN_ERROR');
+  }
+}
+async function logout(){
+  try{ await api('/api/admin/logout', {}); }catch(e){}
+  panelBox.classList.add('hidden');
+  loginBox.classList.remove('hidden');
+  setText('msg','');
+  setText('loginMsg','Çıxış edildi.');
+}
+async function loadDrivers(status){
+  setText('msg','...');
+  const res = await fetch('/api/admin/drivers?status=' + encodeURIComponent(status || 'all'));
+  const data = await res.json().catch(()=> ({}));
+  if(!res.ok){
+    panelBox.classList.add('hidden');
+    loginBox.classList.remove('hidden');
+    setText('loginMsg', (data && data.error) ? data.error : 'ADMIN_REQUIRED');
+    setText('msg','');
+    return;
+  }
+  const list = (data && data.drivers) ? data.drivers : [];
+  const tb = document.getElementById('tbody');
+  tb.innerHTML = '';
+  const pkgs = await getFarePackages();
+  for(const d of list){
+    const tr = document.createElement('tr');
+    const statusText = d.approved ? 'Approved' : 'Pending';
+    const badgeClass = d.approved ? 'badge approved' : 'badge pending';
+    const onlineText = d.is_online ? 'ONLINE' : 'OFFLINE';
+    const allowed = new Set((d.allowed_packages||[]).map(x=>String(x).toLowerCase().trim()).filter(Boolean));
+    const pkgHtml = pkgs.map(p=>{
+      const id = String(p.id||'').toLowerCase().trim();
+      const checked = allowed.size ? allowed.has(id) : (id==='economy');
+      return `<label style="margin-right:8px;white-space:nowrap;cursor:pointer">
+        <input type="checkbox" data-driver="${d.id}" data-pkg="${id}" ${checked?'checked':''} /> ${esc(p.name||id)}
+      </label>`;
+    }).join('');
+    tr.innerHTML = `
+      <td>${d.id}</td>
+      <td>${(d.name||'')}</td>
+      <td>${d.phone}</td>
+      <td><span class="${badgeClass}">${statusText}</span></td>
+      <td>${onlineText}</td>
+      <td>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+          ${pkgHtml}
+          <button class="secondary" style="padding:6px 10px" onclick="saveDriverPkgs(${d.id})">Yadda saxla</button>
+        </div>
+      </td>
+      <td>
+        ${d.approved ? '' : `<button onclick="approve(${d.id})">Approve</button>`}
+        <button class="danger" onclick="delDriver(${d.id})">Sil</button>
+      </td>
+    `;
+    tb.appendChild(tr);
+  }
+  setText('msg', 'Drivers: ' + list.length);
+}
+
+function esc(s){ return String(s||'').replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])); }
+
+async function getFarePackages(){
+  try{
+    const r = await fetch('/api/fare-packages');
+    const j = await r.json().catch(()=> ({}));
+    if(j && j.success && Array.isArray(j.packages)) return j.packages;
+  }catch(e){}
+  return [
+    {id:'economy', name:'Ekonom'},
+    {id:'comfort', name:'Komfort'},
+    {id:'business', name:'Biznes'}
+  ];
+}
+
+async function saveDriverPkgs(driverId){
+  const checks = Array.from(document.querySelectorAll(`input[type=checkbox][data-driver='${driverId}'][data-pkg]`));
+  const list = checks.filter(c=>c.checked).map(c=>c.getAttribute('data-pkg')).filter(Boolean);
+  if(list.length===0){
+    const eco = checks.find(c=>c.getAttribute('data-pkg')==='economy');
+    if(eco){ eco.checked = true; list.push('economy'); }
+  }
+  setText('msg','...');
+  try{
+    const r = await api('/api/admin/driver/packages', { id: driverId, allowed_packages: list });
+    setText('msg', 'Yadda saxlanıldı.');
+  }catch(e){
+    setText('msg', (e && e.error) ? e.error : 'ERROR');
+  }
+}
+async function approve(id){
+  setText('msg','...');
+  try{
+    const r = await api('/api/admin/approve', { id });
+    setText('msg','Approved: ' + (r.changes||0));
+    loadDrivers('pending');
+    loadSettings();
+  }catch(e){
+    setText('msg', (e && e.error) ? e.error : 'ERROR');
+  }
+}
+async function approveByPhone(){
+  const phone = quickPhone.value.trim();
+  if(!phone){ setText('msg','Telefon yaz'); return; }
+  setText('msg','...');
+  try{
+    const r = await api('/api/admin/approve', { phone });
+    setText('msg','Approved: ' + (r.changes||0));
+    loadDrivers('pending');
+    loadSettings();
+  }catch(e){
+    setText('msg', (e && e.error) ? e.error : 'ERROR');
+  }
+}
+async function delDriver(id){
+  if(!confirm('Sürücü silinsin?')) return;
+  setText('msg','...');
+  try{
+    const r = await api('/api/admin/delete-driver', { id });
+    setText('msg','Deleted: ' + (r.changes||0));
+    loadDrivers('all');
+  }catch(e){
+    setText('msg', (e && e.error) ? e.error : 'ERROR');
+  }
+}
+
+async function loadSettings(){
+  try{
+    const res = await fetch('/api/admin/settings');
+    const data = await res.json().catch(()=> ({}));
+    if(!res.ok) throw data;
+    const r = Number(data.settings?.default_radius_km || 4);
+    defRadius.value = String([2,4,8].includes(r)?r:4);
+  }catch(e){}
+}
+async function saveSettings(){
+  setText('statMsg','...');
+  try{
+    await api('/api/admin/settings', { default_radius_km: Number(defRadius.value) });
+    setText('statMsg','Yadda saxlandı.');
+  }catch(e){
+    setText('statMsg', (e && e.error) ? e.error : 'ERROR');
+  }
+}
+async function loadStats(){
+  setText('statMsg','...');
+  try{
+    const res = await fetch('/api/admin/stats');
+    const data = await res.json().catch(()=> ({}));
+    if(!res.ok) throw data;
+    const s = data.stats || {};
+    statsBox.innerHTML = `<div class="row" style="margin-top:6px">
+      <span class="badge">Rides: ${s.rides||0}</span>
+      <span class="badge">Dövriyyə: ${Number(s.total_turnover||0).toFixed(2)} AZN</span>
+      <span class="badge">Komissiya: ${Number(s.total_commission||0).toFixed(2)} AZN</span>
+    </div>`;
+    setText('statMsg','');
+  }catch(e){
+    setText('statMsg', (e && e.error) ? e.error : 'ERROR');
+  }
+}
+
+</script>
+</body>
+</html>
