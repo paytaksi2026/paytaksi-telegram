@@ -166,12 +166,18 @@ async function loadDrivers(status){
       </td>
       <td>
         ${d.approved ? '' : `<button onclick="approve(${d.id})">Approve</button>`}
+        <button class="secondary" onclick="openDocs('${esc(d.phone)}')">Sənədlər</button>
         <button class="danger" onclick="delDriver(${d.id})">Sil</button>
       </td>
     `;
     tb.appendChild(tr);
   }
   setText('msg', 'Drivers: ' + list.length);
+}
+
+function openDocs(phone){
+  if(!phone) return;
+  location.href = '/admin/driver_docs.html?phone=' + encodeURIComponent(phone);
 }
 
 function esc(s){ return String(s||'').replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])); }

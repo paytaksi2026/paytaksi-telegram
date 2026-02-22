@@ -3,6 +3,7 @@ const sqlite3 = require('sqlite3').verbose();
 const bodyParser = require('body-parser');
 const path = require('path');
 const crypto = require('crypto');
+const querystring = require('querystring');
 
 const app = express();
 const db = new sqlite3.Database('./database.sqlite');
@@ -87,6 +88,10 @@ UNIQUE(phone, role)
   ensureColumn('users', 'car_color', 'car_color TEXT');
   ensureColumn('users', 'car_year', 'car_year INTEGER');
 
+  // Telegram identity (optional; used only when TG is configured)
+  ensureColumn('users', 'telegram_id', 'telegram_id TEXT');
+  ensureColumn('users', 'telegram_username', 'telegram_username TEXT');
+
   // Settings (default radius & pricing) - additive
   db.run(`CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
@@ -167,6 +172,20 @@ UNIQUE(phone, role)
   ensureColumn('orders', 'final_fare', 'final_fare REAL');
   ensureColumn('orders', 'admin_fee', 'admin_fee REAL');
   ensureColumn('orders', 'driver_earn', 'driver_earn REAL');
+
+  // Driver documents stored as Telegram file_id (so no server disk needed)
+  db.run(`CREATE TABLE IF NOT EXISTS driver_documents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    driver_phone TEXT NOT NULL,
+    telegram_id TEXT,
+    doc_type TEXT NOT NULL,          -- license | idcard | techpassport | car_front | car_back | car_inside
+    file_id TEXT NOT NULL,
+    file_unique_id TEXT,
+    mime_type TEXT,
+    file_name TEXT,
+    created_at INTEGER NOT NULL
+  )`);
+  db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_driver_documents_unique ON driver_documents(driver_phone, doc_type)`);
 });
 
 // ---------------- Helpers
@@ -188,6 +207,69 @@ function nowMs() {
 
 function isValidAzerPhone(fullPhone){
   return /^\+994\d{9}$/.test(String(fullPhone||''));
+}
+
+// ---------------- Telegram WebApp helpers (optional)
+// To enable Telegram flows, set:
+//   TG_PASSENGER_BOT_TOKEN and TG_DRIVER_BOT_TOKEN
+// and configure BotFather WebApp URL to:
+//   https://<your-domain>/tg/passenger  and  https://<your-domain>/tg/driver
+function getTgTokenForRole(role){
+  role = normRole(role);
+  return (role === 'driver') ? process.env.TG_DRIVER_BOT_TOKEN : process.env.TG_PASSENGER_BOT_TOKEN;
+}
+
+function parseInitData(initDataRaw){
+  const s = String(initDataRaw || '').trim();
+  if (!s) return { map: new Map(), hash: '' };
+  const parsed = querystring.parse(s);
+  const map = new Map(Object.entries(parsed).map(([k,v])=>[k, String(v)]));
+  const hash = map.get('hash') || '';
+  return { map, hash };
+}
+
+function verifyTelegramInitData(initDataRaw, botToken){
+  // Telegram docs: https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app
+  if (!botToken) return { ok:false, error:'TG_NOT_CONFIGURED' };
+  const { map, hash } = parseInitData(initDataRaw);
+  if (!hash) return { ok:false, error:'TG_NO_HASH' };
+
+  // Build data_check_string
+  const pairs = [];
+  for (const [k,v] of Array.from(map.entries())){
+    if (k === 'hash') continue;
+    pairs.push(`${k}=${v}`);
+  }
+  pairs.sort();
+  const dataCheckString = pairs.join('\n');
+
+  const secretKey = crypto.createHash('sha256').update(botToken).digest();
+  const calcHash = crypto.createHmac('sha256', secretKey).update(dataCheckString).digest('hex');
+  if (calcHash !== hash) return { ok:false, error:'TG_BAD_HASH' };
+
+  // Auth date check (optional): allow up to 24h drift
+  const authDate = parseInt(map.get('auth_date') || '0', 10);
+  if (authDate > 0){
+    const now = Math.floor(Date.now()/1000);
+    if (Math.abs(now - authDate) > 60*60*24) return { ok:false, error:'TG_EXPIRED' };
+  }
+
+  let user = null;
+  try {
+    const userRaw = map.get('user');
+    if (userRaw) user = JSON.parse(userRaw);
+  } catch(_) { user = null; }
+  if (!user || !user.id) return { ok:false, error:'TG_NO_USER' };
+
+  return { ok:true, user, map };
+}
+
+function tgApiCall(botToken, method, form){
+  // Minimal Telegram Bot API caller using global fetch (Node 18+)
+  return fetch(`https://api.telegram.org/bot${botToken}/${method}`, {
+    method: 'POST',
+    body: form
+  }).then(r=>r.json());
 }
 
 function parseAllowedPackages(raw){
@@ -487,6 +569,233 @@ app.use((req, res, next) => {
 });
 
 app.use(express.static(path.join(__dirname, 'public')));
+
+// ---------------- Telegram MiniApp entry pages (static)
+// NOTE: These pages work only when opened inside Telegram WebApp.
+// If TG tokens are not configured, they show an error and do not affect the main app.
+
+// ---------------- Telegram Webhooks (optional)
+// To use:
+// 1) Create two bots via BotFather.
+// 2) Set env vars TG_PASSENGER_BOT_TOKEN and TG_DRIVER_BOT_TOKEN on Render.
+// 3) Set webhooks:
+//    https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://<domain>/tg/passenger/webhook
+//    https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://<domain>/tg/driver/webhook
+
+db.serialize(() => {
+  db.run(`CREATE TABLE IF NOT EXISTS tg_driver_states (
+    telegram_id TEXT PRIMARY KEY,
+    linked_phone TEXT,
+    awaiting_doc_type TEXT,
+    updated_at INTEGER NOT NULL
+  )`);
+});
+
+function tgSendMessage(botToken, chatId, text, keyboard){
+  if (!botToken) return Promise.resolve(null);
+  const payload = {
+    chat_id: chatId,
+    text: String(text || ''),
+    parse_mode: 'HTML',
+    disable_web_page_preview: true,
+  };
+  if (keyboard) payload.reply_markup = keyboard;
+  return fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(payload)
+  }).then(r=>r.json()).catch(()=>null);
+}
+
+function tgMainKeyboard(){
+  return {
+    keyboard: [
+      [{ text: '📌 Telefonu bağla' }],
+      [{ text: '🪪 Sürücülük vəsiqəsi' }, { text: '🆔 Şəxsiyyət vəsiqəsi' }],
+      [{ text: '📄 Tex. pasport' }],
+      [{ text: '🚗 Maşın şəkli (ön)' }, { text: '🚙 Maşın şəkli (arxa)' }],
+      [{ text: '🛋️ Maşın şəkli (salon)' }],
+      [{ text: 'ℹ️ Status' }]
+    ],
+    resize_keyboard: true,
+    one_time_keyboard: false
+  };
+}
+
+function mapDocButtonToType(t){
+  t = String(t||'').toLowerCase();
+  if (t.includes('sürücülük')) return 'license';
+  if (t.includes('şəxsiyyət') || t.includes('shexsiyyet')) return 'idcard';
+  if (t.includes('tex') || t.includes('pasport')) return 'techpassport';
+  if (t.includes('(ön') || t.includes('on)') || t.includes('ön)')) return 'car_front';
+  if (t.includes('(arxa') || t.includes('arxa)')) return 'car_back';
+  if (t.includes('salon')) return 'car_inside';
+  return '';
+}
+
+async function tgDriverHandleUpdate(update){
+  const botToken = process.env.TG_DRIVER_BOT_TOKEN;
+  if (!botToken) return;
+  const msg = update && (update.message || update.edited_message);
+  if (!msg || !msg.chat || !msg.chat.id) return;
+  const chatId = msg.chat.id;
+  const from = msg.from || {};
+  const telegramId = String(from.id || '');
+  if (!telegramId) return;
+
+  // Ensure state row exists
+  const now = Date.now();
+  await new Promise((resolve)=>{
+    db.run(
+      "INSERT INTO tg_driver_states (telegram_id, linked_phone, awaiting_doc_type, updated_at) VALUES (?,?,?,?) ON CONFLICT(telegram_id) DO UPDATE SET updated_at=excluded.updated_at",
+      [telegramId, null, null, now],
+      ()=>resolve(true)
+    );
+  });
+
+  const text = String(msg.text || '').trim();
+
+  if (text === '/start'){
+    await tgSendMessage(botToken, chatId,
+      '🚗 <b>PayTaksi Sürücü Bot</b>\n\n' +
+      '1) Əvvəlcə sürücü kimi WEB qeydiyyatını et (ad/soyad, telefon, maşın məlumatları).\n' +
+      '2) Sonra burada <b>telefonunu yaz</b> (9 rəqəm: məsələn 773013661).\n' +
+      '3) Sənədləri göndərmək üçün aşağıdakı düymələri istifadə et.\n\n' +
+      'Qeyd: Telefonu bağlamadan sənəd qəbul edilmir.',
+      tgMainKeyboard()
+    );
+    return;
+  }
+
+  // Status
+  if (text.toLowerCase().includes('status')){
+    const row = await new Promise((resolve)=>{
+      db.get("SELECT linked_phone, awaiting_doc_type FROM tg_driver_states WHERE telegram_id=?", [telegramId], (e,r)=>resolve(r||null));
+    });
+    const linked = row && row.linked_phone;
+    const awaiting = row && row.awaiting_doc_type;
+    let s = 'ℹ️ <b>Status</b>\n';
+    s += linked ? `Telefon bağlıdır: <b>${linked}</b>\n` : 'Telefon bağlı deyil. 9 rəqəm yazıb bağla.\n';
+    if (awaiting) s += `Gözlənən sənəd: <b>${awaiting}</b>\n`;
+    await tgSendMessage(botToken, chatId, s, tgMainKeyboard());
+    return;
+  }
+
+  // Phone link command
+  if (text.toLowerCase().includes('telefonu bağla')){
+    await tgSendMessage(botToken, chatId, '📌 9 rəqəm yaz (məs: 773013661).', tgMainKeyboard());
+    return;
+  }
+
+  // If user sent a phone, link to existing driver account
+  if (/^\d{9}$/.test(text) || /^\+994\d{9}$/.test(text)){
+    const phone = normPhone(text);
+    if (!isValidAzerPhone(phone)){
+      await tgSendMessage(botToken, chatId, '❌ Telefon formatı səhvdir. 9 rəqəm yaz (məs: 773013661).', tgMainKeyboard());
+      return;
+    }
+    const driver = await new Promise((resolve)=>{
+      db.get("SELECT id, phone, name, approved FROM users WHERE phone=? AND role='driver'", [phone], (e,r)=>resolve(r||null));
+    });
+    if (!driver){
+      await tgSendMessage(botToken, chatId, '❌ Bu telefonla sürücü hesabı tapılmadı. Əvvəl WEB qeydiyyat et.', tgMainKeyboard());
+      return;
+    }
+    await new Promise((resolve)=>{
+      db.run("UPDATE users SET telegram_id=?, telegram_username=? WHERE id=?", [telegramId, String(from.username||''), driver.id], ()=>resolve(true));
+    });
+    await new Promise((resolve)=>{
+      db.run("UPDATE tg_driver_states SET linked_phone=?, awaiting_doc_type=NULL, updated_at=? WHERE telegram_id=?", [phone, Date.now(), telegramId], ()=>resolve(true));
+    });
+    await tgSendMessage(botToken, chatId, `✅ Telefon bağlandı: <b>${phone}</b>\nİndi sənədləri düymələrlə seç və göndər.`, tgMainKeyboard());
+    return;
+  }
+
+  // Doc type buttons
+  const docType = mapDocButtonToType(text);
+  if (docType){
+    const row = await new Promise((resolve)=>{
+      db.get("SELECT linked_phone FROM tg_driver_states WHERE telegram_id=?", [telegramId], (e,r)=>resolve(r||null));
+    });
+    if (!row || !row.linked_phone){
+      await tgSendMessage(botToken, chatId, '❌ Əvvəl telefonunu bağla (9 rəqəm yaz).', tgMainKeyboard());
+      return;
+    }
+    await new Promise((resolve)=>{
+      db.run("UPDATE tg_driver_states SET awaiting_doc_type=?, updated_at=? WHERE telegram_id=?", [docType, Date.now(), telegramId], ()=>resolve(true));
+    });
+    await tgSendMessage(botToken, chatId, `📎 İndi <b>${text}</b> sənədini/şəklini göndər.`, tgMainKeyboard());
+    return;
+  }
+
+  // Save incoming document/photo when awaiting
+  if (msg.document || (msg.photo && msg.photo.length>0)){
+    const st = await new Promise((resolve)=>{
+      db.get("SELECT linked_phone, awaiting_doc_type FROM tg_driver_states WHERE telegram_id=?", [telegramId], (e,r)=>resolve(r||null));
+    });
+    if (!st || !st.linked_phone){
+      await tgSendMessage(botToken, chatId, '❌ Əvvəl telefonunu bağla (9 rəqəm yaz).', tgMainKeyboard());
+      return;
+    }
+    if (!st.awaiting_doc_type){
+      await tgSendMessage(botToken, chatId, 'ℹ️ Sənəd növünü seç: düymələrdən birini bas (məs: Sürücülük vəsiqəsi).', tgMainKeyboard());
+      return;
+    }
+
+    // Extract Telegram file_id
+    let file_id = '';
+    let file_unique_id = '';
+    let mime_type = '';
+    let file_name = '';
+    if (msg.document){
+      file_id = msg.document.file_id;
+      file_unique_id = msg.document.file_unique_id;
+      mime_type = msg.document.mime_type || '';
+      file_name = msg.document.file_name || '';
+    } else if (msg.photo && msg.photo.length){
+      const p = msg.photo[msg.photo.length-1];
+      file_id = p.file_id;
+      file_unique_id = p.file_unique_id;
+      mime_type = 'image/jpeg';
+      file_name = '';
+    }
+    if (!file_id){
+      await tgSendMessage(botToken, chatId, '❌ Fayl oxunmadı. Yenidən göndər.', tgMainKeyboard());
+      return;
+    }
+
+    const created_at = Date.now();
+    await new Promise((resolve)=>{
+      db.run(
+        "INSERT INTO driver_documents (driver_phone, telegram_id, doc_type, file_id, file_unique_id, mime_type, file_name, created_at) VALUES (?,?,?,?,?,?,?,?) "+
+        "ON CONFLICT(driver_phone, doc_type) DO UPDATE SET telegram_id=excluded.telegram_id, file_id=excluded.file_id, file_unique_id=excluded.file_unique_id, mime_type=excluded.mime_type, file_name=excluded.file_name, created_at=excluded.created_at",
+        [st.linked_phone, telegramId, st.awaiting_doc_type, file_id, file_unique_id, mime_type, file_name, created_at],
+        ()=>resolve(true)
+      );
+    });
+    await new Promise((resolve)=>{
+      db.run("UPDATE tg_driver_states SET awaiting_doc_type=NULL, updated_at=? WHERE telegram_id=?", [Date.now(), telegramId], ()=>resolve(true));
+    });
+    await tgSendMessage(botToken, chatId, '✅ Sənəd yadda saxlandı. Növbəti sənədi seçə bilərsən.', tgMainKeyboard());
+    return;
+  }
+
+  // Default help
+  await tgSendMessage(botToken, chatId, 'ℹ️ Düymələrdən istifadə et: əvvəl telefonunu yaz (9 rəqəm), sonra sənəd növünü seç və faylı göndər.', tgMainKeyboard());
+}
+
+app.post('/tg/driver/webhook', async (req, res) => {
+  try {
+    const update = req.body;
+    await tgDriverHandleUpdate(update);
+  } catch (_) {}
+  res.json({ ok: true });
+});
+
+// Passenger bot webhook placeholder (kept minimal for now)
+app.post('/tg/passenger/webhook', async (req, res) => {
+  res.json({ ok: true });
+});
 
 // Basic credential check for passenger/driver API calls (MVP)
 function authUser(phone, password, role) {
@@ -1295,6 +1604,50 @@ app.post('/api/admin/driver/packages', requireAdmin, async (req, res) => {
     });
   }catch(e){
     res.status(500).json({ error:'DB_ERROR' });
+  }
+});
+
+// Admin: get driver's document list (Telegram file_id)
+app.get('/api/admin/driver/docs', requireAdmin, (req, res) => {
+  const phone = normPhone(req.query.phone);
+  if (!phone) return res.status(400).json({ error:'PHONE_REQUIRED' });
+  db.all(
+    "SELECT doc_type, file_id, file_unique_id, mime_type, file_name, created_at FROM driver_documents WHERE driver_phone=? ORDER BY doc_type ASC",
+    [phone],
+    (err, rows) => {
+      if (err) return res.status(500).json({ error:'DB_ERROR' });
+      const docs = (rows||[]).map(r=>({
+        ...r,
+        download_url: `/api/admin/driver/docs/download?phone=${encodeURIComponent(phone)}&doc_type=${encodeURIComponent(r.doc_type)}`
+      }));
+      res.json({ success:true, phone, docs });
+    }
+  );
+});
+
+// Admin: redirect to Telegram file download URL
+app.get('/api/admin/driver/docs/download', requireAdmin, async (req, res) => {
+  try{
+    const phone = normPhone(req.query.phone);
+    const doc_type = String(req.query.doc_type||'').trim();
+    if (!phone || !doc_type) return res.status(400).send('BAD_REQUEST');
+
+    const row = await new Promise((resolve)=>{
+      db.get("SELECT file_id FROM driver_documents WHERE driver_phone=? AND doc_type=?", [phone, doc_type], (e,r)=>resolve(r||null));
+    });
+    if (!row || !row.file_id) return res.status(404).send('NOT_FOUND');
+
+    const botToken = process.env.TG_DRIVER_BOT_TOKEN;
+    if (!botToken) return res.status(500).send('TG_NOT_CONFIGURED');
+
+    const r = await fetch(`https://api.telegram.org/bot${botToken}/getFile?file_id=${encodeURIComponent(row.file_id)}`);
+    const j = await r.json();
+    if (!j || !j.ok || !j.result || !j.result.file_path) return res.status(500).send('TG_ERROR');
+
+    const url = `https://api.telegram.org/file/bot${botToken}/${j.result.file_path}`;
+    return res.redirect(url);
+  }catch(e){
+    res.status(500).send('SERVER_ERROR');
   }
 });
 
