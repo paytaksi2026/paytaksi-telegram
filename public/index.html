@@ -29,8 +29,8 @@
     </select>
 
     <div class="row" style="margin-top:10px">
-      <input id="phone_prefix" value="+9945" disabled style="max-width:110px;opacity:.95" />
-      <input id="phone_tail" placeholder="0XXXXXXX" inputmode="numeric" autocomplete="tel" maxlength="8" />
+      <input id="phone_prefix" value="+994" disabled style="max-width:110px;opacity:.95" />
+      <input id="phone_tail" placeholder="0XXXXXXXX" inputmode="numeric" autocomplete="tel" maxlength="8" />
     </div>
     <input id="password" type="password" placeholder="Şifrə" autocomplete="current-password" />
     <input id="name" placeholder="Ad Soyad (qeydiyyat üçün)" autocomplete="name" />
@@ -68,9 +68,9 @@
 function setMsg(t){ msg.textContent = t || ''; }
 
 function buildPhone(){
-  const tail = String(phone_tail.value || '').replace(/\D/g,'').slice(0, 8);
+  const tail = String(phone_tail.value || '').replace(/\D/g,'').slice(0, 9);
   phone_tail.value = tail;
-  return '+9945' + tail;
+  return '+994' + tail;
 }
 
 function toggleDriverFields(){
