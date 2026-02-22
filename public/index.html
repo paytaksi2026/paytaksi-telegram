@@ -66,6 +66,20 @@
   </div>
 
 <script>
+// --- DOM refs (do NOT rely on id->global mapping; some mobile browsers disable it)
+const msg = document.getElementById('msg');
+const role = document.getElementById('role');
+const phonePrefix = document.getElementById('phonePrefix');
+const phoneDigits = document.getElementById('phoneDigits');
+const password = document.getElementById('password');
+const name = document.getElementById('name');
+const driverFields = document.getElementById('driverFields');
+const car_make = document.getElementById('car_make');
+const car_model = document.getElementById('car_model');
+const car_plate = document.getElementById('car_plate');
+const car_color = document.getElementById('car_color');
+const car_year = document.getElementById('car_year');
+
 function setMsg(t){ msg.textContent = t || ''; }
 
 function fullPhone(){
