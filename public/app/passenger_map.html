@@ -321,7 +321,7 @@ async function drawRoute(){
 function showEstimate(){
   if(!pickup || !dropoff){ estBox.style.display='none'; return; }
   const km = havKm(pickup.lat, pickup.lon, dropoff.lat, dropoff.lon);
-  const base = 1.0, per = 0.6, min = 2.0;
+  const base = 1.0, per = 0.40, min = 3.50;
   const fare = Math.max(min, base + per*km);
   estBox.style.display='flex';
   estKm.textContent = km.toFixed(1) + ' km (təxmini)';
