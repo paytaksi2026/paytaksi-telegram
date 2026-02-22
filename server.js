@@ -113,6 +113,7 @@ UNIQUE(phone, role)
   ensureColumn('orders', 'updated_at', 'updated_at INTEGER');
   // Estimated pricing (from pickup->dropoff)
   ensureColumn('orders', 'est_km', 'est_km REAL');
+  ensureColumn('orders', 'est_minutes', 'est_minutes REAL');
   ensureColumn('orders', 'est_fare', 'est_fare REAL');
   // Final fare engine (completed)
   ensureColumn('orders', 'real_km', 'real_km REAL');
@@ -234,6 +235,62 @@ function requireAdmin(req, res, next) {
   } catch (_) {}
   next();
 }
+
+// ---------------- Public settings (read) + Admin settings (write)
+// NOTE: Several frontend pages expect /api/settings. Keep it as a single source of truth.
+// - GET is public (needed for fare preview on passenger map)
+// - POST is admin-only (uses the admin cookie)
+app.get('/api/settings', async (req, res) => {
+  const settings = {
+    default_radius_km: await getSetting('default_radius_km', 4),
+    fare_base: await getSetting('fare_base', 1.0),
+    fare_per_km: await getSetting('fare_per_km', 0.6),
+    fare_per_min: await getSetting('fare_per_min', 0.15),
+    fare_min: await getSetting('fare_min', 2.0),
+    commission_rate: await getSetting('commission_rate', 0.10),
+  };
+
+  // Backward-compat keys used by older admin UI
+  const commission = Math.round((Number(settings.commission_rate) || 0) * 100);
+
+  res.json({
+    success: true,
+    settings,
+    ...settings,
+    commission,
+  });
+});
+
+app.post('/api/settings', requireAdmin, async (req, res) => {
+  const updates = {};
+  const allowed = ['default_radius_km','fare_base','fare_per_km','fare_per_min','fare_min','commission_rate'];
+
+  // accept legacy key name: commission (% integer)
+  if (req.body && req.body.commission != null && req.body.commission_rate == null) {
+    const pct = Number(req.body.commission);
+    if (!Number.isFinite(pct) || pct < 0 || pct > 100) return res.status(400).json({ error: 'INVALID_VALUE' });
+    req.body.commission_rate = pct / 100;
+  }
+
+  // default_radius_km validation
+  if (req.body.default_radius_km != null) {
+    const r = parseInt(req.body.default_radius_km, 10);
+    if (![2,4,8].includes(r)) return res.status(400).json({ error: 'INVALID_RADIUS' });
+    updates.default_radius_km = r;
+    await setSetting('default_radius_km', r);
+  }
+
+  for (const k of allowed) {
+    if (k === 'default_radius_km') continue;
+    if (req.body[k] != null) {
+      const v = Number(req.body[k]);
+      if (!Number.isFinite(v)) return res.status(400).json({ error: 'INVALID_VALUE' });
+      updates[k] = v;
+      await setSetting(k, v);
+    }
+  }
+  res.json({ success: true, updates });
+});
 
 // Basic credential check for passenger/driver API calls (MVP)
 function authUser(phone, password, role) {
@@ -385,23 +442,26 @@ app.post('/api/orders/create', async (req, res) => {
 
   // Estimate (km/fare)
   let est_km = havKm(pickup_lat, pickup_lon, dropoff_lat, dropoff_lon);
+  let est_minutes = 0;
   const meta = await osrmRouteMeta(pickup_lon, pickup_lat, dropoff_lon, dropoff_lat);
   if (meta && Number.isFinite(meta.km) && meta.km > 0) est_km = meta.km;
+  if (meta && Number.isFinite(meta.minutes) && meta.minutes > 0) est_minutes = meta.minutes;
 
   const fare_base = await getSetting('fare_base', 1.0);
   const fare_per_km = await getSetting('fare_per_km', 0.6);
+  const fare_per_min = await getSetting('fare_per_min', 0.15);
   const fare_min = await getSetting('fare_min', 2.0);
-  let est_fare = fare_base + (fare_per_km * est_km);
+  let est_fare = Number(fare_base) + (Number(fare_per_km) * Number(est_km)) + (Number(fare_per_min) * Number(est_minutes));
   if (Number.isFinite(fare_min)) est_fare = Math.max(fare_min, est_fare);
 
   const created_at = nowMs();
   db.run(
-    `INSERT INTO orders (passenger_phone, pickup_text, pickup_lat, pickup_lon, dropoff_text, dropoff_lat, dropoff_lon, status, created_at, updated_at, driver_phone, accepted_at, arrived_at, started_at, completed_at, cancelled_at, est_km, est_fare)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'new', ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?)`,
-    [passenger.phone, pickup_text, pickup_lat, pickup_lon, dropoff_text, dropoff_lat, dropoff_lon, created_at, created_at, est_km, est_fare],
+    `INSERT INTO orders (passenger_phone, pickup_text, pickup_lat, pickup_lon, dropoff_text, dropoff_lat, dropoff_lon, status, created_at, updated_at, driver_phone, accepted_at, arrived_at, started_at, completed_at, cancelled_at, est_km, est_minutes, est_fare)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'new', ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, ?)`,
+    [passenger.phone, pickup_text, pickup_lat, pickup_lon, dropoff_text, dropoff_lat, dropoff_lon, created_at, created_at, est_km, est_minutes, est_fare],
     function(err){
       if (err) return res.json({ error: 'DB_ERROR' });
-      res.json({ success: true, order_id: this.lastID, est_km: Number(est_km.toFixed(3)), est_fare: Number(est_fare.toFixed(2)) });
+      res.json({ success: true, order_id: this.lastID, est_km: Number(est_km.toFixed(3)), est_minutes: Number(est_minutes.toFixed(1)), est_fare: Number(est_fare.toFixed(2)) });
     }
   );
 });
@@ -417,7 +477,7 @@ app.get('/api/orders/my', async (req, res) => {
   const base = ['id','pickup_text','dropoff_text','status','driver_phone','created_at'];
   const optional = [
     'pickup_lat','pickup_lon','dropoff_lat','dropoff_lon',
-    'est_km','est_fare',
+    'est_km','est_minutes','est_fare',
     'real_km','real_minutes','final_fare','admin_fee','driver_earn',
     'accepted_at','arrived_at','started_at','completed_at','cancelled_at','updated_at'
   ];

@@ -122,10 +122,10 @@ let pollTimer = null;
 let driverTimer = null;
 
 // Fare settings (loaded from server; fallback defaults)
-let fareBase = 0.50;
-let farePerKm = 0.25;
-let farePerMin = 0.00;
-let fareMin = 0.00;
+let fareBase = 1.00;
+let farePerKm = 0.60;
+let farePerMin = 0.15;
+let fareMin = 2.00;
 
 async function loadSettings(){
   try{
@@ -213,8 +213,9 @@ function renderRideUI(order){
       }
       const fare = calcFare(km, mins);
       document.getElementById('rideSub').textContent = `Başladı • Gedilən: ${round2(km)} km • Canlı: ${fare} AZN`;
-    }else if(order.est_km!=null && order.est_fare_azn!=null){
-      document.getElementById('rideSub').textContent = `${statusLabel(order.status)} • Təxmini: ${round2(order.est_km)} km • ${round2(order.est_fare_azn)} AZN`;
+    }else if(order.est_km!=null && (order.est_fare!=null || order.est_fare_azn!=null)){
+      const ef = (order.est_fare!=null) ? order.est_fare : order.est_fare_azn;
+      document.getElementById('rideSub').textContent = `${statusLabel(order.status)} • Təxmini: ${round2(order.est_km)} km • ${round2(ef)} AZN`;
     }else{
       document.getElementById('rideSub').textContent = statusLabel(order.status);
     }
@@ -305,9 +306,10 @@ async function drawRoute(){
 
       if(typeof r.distance === 'number' && r.distance > 0){
         const km = r.distance / 1000;
-        document.getElementById('estKm').textContent = km.toFixed(2) + ' km';
-        const price = Math.max(START_PRICE, km * PRICE_PER_KM);
-        document.getElementById('estFare').textContent = price.toFixed(2) + ' AZN';
+        document.getElementById('estKm').textContent = Number(km).toFixed(2) + ' km';
+        // Keep estimate consistent with server-side pricing (settings-controlled)
+        const price = calcFare(km, (typeof r.duration === 'number' ? (r.duration/60) : 0));
+        document.getElementById('estFare').textContent = Number(price).toFixed(2) + ' AZN';
       }
       return;
     }
@@ -318,18 +320,16 @@ async function drawRoute(){
   map.fitBounds(routeLine.getBounds(), {padding:[20,20]});
 }
 
-  function showEstimate(){
+function showEstimate(){
   if(!pickup || !dropoff){ estBox.style.display='none'; return; }
   const km = havKm(pickup.lat, pickup.lon, dropoff.lat, dropoff.lon);
-  const base = 1.0, per = 0.6, min = 2.0;
-  const fare = Math.max(min, base + per*km);
+  // Use settings-controlled pricing to stay consistent with server
+  const fare = calcFare(km, 0);
   estBox.style.display='flex';
   estKm.textContent = km.toFixed(1) + ' km (təxmini)';
   estFare.textContent = fare.toFixed(2) + ' AZN (təxmini)';
 }
 
-  
-  
 function initMap(lat=40.4093, lon=49.8671){
   map = L.map('map').setView([lat, lon], 13);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(map);
