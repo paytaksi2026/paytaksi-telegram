@@ -64,7 +64,8 @@ db.serialize(() => {
     is_online INTEGER DEFAULT 0,     -- driver presence: 0/1
     
     driver_radius_km INTEGER DEFAULT 4, -- driver radius (km)
-    allowed_packages TEXT DEFAULT 'economy,comfort,business', -- driver allowed fare packages
+    allowed_packages TEXT DEFAULT 'economy,comfort,business', -- admin-granted fare packages
+    enabled_packages TEXT DEFAULT 'economy,comfort,business', -- driver enabled subset (can only toggle within allowed)
 UNIQUE(phone, role)
   )`);
 
@@ -73,6 +74,7 @@ UNIQUE(phone, role)
   ensureColumn('users', 'is_online', 'is_online INTEGER DEFAULT 0');
   ensureColumn('users', 'driver_radius_km', 'driver_radius_km INTEGER DEFAULT 4');
   ensureColumn('users', 'allowed_packages', "allowed_packages TEXT DEFAULT 'economy,comfort,business'");
+  ensureColumn('users', 'enabled_packages', "enabled_packages TEXT DEFAULT 'economy,comfort,business'");
 
   // Settings (default radius & pricing) - additive
   db.run(`CREATE TABLE IF NOT EXISTS settings (
@@ -195,6 +197,14 @@ async function defaultAllowedPackages(){
   const order = { economy: 1, comfort: 2, business: 3 };
   ids.sort((a,b)=> (order[a]||99)-(order[b]||99));
   return ids.length ? ids : ['economy'];
+}
+
+async function getEnabledPackagesForUser(user){
+  const allowed = new Set(await normalizeAllowedPackages(user && user.allowed_packages));
+  const enabledRaw = (user && (user.enabled_packages ?? user.allowed_packages)) || '';
+  const enabled = parseAllowedPackages(enabledRaw).filter(x=>allowed.has(String(x).toLowerCase().trim()));
+  const out = Array.from(new Set(enabled));
+  return out.length ? out : Array.from(allowed);
 }
 
 async function getSetting(key, defVal){
@@ -467,7 +477,7 @@ function authUser(phone, password, role) {
     if (!phone || !password) return resolve(null);
 
     db.get(
-      "SELECT id, phone, role, name, approved, is_online, driver_radius_km, allowed_packages FROM users WHERE phone=? AND password=? AND role=?",
+      "SELECT id, phone, role, name, approved, is_online, driver_radius_km, allowed_packages, enabled_packages FROM users WHERE phone=? AND password=? AND role=?",
       [phone, password, role],
       (err, row) => {
         if (err || !row) return resolve(null);
@@ -496,13 +506,14 @@ app.post('/api/register', async (req, res) => {
 
   // For drivers, default allowed packages is all packages currently configured.
   const allowed_packages = (role === 'driver') ? (await defaultAllowedPackages()).join(',') : '';
+  const enabled_packages = (role === 'driver') ? allowed_packages : '';
 
   db.run(
-    "INSERT INTO users (phone, password, role, name, approved, is_online, driver_radius_km, allowed_packages) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-    [phone, password, role, name, approved, is_online, driver_radius_km, allowed_packages],
+    "INSERT INTO users (phone, password, role, name, approved, is_online, driver_radius_km, allowed_packages, enabled_packages) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    [phone, password, role, name, approved, is_online, driver_radius_km, allowed_packages, enabled_packages],
     function (err) {
       if (err) return res.json({ error: "PHONE_ROLE_EXISTS" });
-      res.json({ success: true, role, approved, driver_radius_km, allowed_packages: parseAllowedPackages(allowed_packages) });
+      res.json({ success: true, role, approved, driver_radius_km, allowed_packages: parseAllowedPackages(allowed_packages), enabled_packages: parseAllowedPackages(enabled_packages) });
     }
   );
 });
@@ -525,12 +536,13 @@ app.post('/api/login', (req, res) => {
       const approved = parseInt(row.approved, 10) || 0;
       const is_online = parseInt(row.is_online, 10) || 0;
       const allowed_packages = parseAllowedPackages(row.allowed_packages);
+      const enabled_packages = parseAllowedPackages(row.enabled_packages || row.allowed_packages);
 
       if (role === "driver" && approved === 0) {
         return res.json({ pending: true, name: row.name || "", role });
       }
 
-      return res.json({ success: true, name: row.name || "", role, is_online, driver_radius_km: Number(row.driver_radius_km||0), allowed_packages });
+      return res.json({ success: true, name: row.name || "", role, is_online, driver_radius_km: Number(row.driver_radius_km||0), allowed_packages, enabled_packages });
     }
   );
 });
@@ -568,7 +580,8 @@ app.post('/api/driver/status', async (req, res) => {
     is_online: parseInt(user.is_online,10) || 0,
     name: user.name || '',
     driver_radius_km: Number(user.driver_radius_km||0),
-    allowed_packages: parseAllowedPackages(user.allowed_packages)
+    allowed_packages: parseAllowedPackages(user.allowed_packages),
+    enabled_packages: parseAllowedPackages(user.enabled_packages || user.allowed_packages)
   });
 });
 
@@ -590,20 +603,26 @@ app.post('/api/driver/set-radius', async (req, res) => {
 });
 
 
-// Driver: set allowed fare packages (economy/comfort/business)
+// Driver: set enabled fare packages (subset of admin-granted allowed_packages)
 app.post('/api/driver/set-packages', async (req, res) => {
   const user = await authUser(req.body.phone, req.body.password, 'driver');
   if (!user) return res.json({ error: "INVALID_CREDENTIALS" });
   const approved = parseInt(user.approved, 10) || 0;
   if (approved === 0) return res.json({ error: "DRIVER_NOT_APPROVED" });
 
-  const wanted = req.body.allowed_packages ?? req.body.packages ?? req.body.allowed;
-  const list = await normalizeAllowedPackages(wanted);
+  const wanted = req.body.enabled_packages ?? req.body.packages ?? req.body.allowed ?? req.body.allowed_packages;
+  const requested = await normalizeAllowedPackages(wanted);
+
+  const allowed = new Set(await normalizeAllowedPackages(user.allowed_packages));
+  const bad = requested.filter(x => !allowed.has(String(x).toLowerCase().trim()));
+  if (bad.length) return res.status(403).json({ error: 'PACKAGE_NOT_ALLOWED', not_allowed: bad });
+
+  const list = requested.length ? requested : Array.from(allowed);
   const value = list.join(',');
 
-  db.run("UPDATE users SET allowed_packages=? WHERE id=?", [value, user.id], function(e2){
+  db.run("UPDATE users SET enabled_packages=? WHERE id=?", [value, user.id], function(e2){
     if (e2) return res.json({ error: "DB_ERROR" });
-    res.json({ success: true, allowed_packages: list });
+    res.json({ success: true, allowed_packages: parseAllowedPackages(user.allowed_packages), enabled_packages: list });
   });
 });
 
@@ -761,8 +780,8 @@ app.get('/api/orders/feed', async (req, res) => {
   if (parseInt(driver.is_online, 10) !== 1) return res.status(403).json({ error: 'DRIVER_OFFLINE' });
 
   // Filter new orders by driver's allowed packages
-  const allowedList = await normalizeAllowedPackages(driver.allowed_packages);
-  const allowedSet = new Set(allowedList);
+  const enabledList = await getEnabledPackagesForUser(driver);
+  const enabledSet = new Set(enabledList);
 
   const radiusKm = (Number(driver.driver_radius_km) > 0) ? Number(driver.driver_radius_km) : await getSetting('default_radius_km', 4);
 
@@ -791,7 +810,8 @@ app.get('/api/orders/feed', async (req, res) => {
         res.json({
           success: true,
           radius_km: Number(radiusKm),
-          allowed_packages: allowedList,
+          allowed_packages: parseAllowedPackages(driver.allowed_packages),
+          enabled_packages: enabledList,
           driver_location: hasLoc ? { lat: loc.lat, lng: loc.lng, updated_at: loc.updated_at } : null,
           orders: list
         });
@@ -813,8 +833,8 @@ app.post('/api/orders/accept', async (req, res) => {
   if (!order_id) return res.status(400).json({ error: 'ORDER_ID_REQUIRED' });
 
   // Enforce driver's allowed packages (server-side)
-  const allowedList = await normalizeAllowedPackages(driver.allowed_packages);
-  const allowedSet = new Set(allowedList);
+  const enabledList = await getEnabledPackagesForUser(driver);
+  const enabledSet = new Set(enabledList);
   const orderPkgRow = await new Promise((resolve)=>{
     db.get("SELECT id, fare_package, status FROM orders WHERE id=?", [order_id], (e,row)=> resolve(row||null));
   });
@@ -1187,11 +1207,12 @@ app.get('/api/admin/drivers', requireAdmin, (req, res) => {
   if (status === 'pending') where += " AND approved=0";
   if (status === 'approved') where += " AND approved=1";
 
-  db.all(`SELECT id, phone, name, approved, is_online, allowed_packages FROM users WHERE ${where} ORDER BY approved ASC, is_online DESC, id DESC`, [], (err, rows) => {
+  db.all(`SELECT id, phone, name, approved, is_online, allowed_packages, enabled_packages FROM users WHERE ${where} ORDER BY approved ASC, is_online DESC, id DESC`, [], (err, rows) => {
     if (err) return res.status(500).json({ error: 'DB_ERROR' });
     const list = (rows || []).map(r => ({
       ...r,
-      allowed_packages: parseAllowedPackages(r.allowed_packages)
+      allowed_packages: parseAllowedPackages(r.allowed_packages),
+      enabled_packages: parseAllowedPackages(r.enabled_packages || r.allowed_packages)
     }));
     res.json({ success: true, drivers: list });
   });
@@ -1202,12 +1223,23 @@ app.post('/api/admin/driver/packages', requireAdmin, async (req, res) => {
   try{
     const id = parseInt(req.body.id, 10);
     if (!id) return res.status(400).json({ error:'ID_REQUIRED' });
+
     const wanted = req.body.allowed_packages ?? req.body.packages ?? req.body.allowed;
-    const list = await normalizeAllowedPackages(wanted);
-    const value = list.join(',');
-    db.run("UPDATE users SET allowed_packages=? WHERE id=? AND role='driver'", [value, id], function(err){
-      if (err) return res.status(500).json({ error:'DB_ERROR' });
-      res.json({ success:true, changes: this.changes || 0, allowed_packages: list });
+    const allowedList = await normalizeAllowedPackages(wanted);
+    const allowedValue = allowedList.join(',');
+
+    db.get("SELECT enabled_packages FROM users WHERE id=? AND role='driver'", [id], (e0, row0)=>{
+      if (e0) return res.status(500).json({ error:'DB_ERROR' });
+      const prevEnabled = parseAllowedPackages(row0 && row0.enabled_packages);
+      const allowedSet = new Set(allowedList);
+      let enabledList = prevEnabled.filter(x=>allowedSet.has(String(x).toLowerCase().trim()));
+      if (!enabledList.length) enabledList = allowedList.slice();
+      const enabledValue = enabledList.join(',');
+
+      db.run("UPDATE users SET allowed_packages=?, enabled_packages=? WHERE id=? AND role='driver'", [allowedValue, enabledValue, id], function(err){
+        if (err) return res.status(500).json({ error:'DB_ERROR' });
+        res.json({ success:true, changes: this.changes || 0, allowed_packages: allowedList, enabled_packages: enabledList });
+      });
     });
   }catch(e){
     res.status(500).json({ error:'DB_ERROR' });

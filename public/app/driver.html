@@ -101,6 +101,7 @@ async function refreshDriverMeta(){
       const r = Number(data.driver_radius_km||s.driver_radius_km||4);
       s.driver_radius_km = r;
       s.allowed_packages = Array.isArray(data.allowed_packages) ? data.allowed_packages : (s.allowed_packages||[]);
+      s.enabled_packages = Array.isArray(data.enabled_packages) ? data.enabled_packages : (s.enabled_packages||s.allowed_packages||[]);
       localStorage.setItem('pt_session', JSON.stringify(s));
       const sel = document.getElementById('radiusSelect');
       if(sel) sel.value = String([2,4,8].includes(r)?r:4);
@@ -128,12 +129,16 @@ async function renderPackagePrefs(){
   if(!box) return;
   const pkgs = await getFarePackages();
   const allowed = new Set((s.allowed_packages||[]).map(x=>String(x).toLowerCase().trim()).filter(Boolean));
+  const enabled = new Set((s.enabled_packages||s.allowed_packages||[]).map(x=>String(x).toLowerCase().trim()).filter(Boolean));
   box.innerHTML = pkgs.map(p=>{
     const id = String(p.id||'').toLowerCase().trim();
-    const checked = allowed.size ? allowed.has(id) : (id==='economy');
-    return `<label class="pill" style="cursor:pointer;user-select:none">
-      <input type="checkbox" data-pkg="${id}" ${checked?'checked':''} style="margin-right:8px;vertical-align:middle" onchange="savePackages()" />
-      ${esc(p.name||id)}
+    const isAllowed = allowed.size ? allowed.has(id) : (id==='economy');
+    const checked = enabled.size ? enabled.has(id) : isAllowed;
+    const dis = isAllowed ? '' : 'disabled';
+    const hint = isAllowed ? '' : ' (admin icazə verməyib)';
+    return `<label class="pill" style="cursor:${isAllowed?'pointer':'not-allowed'};user-select:none;opacity:${isAllowed?1:0.55}">
+      <input type="checkbox" data-pkg="${id}" ${checked?'checked':''} ${dis} style="margin-right:8px;vertical-align:middle" onchange="savePackages()" />
+      ${esc(p.name||id)}${hint}
     </label>`;
   }).join('');
 }
@@ -144,16 +149,17 @@ async function savePackages(){
   const checks = Array.from(box.querySelectorAll('input[type=checkbox][data-pkg]'));
   const list = checks.filter(c=>c.checked).map(c=>c.getAttribute('data-pkg')).filter(Boolean);
   if(list.length===0){
-    // keep at least economy
-    const eco = checks.find(c=>c.getAttribute('data-pkg')==='economy');
-    if(eco){ eco.checked = true; list.push('economy'); }
+    // keep at least one enabled package (first allowed)
+    const firstAllowed = checks.find(c=>!c.disabled);
+    if(firstAllowed){ firstAllowed.checked = true; list.push(firstAllowed.getAttribute('data-pkg')); }
   }
   setMsg('...');
   try{
-    const res = await fetch('/api/driver/set-packages', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password, allowed_packages:list })});
+    const res = await fetch('/api/driver/set-packages', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password, enabled_packages:list })});
     const data = await res.json();
     if(data && data.success){
-      s.allowed_packages = data.allowed_packages || list;
+      s.allowed_packages = data.allowed_packages || (s.allowed_packages||[]);
+      s.enabled_packages = data.enabled_packages || list;
       localStorage.setItem('pt_session', JSON.stringify(s));
       setMsg('Paketlər yadda saxlandı.');
       loadFeed();
