@@ -636,9 +636,20 @@ async function loadMyOrders(){
   const data = await res.json().catch(()=> ({}));
   const box = document.getElementById('orders');
   if(!data.success){ box.innerHTML = '<div style="opacity:.7">Sifarişlər yüklənmədi.</div>'; return; }
-  if(!data.orders.length){ box.innerHTML = '<div style="opacity:.7">Hələ sifariş yoxdur.</div>'; return; }
 
-  box.innerHTML = data.orders.map(o => {
+  // Defensive: dedupe by order id (can happen if DB has duplicate driver rows and JOIN multiplies results)
+  const raw = Array.isArray(data.orders) ? data.orders : [];
+  const byId = new Map();
+  for (const o of raw){
+    const id = Number(o && o.id);
+    if (!id) continue;
+    if (!byId.has(id)) byId.set(id, o);
+  }
+  const orders = Array.from(byId.values()).sort((a,b)=> Number(b.id||0) - Number(a.id||0));
+
+  if(!orders.length){ box.innerHTML = '<div style="opacity:.7">Hələ sifariş yoxdur.</div>'; return; }
+
+  box.innerHTML = orders.map(o => {
     const dt = new Date(o.created_at).toLocaleString();
     const pkgLine = (o.fare_package) ? `<span class="pill" style="margin-left:6px">${o.fare_package}</span>` : '';
     const driverLine = o.driver_phone ? (() => {
@@ -665,7 +676,7 @@ async function loadMyOrders(){
     </div>`;
   }).join('');
 
-  const active = data.orders.find(o => ['accepted','arrived','started','in_progress'].includes(String(o.status||'').toLowerCase()) && o.driver_phone);
+  const active = orders.find(o => ['accepted','arrived','started','in_progress'].includes(String(o.status||'').toLowerCase()) && o.driver_phone);
   if(active){
     activeOrderObj = active;
     activeOrderId = active.id;
