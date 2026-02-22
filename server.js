@@ -1,11 +1,62 @@
 const express = require('express');
-const sqlite3 = require('sqlite3').verbose();
+const { Pool } = require('pg');
 const bodyParser = require('body-parser');
 const path = require('path');
 const crypto = require('crypto');
 
 const app = express();
-const db = new sqlite3.Database('./database.sqlite');
+
+// ---------------- PostgreSQL connection (Render-compatible)
+// Render Postgres provides DATABASE_URL.
+// Keep this as the single source of truth (no local sqlite persistence).
+const DATABASE_URL = process.env.DATABASE_URL;
+if (!DATABASE_URL) {
+  console.warn('[PayTaksi] DATABASE_URL is not set. Postgres is required for persistence.');
+}
+
+const pool = new Pool({
+  connectionString: DATABASE_URL,
+  // Render requires SSL for external connections; this setting works on Render.
+  ssl: DATABASE_URL ? { rejectUnauthorized: false } : undefined,
+});
+
+// Small DB adapter to keep the rest of the code mostly unchanged.
+// - Supports db.get / db.all / db.run with sqlite-style "?" placeholders.
+// - Provides callback style, and sets this.changes / this.lastID (if RETURNING id).
+function sqlQMarksToPg(sql) {
+  let i = 0;
+  return String(sql || '').replace(/\?/g, () => `$${++i}`);
+}
+
+const db = {
+  serialize(fn) { try { fn && fn(); } catch (_) {} },
+  async _query(sql, params) {
+    const q = sqlQMarksToPg(sql);
+    return await pool.query(q, Array.isArray(params) ? params : []);
+  },
+  get(sql, params, cb) {
+    // Signature variants: (sql, cb) or (sql, params, cb)
+    if (typeof params === 'function') { cb = params; params = []; }
+    this._query(sql, params)
+      .then(r => cb && cb(null, (r.rows && r.rows[0]) || undefined))
+      .catch(e => cb && cb(e));
+  },
+  all(sql, params, cb) {
+    if (typeof params === 'function') { cb = params; params = []; }
+    this._query(sql, params)
+      .then(r => cb && cb(null, r.rows || []))
+      .catch(e => cb && cb(e));
+  },
+  run(sql, params, cb) {
+    if (typeof params === 'function') { cb = params; params = []; }
+    this._query(sql, params)
+      .then(r => {
+        const ctx = { changes: r.rowCount || 0, lastID: (r.rows && r.rows[0] && (r.rows[0].id || r.rows[0].ID)) };
+        if (cb) cb.call(ctx, null);
+      })
+      .catch(e => cb && cb.call({ changes: 0 }, e));
+  },
+};
 
 // ---------------- Real-time (SSE): order status + driver location
 // Lightweight server-sent events. Clients subscribe per order_id.
@@ -31,53 +82,106 @@ function sseBroadcast(orderId, event, data){
 
 app.use(bodyParser.json({ limit: '1mb' }));
 
-// ---------------- DB init + lightweight migrations
+// ---------------- DB init + lightweight migrations (PostgreSQL)
 function ensureColumn(table, column, ddl) {
   return new Promise((resolve) => {
-    db.all(`PRAGMA table_info(${table})`, [], (err, rows) => {
-      if (err) return resolve(false);
-      const exists = (rows || []).some(r => r.name === column);
-      if (exists) return resolve(true);
-      db.run(`ALTER TABLE ${table} ADD COLUMN ${ddl}`, () => resolve(true));
-    });
+    // Postgres supports ADD COLUMN IF NOT EXISTS.
+    db.run(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS ${ddl}`, [], () => resolve(true));
   });
 }
 
-// Runtime-safe helper: read table columns (works even if user DB is older/newer)
+// Runtime-safe helper: read table columns (works even if DB is older/newer)
 function getTableCols(table) {
   return new Promise((resolve) => {
-    db.all(`PRAGMA table_info(${table})`, [], (err, rows) => {
-      if (err) return resolve(new Set());
-      resolve(new Set((rows || []).map(r => r && r.name).filter(Boolean)));
-    });
+    db.all(
+      `SELECT column_name AS name
+         FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = ?`,
+      [String(table || '').toLowerCase()],
+      (err, rows) => {
+        if (err) return resolve(new Set());
+        resolve(new Set((rows || []).map(r => r && r.name).filter(Boolean)));
+      }
+    );
   });
 }
 
-db.serialize(() => {
-  db.run(`CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+async function initDb() {
+  // Core tables
+  await db._query(`CREATE TABLE IF NOT EXISTS users (
+    id BIGSERIAL PRIMARY KEY,
     phone TEXT NOT NULL,
     password TEXT NOT NULL,
-    role TEXT NOT NULL,              -- passenger | driver
+    role TEXT NOT NULL,
     name TEXT,
-    approved INTEGER DEFAULT 0,      -- driver: 0 pending, 1 approved
-    is_online INTEGER DEFAULT 0,     -- driver presence: 0/1
-    
-    driver_radius_km INTEGER DEFAULT 4, -- driver radius (km)
-    allowed_packages TEXT DEFAULT 'economy,comfort,business', -- admin-granted fare packages
-    enabled_packages TEXT DEFAULT 'economy,comfort,business', -- driver enabled subset (can only toggle within allowed)
-
+    approved INTEGER DEFAULT 0,
+    is_online INTEGER DEFAULT 0,
+    driver_radius_km INTEGER DEFAULT 4,
+    allowed_packages TEXT DEFAULT 'economy,comfort,business',
+    enabled_packages TEXT DEFAULT 'economy,comfort,business',
     car_make TEXT,
     car_model TEXT,
     car_plate TEXT,
     car_color TEXT,
     car_year INTEGER,
-UNIQUE(phone, role)
+    UNIQUE(phone, role)
   )`);
 
-  // Ensure columns if older DB exists
-  ensureColumn('users', 'approved', 'approved INTEGER DEFAULT 0');
-  ensureColumn('users', 'is_online', 'is_online INTEGER DEFAULT 0');
+  await db._query(`CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  )`);
+
+  await db._query(`CREATE TABLE IF NOT EXISTS orders (
+    id BIGSERIAL PRIMARY KEY,
+    passenger_phone TEXT NOT NULL,
+    pickup_text TEXT,
+    pickup_lat DOUBLE PRECISION,
+    pickup_lon DOUBLE PRECISION,
+    dropoff_text TEXT,
+    dropoff_lat DOUBLE PRECISION,
+    dropoff_lon DOUBLE PRECISION,
+    status TEXT NOT NULL DEFAULT 'new',
+    created_at BIGINT NOT NULL,
+    updated_at BIGINT,
+    driver_phone TEXT,
+    accepted_at BIGINT,
+    arrived_at BIGINT,
+    started_at BIGINT,
+    completed_at BIGINT,
+    cancelled_at BIGINT,
+    est_km DOUBLE PRECISION,
+    est_minutes DOUBLE PRECISION,
+    est_fare DOUBLE PRECISION,
+    fare_package TEXT DEFAULT 'economy',
+    real_km DOUBLE PRECISION,
+    real_minutes DOUBLE PRECISION,
+    final_fare DOUBLE PRECISION,
+    admin_fee DOUBLE PRECISION,
+    driver_earn DOUBLE PRECISION
+  )`);
+
+  await db._query(`CREATE TABLE IF NOT EXISTS driver_locations (
+    driver_phone TEXT PRIMARY KEY,
+    lat DOUBLE PRECISION NOT NULL,
+    lng DOUBLE PRECISION NOT NULL,
+    updated_at BIGINT NOT NULL
+  )`);
+
+  await db._query(`CREATE TABLE IF NOT EXISTS order_track_points (
+    id BIGSERIAL PRIMARY KEY,
+    order_id BIGINT NOT NULL,
+    driver_phone TEXT NOT NULL,
+    lat DOUBLE PRECISION NOT NULL,
+    lng DOUBLE PRECISION NOT NULL,
+    created_at BIGINT NOT NULL
+  )`);
+  await db._query(`CREATE INDEX IF NOT EXISTS idx_order_track_points_order ON order_track_points(order_id, id)`);
+
+  // Additive columns for older schemas (safe no-op on fresh DB)
+  await ensureColumn('users', 'approved', 'approved INTEGER DEFAULT 0');
+  await ensureColumn('users', 'is_online', 'is_online INTEGER DEFAULT 0');
   ensureColumn('users', 'driver_radius_km', 'driver_radius_km INTEGER DEFAULT 4');
   ensureColumn('users', 'allowed_packages', "allowed_packages TEXT DEFAULT 'economy,comfort,business'");
   ensureColumn('users', 'enabled_packages', "enabled_packages TEXT DEFAULT 'economy,comfort,business'");
@@ -86,12 +190,6 @@ UNIQUE(phone, role)
   ensureColumn('users', 'car_plate', 'car_plate TEXT');
   ensureColumn('users', 'car_color', 'car_color TEXT');
   ensureColumn('users', 'car_year', 'car_year INTEGER');
-
-  // Settings (default radius & pricing) - additive
-  db.run(`CREATE TABLE IF NOT EXISTS settings (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-  )`);
 
   function seedSetting(k, v){
     db.get("SELECT value FROM settings WHERE key=?", [k], (e, row)=>{
@@ -114,60 +212,28 @@ UNIQUE(phone, role)
     comfort:  { name: 'Komfort', fare_base: 4.0, fare_per_km: 0.5, fare_per_min: 0.0, fare_min: 4.0, commission_rate: 0.13 },
     business: { name: 'Biznes',  fare_base: 5.0, fare_per_km: 0.6, fare_per_min: 0.0, fare_min: 5.0, commission_rate: 0.16 }
   }));
-
-
-  db.run(`CREATE TABLE IF NOT EXISTS orders (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    passenger_phone TEXT NOT NULL,
-    pickup_text TEXT,
-    pickup_lat REAL,
-    pickup_lon REAL,
-    dropoff_text TEXT,
-    dropoff_lat REAL,
-    dropoff_lon REAL,
-    status TEXT NOT NULL DEFAULT 'new',
-    created_at INTEGER NOT NULL
-  )`);
-
-  // Driver last known location (for live tracking after accept)
-  db.run(`CREATE TABLE IF NOT EXISTS driver_locations (
-    driver_phone TEXT PRIMARY KEY,
-    lat REAL NOT NULL,
-    lng REAL NOT NULL,
-    updated_at INTEGER NOT NULL
-  )`);
-
-  // GPS track points for real distance during ride (MVP)
-  db.run(`CREATE TABLE IF NOT EXISTS order_track_points (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    order_id INTEGER NOT NULL,
-    driver_phone TEXT NOT NULL,
-    lat REAL NOT NULL,
-    lng REAL NOT NULL,
-    created_at INTEGER NOT NULL
-  )`);
-  db.run(`CREATE INDEX IF NOT EXISTS idx_order_track_points_order ON order_track_points(order_id, id)`);
-
   // Additive columns for order lifecycle
-  ensureColumn('orders', 'driver_phone', 'driver_phone TEXT');
-  ensureColumn('orders', 'accepted_at', 'accepted_at INTEGER');
-  ensureColumn('orders', 'completed_at', 'completed_at INTEGER');
-  ensureColumn('orders', 'started_at', 'started_at INTEGER');
-  ensureColumn('orders', 'arrived_at', 'arrived_at INTEGER');
-  ensureColumn('orders', 'cancelled_at', 'cancelled_at INTEGER');
-  ensureColumn('orders', 'updated_at', 'updated_at INTEGER');
+  await ensureColumn('orders', 'driver_phone', 'driver_phone TEXT');
+  await ensureColumn('orders', 'accepted_at', 'accepted_at BIGINT');
+  await ensureColumn('orders', 'completed_at', 'completed_at BIGINT');
+  await ensureColumn('orders', 'started_at', 'started_at BIGINT');
+  await ensureColumn('orders', 'arrived_at', 'arrived_at BIGINT');
+  await ensureColumn('orders', 'cancelled_at', 'cancelled_at BIGINT');
+  await ensureColumn('orders', 'updated_at', 'updated_at BIGINT');
   // Estimated pricing (from pickup->dropoff)
-  ensureColumn('orders', 'est_km', 'est_km REAL');
-  ensureColumn('orders', 'est_minutes', 'est_minutes REAL');
-  ensureColumn('orders', 'est_fare', 'est_fare REAL');
-  ensureColumn('orders', 'fare_package', "fare_package TEXT DEFAULT 'economy'");
+  await ensureColumn('orders', 'est_km', 'est_km DOUBLE PRECISION');
+  await ensureColumn('orders', 'est_minutes', 'est_minutes DOUBLE PRECISION');
+  await ensureColumn('orders', 'est_fare', 'est_fare DOUBLE PRECISION');
+  await ensureColumn('orders', 'fare_package', "fare_package TEXT DEFAULT 'economy'");
   // Final fare engine (completed)
-  ensureColumn('orders', 'real_km', 'real_km REAL');
-  ensureColumn('orders', 'real_minutes', 'real_minutes REAL');
-  ensureColumn('orders', 'final_fare', 'final_fare REAL');
-  ensureColumn('orders', 'admin_fee', 'admin_fee REAL');
-  ensureColumn('orders', 'driver_earn', 'driver_earn REAL');
-});
+  await ensureColumn('orders', 'real_km', 'real_km DOUBLE PRECISION');
+  await ensureColumn('orders', 'real_minutes', 'real_minutes DOUBLE PRECISION');
+  await ensureColumn('orders', 'final_fare', 'final_fare DOUBLE PRECISION');
+  await ensureColumn('orders', 'admin_fee', 'admin_fee DOUBLE PRECISION');
+  await ensureColumn('orders', 'driver_earn', 'driver_earn DOUBLE PRECISION');
+}
+
+// Initialize DB on startup (non-blocking but awaited before listen)
 
 // ---------------- Helpers
 function normRole(role) {
@@ -770,7 +836,8 @@ app.post('/api/orders/create', async (req, res) => {
   const created_at = nowMs();
   db.run(
     `INSERT INTO orders (passenger_phone, pickup_text, pickup_lat, pickup_lon, dropoff_text, dropoff_lat, dropoff_lon, status, created_at, updated_at, driver_phone, accepted_at, arrived_at, started_at, completed_at, cancelled_at, est_km, est_minutes, est_fare, fare_package)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'new', ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'new', ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, ?, ?)
+     RETURNING id`,
     [passenger.phone, pickup_text, pickup_lat, pickup_lon, dropoff_text, dropoff_lat, dropoff_lon, created_at, created_at, est_km, est_minutes, est_fare, fareSettings.package_id],
     function(err){
       if (err) return res.json({ error: 'DB_ERROR' });
@@ -1115,7 +1182,7 @@ app.post('/api/driver/location', async (req, res) => {
 
   const ts = nowMs();
   db.run(
-    "INSERT OR REPLACE INTO driver_locations (driver_phone, lat, lng, updated_at) VALUES (?, ?, ?, ?)",
+    "INSERT INTO driver_locations (driver_phone, lat, lng, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT (driver_phone) DO UPDATE SET lat=EXCLUDED.lat, lng=EXCLUDED.lng, updated_at=EXCLUDED.updated_at",
     [driver.phone, lat, lng, ts],
     (err) => {
       if (err) return res.status(500).json({ error: 'DB_ERROR' });
@@ -1492,93 +1559,52 @@ app.get('/admin', (req, res) => {
 });
 
 // ---------------- Reset DB (DANGEROUS) - protected by env key
-app.get('/admin/reset-db', (req, res) => {
+app.get('/admin/reset-db', async (req, res) => {
   const key = String(req.query.key || '');
   const expected = process.env.ADMIN_RESET_KEY || '';
   if (!expected || key !== expected) {
     return res.status(403).send("FORBIDDEN");
   }
 
-  db.serialize(() => {
-    db.run("DROP TABLE IF EXISTS users", (err) => {
-      if (err) return res.status(500).send("DB_ERROR");
-      db.run("DROP TABLE IF EXISTS orders", (err3) => {
-        if (err3) return res.status(500).send("DB_ERROR");
-        db.run("DROP TABLE IF EXISTS driver_locations", (errLoc) => {
-          if (errLoc) return res.status(500).send("DB_ERROR");
-          db.run(`CREATE TABLE IF NOT EXISTS users (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          phone TEXT NOT NULL,
-          password TEXT NOT NULL,
-          role TEXT NOT NULL,
-          name TEXT,
-          approved INTEGER DEFAULT 0,
-          is_online INTEGER DEFAULT 0,
-          driver_radius_km INTEGER DEFAULT 4,
-          UNIQUE(phone, role)
-        )`, (err2) => {
-            if (err2) return res.status(500).send("DB_ERROR");
+  try {
+    // Drop in dependency-safe order
+    await db._query('DROP TABLE IF EXISTS order_track_points');
+    await db._query('DROP TABLE IF EXISTS driver_locations');
+    await db._query('DROP TABLE IF EXISTS orders');
+    await db._query('DROP TABLE IF EXISTS users');
+    await db._query('DROP TABLE IF EXISTS settings');
 
-            db.run(`CREATE TABLE IF NOT EXISTS orders (
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              passenger_phone TEXT NOT NULL,
-              pickup_text TEXT,
-              pickup_lat REAL,
-              pickup_lon REAL,
-              dropoff_text TEXT,
-              dropoff_lat REAL,
-              dropoff_lon REAL,
-              status TEXT NOT NULL DEFAULT 'new',
-              driver_phone TEXT,
-              created_at INTEGER NOT NULL,
-              accepted_at INTEGER,
-              arrived_at INTEGER,
-              started_at INTEGER,
-              completed_at INTEGER,
-              cancelled_at INTEGER,
-              updated_at INTEGER,
-              est_km REAL,
-              est_fare REAL,
-              real_km REAL,
-              real_minutes REAL,
-              final_fare REAL,
-              admin_fee REAL,
-              driver_earn REAL
-            )`, (err4) => {
-              if (err4) return res.status(500).send("DB_ERROR");
+    await initDb();
 
-              db.run(`CREATE TABLE IF NOT EXISTS driver_locations (
-                driver_phone TEXT PRIMARY KEY,
-                lat REAL NOT NULL,
-                lng REAL NOT NULL,
-                updated_at INTEGER NOT NULL
-              )`, (err5) => {
-                if (err5) return res.status(500).send("DB_ERROR");
-                
-db.run(`CREATE TABLE IF NOT EXISTS settings (
-  key TEXT PRIMARY KEY,
-  value TEXT NOT NULL
-)`, ()=>{
-  // seed defaults
-  db.run("INSERT OR IGNORE INTO settings (key,value) VALUES ('default_radius_km','4')");
-  db.run("INSERT OR IGNORE INTO settings (key,value) VALUES ('fare_base','1')");
-  db.run("INSERT OR IGNORE INTO settings (key,value) VALUES ('fare_per_km','0.6')");
-  db.run("INSERT OR IGNORE INTO settings (key,value) VALUES ('fare_per_min','0.15')");
-  db.run("INSERT OR IGNORE INTO settings (key,value) VALUES ('fare_min','2')");
-  db.run("INSERT OR IGNORE INTO settings (key,value) VALUES ('commission_rate','0.10')");
-  res.send("OK_RESET");
-});
-
-              });
-            });
-          });
-        });
-      });
-    });
-  });
+    // Seed defaults (idempotent)
+    const seeds = [
+      ['default_radius_km','4'],
+      ['fare_base','1'],
+      ['fare_per_km','0.6'],
+      ['fare_per_min','0.15'],
+      ['fare_min','2'],
+      ['commission_rate','0.10'],
+    ];
+    for (const [k,v] of seeds) {
+      await db._query('INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT (key) DO NOTHING', [k, v]);
+    }
+    res.send('OK_RESET');
+  } catch (e) {
+    console.error('reset-db error', e);
+    return res.status(500).send('DB_ERROR');
+  }
 });
 
 app.get('/health', (req, res) => res.send("OK"));
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("Server started on", PORT));
+initDb()
+  .then(() => {
+    console.log('[PayTaksi] DB ready (PostgreSQL)');
+    app.listen(PORT, () => console.log('Server started on', PORT));
+  })
+  .catch((err) => {
+    console.error('[PayTaksi] DB init failed:', err);
+    // Crash fast so Render shows the error clearly.
+    process.exit(1);
+  });
