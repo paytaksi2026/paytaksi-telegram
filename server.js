@@ -66,6 +66,11 @@ db.serialize(() => {
     driver_radius_km INTEGER DEFAULT 4, -- driver radius (km)
     allowed_packages TEXT DEFAULT 'economy,comfort,business', -- admin-granted fare packages
     enabled_packages TEXT DEFAULT 'economy,comfort,business', -- driver enabled subset (can only toggle within allowed)
+    car_make TEXT,
+    car_model TEXT,
+    car_plate TEXT,
+    car_color TEXT,
+    car_year INTEGER,
 UNIQUE(phone, role)
   )`);
 
@@ -75,6 +80,11 @@ UNIQUE(phone, role)
   ensureColumn('users', 'driver_radius_km', 'driver_radius_km INTEGER DEFAULT 4');
   ensureColumn('users', 'allowed_packages', "allowed_packages TEXT DEFAULT 'economy,comfort,business'");
   ensureColumn('users', 'enabled_packages', "enabled_packages TEXT DEFAULT 'economy,comfort,business'");
+  ensureColumn('users', 'car_make', 'car_make TEXT');
+  ensureColumn('users', 'car_model', 'car_model TEXT');
+  ensureColumn('users', 'car_plate', 'car_plate TEXT');
+  ensureColumn('users', 'car_color', 'car_color TEXT');
+  ensureColumn('users', 'car_year', 'car_year INTEGER');
 
   // Settings (default radius & pricing) - additive
   db.run(`CREATE TABLE IF NOT EXISTS settings (
@@ -166,6 +176,19 @@ function normRole(role) {
 function normPhone(phone) {
   return String(phone || '').trim();
 }
+
+// Accept only Azerbaijan mobile numbers in the format +9945XXXXXXXX
+// (fixed prefix +9945; the remaining 8 chars must be digits)
+function normAzPhone(phone){
+  const s = String(phone || '').trim();
+  if (!s) return null;
+  if (/^\+9945\d{8}$/.test(s)) return s;
+  const digits = s.replace(/\D/g, '');
+  if (/^9945\d{8}$/.test(digits)) return '+' + digits;
+  return null;
+}
+
+const ALLOWED_CAR_COLORS_AZ = new Set(['ağ','qara','sarı','qırmızı','göy','yaşıl','boz']);
 function nowMs() {
   return Date.now();
 }
@@ -490,13 +513,27 @@ function authUser(phone, password, role) {
 // ---------------- Auth (user)
 
 app.post('/api/register', async (req, res) => {
-  const phone = normPhone(req.body.phone);
+  const phone = normAzPhone(req.body.phone);
   const password = String(req.body.password || '');
   const role = normRole(req.body.role);
   const name = String(req.body.name || '');
 
   if (!phone || !password) return res.json({ error: "MISSING_FIELDS" });
   if (password.length < 4) return res.json({ error: "WEAK_PASSWORD" });
+
+  // Driver vehicle fields
+  let car_make = null, car_model = null, car_plate = null, car_color = null, car_year = null;
+  if (role === 'driver'){
+    car_make = String(req.body.car_make || '').trim().slice(0, 80);
+    car_model = String(req.body.car_model || '').trim().slice(0, 80);
+    car_plate = String(req.body.car_plate || '').trim().slice(0, 30);
+    car_color = String(req.body.car_color || '').trim().toLowerCase();
+    car_year = parseInt(req.body.car_year, 10);
+
+    if (!car_make || !car_model || !car_plate) return res.json({ error: 'MISSING_CAR_FIELDS' });
+    if (!Number.isFinite(car_year) || car_year < 2007) return res.json({ error: 'INVALID_CAR_YEAR' });
+    if (!ALLOWED_CAR_COLORS_AZ.has(car_color)) return res.json({ error: 'INVALID_CAR_COLOR' });
+  }
 
   const approved = (role === 'driver') ? 0 : 1; // passengers active by default
   const is_online = 0;
@@ -509,8 +546,8 @@ app.post('/api/register', async (req, res) => {
   const enabled_packages = (role === 'driver') ? allowed_packages : '';
 
   db.run(
-    "INSERT INTO users (phone, password, role, name, approved, is_online, driver_radius_km, allowed_packages, enabled_packages) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    [phone, password, role, name, approved, is_online, driver_radius_km, allowed_packages, enabled_packages],
+    "INSERT INTO users (phone, password, role, name, approved, is_online, driver_radius_km, allowed_packages, enabled_packages, car_make, car_model, car_plate, car_color, car_year) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    [phone, password, role, name, approved, is_online, driver_radius_km, allowed_packages, enabled_packages, car_make, car_model, car_plate, car_color, car_year],
     function (err) {
       if (err) return res.json({ error: "PHONE_ROLE_EXISTS" });
       res.json({ success: true, role, approved, driver_radius_km, allowed_packages: parseAllowedPackages(allowed_packages), enabled_packages: parseAllowedPackages(enabled_packages) });
@@ -520,7 +557,7 @@ app.post('/api/register', async (req, res) => {
 
 
 app.post('/api/login', (req, res) => {
-  const phone = normPhone(req.body.phone);
+  const phone = normAzPhone(req.body.phone);
   const password = String(req.body.password || '');
   const role = normRole(req.body.role);
 
@@ -542,7 +579,20 @@ app.post('/api/login', (req, res) => {
         return res.json({ pending: true, name: row.name || "", role });
       }
 
-      return res.json({ success: true, name: row.name || "", role, is_online, driver_radius_km: Number(row.driver_radius_km||0), allowed_packages, enabled_packages });
+      return res.json({
+        success: true,
+        name: row.name || "",
+        role,
+        is_online,
+        driver_radius_km: Number(row.driver_radius_km||0),
+        allowed_packages,
+        enabled_packages,
+        car_make: row.car_make || null,
+        car_model: row.car_model || null,
+        car_plate: row.car_plate || null,
+        car_color: row.car_color || null,
+        car_year: row.car_year || null
+      });
     }
   );
 });
@@ -762,9 +812,42 @@ app.get('/api/orders/my', async (req, res) => {
   db.all(
     `SELECT ${selectCols.join(', ')} FROM orders WHERE passenger_phone=? ORDER BY id DESC LIMIT 20`,
     [passenger.phone],
-    (err, rows) => {
+    async (err, rows) => {
       if (err) return res.status(500).json({ error: 'DB_ERROR' });
-      res.json({ success: true, orders: rows || [] });
+      const list = rows || [];
+
+      // Attach driver details (name + vehicle) for accepted/active orders
+      const dPhones = Array.from(new Set(list.map(r => String(r.driver_phone || '').trim()).filter(Boolean)));
+      if (dPhones.length === 0) return res.json({ success: true, orders: list });
+
+      const ucols = await getTableCols('users');
+      const want = ['phone','name'];
+      const opt = ['car_make','car_model','car_plate','car_color','car_year'].filter(c => ucols.has(c));
+      const sel = want.concat(opt);
+      const qMarks = dPhones.map(_ => '?').join(',');
+
+      db.all(
+        `SELECT ${sel.join(', ')} FROM users WHERE role='driver' AND phone IN (${qMarks})`,
+        dPhones,
+        (e2, dRows) => {
+          if (e2 || !dRows) return res.json({ success: true, orders: list });
+          const map = new Map();
+          for (const d of dRows){
+            map.set(String(d.phone), d);
+          }
+          for (const o of list){
+            const d = map.get(String(o.driver_phone||''));
+            if (!d) continue;
+            o.driver_name = d.name || null;
+            if (d.car_make != null) o.driver_car_make = d.car_make;
+            if (d.car_model != null) o.driver_car_model = d.car_model;
+            if (d.car_plate != null) o.driver_car_plate = d.car_plate;
+            if (d.car_color != null) o.driver_car_color = d.car_color;
+            if (d.car_year != null) o.driver_car_year = d.car_year;
+          }
+          res.json({ success: true, orders: list });
+        }
+      );
     }
   );
 });
