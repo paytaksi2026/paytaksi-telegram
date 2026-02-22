@@ -730,6 +730,44 @@ app.post('/api/driver/set-packages', async (req, res) => {
   });
 });
 
+// Driver Wallet (earnings)
+app.post('/api/driver/wallet', async (req, res) => {
+  try {
+    const phone = String(req.body.phone||'');
+    const password = String(req.body.password||'');
+    const driver = await authUser('driver', phone, password);
+    if(!driver) return res.status(401).json({error:'INVALID_LOGIN'});
+    if(!driver.approved) return res.status(403).json({error:'NOT_APPROVED'});
+
+    await walletEnsureAccount(driver.phone);
+
+    const balRes = await db._query(
+      'SELECT balance, updated_at FROM driver_wallet_accounts WHERE driver_phone=$1',
+      [driver.phone]
+    );
+    const balRow = (balRes.rows && balRes.rows[0]) ? balRes.rows[0] : {balance:0, updated_at:0};
+
+    const txRes = await db._query(
+      `SELECT id, order_id, tx_type, amount, note, created_at
+       FROM driver_wallet_transactions
+       WHERE driver_phone=$1
+       ORDER BY id DESC
+       LIMIT 50`,
+      [driver.phone]
+    );
+
+    return res.json({
+      ok:true,
+      balance: Number(balRow.balance||0),
+      updated_at: Number(balRow.updated_at||0),
+      txs: txRes.rows||[]
+    });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({error:'SERVER_ERROR'});
+  }
+});
+
 
 // ---------------- Orders (MVP)
 
@@ -1138,6 +1176,13 @@ app.post('/api/orders/status', async (req, res) => {
         "UPDATE orders SET real_km=?, real_minutes=?, final_fare=?, admin_fee=?, driver_earn=? WHERE id=?",
         [km, minutes, final_fare, admin_fee, driver_earn, order_id]
       );
+
+      // Wallet credit (real driver earnings)
+      try {
+        await walletCreditEarning(driver.phone, order_id, driver_earn);
+      } catch (e) {
+        console.error('walletCreditEarning failed', e);
+      }
 
       // Real-time notify with final fare
       try {
