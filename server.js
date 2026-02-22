@@ -179,12 +179,7 @@ async function initDb() {
   )`);
   await db._query(`CREATE INDEX IF NOT EXISTS idx_order_track_points_order ON order_track_points(order_id, id)`);
 
-  // Wallet tables (driver earnings / withdrawals)
-  await db._query(`CREATE TABLE IF NOT EXISTS driver_wallet_accounts (
-    driver_phone TEXT PRIMARY KEY,
-    balance DOUBLE PRECISION NOT NULL DEFAULT 0,
-    updated_at BIGINT NOT NULL
-  )`);
+
 
   await db._query(`CREATE TABLE IF NOT EXISTS driver_wallet_transactions (
     id BIGSERIAL PRIMARY KEY,
