@@ -112,6 +112,7 @@ UNIQUE(phone, role)
   ensureColumn('orders', 'updated_at', 'updated_at INTEGER');
   // Estimated pricing (from pickup->dropoff)
   ensureColumn('orders', 'est_km', 'est_km REAL');
+  ensureColumn('orders', 'est_minutes', 'est_minutes REAL');
   ensureColumn('orders', 'est_fare', 'est_fare REAL');
   // Final fare engine (completed)
   ensureColumn('orders', 'real_km', 'real_km REAL');
@@ -153,6 +154,30 @@ async function setSetting(key, value){
     );
   });
 }
+
+// Fare engine helpers (single source of truth)
+async function getFareSettings(){
+  const fare_base = await getSetting('fare_base', 1.0);
+  const fare_per_km = await getSetting('fare_per_km', 0.6);
+  const fare_per_min = await getSetting('fare_per_min', 0.15);
+  const fare_min = await getSetting('fare_min', 2.0);
+  return {
+    fare_base: Number(fare_base) || 0,
+    fare_per_km: Number(fare_per_km) || 0,
+    fare_per_min: Number(fare_per_min) || 0,
+    fare_min: Number(fare_min) || 0,
+  };
+}
+
+function computeFare(settings, km, minutes){
+  const s = settings || { fare_base:0, fare_per_km:0, fare_per_min:0, fare_min:0 };
+  km = Number(km) || 0;
+  minutes = Number(minutes) || 0;
+  let fare = (Number(s.fare_base)||0) + (Number(s.fare_per_km)||0)*km + (Number(s.fare_per_min)||0)*minutes;
+  const minFare = Number(s.fare_min)||0;
+  if (minFare > 0) fare = Math.max(minFare, fare);
+  return Math.round(fare * 100) / 100;
+}
 function havKm(lat1, lon1, lat2, lon2){
   const toRad = d => (d*Math.PI)/180;
   const R = 6371;
@@ -174,6 +199,55 @@ async function osrmRouteMeta(pickup_lon, pickup_lat, dropoff_lon, dropoff_lat){
   }catch(e){}
   return null;
 }
+
+// Public estimate endpoint (server-side pricing; used by passenger preview)
+app.post('/api/estimate', async (req, res) => {
+  try{
+    const b = req.body || {};
+
+    // Option A: km/min passed directly
+    let km = Number(b.km);
+    let minutes = Number(b.minutes);
+
+    // Option B: pickup/dropoff coords
+    if (!Number.isFinite(km) || km < 0 || !Number.isFinite(minutes) || minutes < 0) {
+      const pickup = b.pickup || {};
+      const dropoff = b.dropoff || {};
+      const pickup_lat = Number(pickup.lat);
+      const pickup_lon = Number(pickup.lon);
+      const dropoff_lat = Number(dropoff.lat);
+      const dropoff_lon = Number(dropoff.lon);
+
+      if (!Number.isFinite(pickup_lat) || !Number.isFinite(pickup_lon) || !Number.isFinite(dropoff_lat) || !Number.isFinite(dropoff_lon)) {
+        return res.status(400).json({ success:false, error:'BAD_INPUT' });
+      }
+
+      // fallback straight line
+      km = havKm(pickup_lat, pickup_lon, dropoff_lat, dropoff_lon);
+      minutes = 0;
+      const meta = await osrmRouteMeta(pickup_lon, pickup_lat, dropoff_lon, dropoff_lat);
+      if (meta){
+        if (Number.isFinite(meta.km) && meta.km > 0) km = meta.km;
+        if (Number.isFinite(meta.minutes) && meta.minutes > 0) minutes = meta.minutes;
+      }
+    }
+
+    km = Math.max(0, km);
+    minutes = Math.max(0, minutes);
+
+    const settings = await getFareSettings();
+    const fare = computeFare(settings, km, minutes);
+
+    res.json({
+      success: true,
+      km: Number(km.toFixed(3)),
+      minutes: Number(minutes.toFixed(1)),
+      fare,
+    });
+  }catch(e){
+    res.status(500).json({ success:false, error:'DB_ERROR' });
+  }
+});
 
 
 function adminCreds() {
@@ -402,23 +476,24 @@ app.post('/api/orders/create', async (req, res) => {
 
   // Estimate (km/fare)
   let est_km = havKm(pickup_lat, pickup_lon, dropoff_lat, dropoff_lon);
+  let est_minutes = 0;
   const meta = await osrmRouteMeta(pickup_lon, pickup_lat, dropoff_lon, dropoff_lat);
-  if (meta && Number.isFinite(meta.km) && meta.km > 0) est_km = meta.km;
+  if (meta){
+    if (Number.isFinite(meta.km) && meta.km > 0) est_km = meta.km;
+    if (Number.isFinite(meta.minutes) && meta.minutes > 0) est_minutes = meta.minutes;
+  }
 
-  const fare_base = await getSetting('fare_base', 1.0);
-  const fare_per_km = await getSetting('fare_per_km', 0.6);
-  const fare_min = await getSetting('fare_min', 2.0);
-  let est_fare = fare_base + (fare_per_km * est_km);
-  if (Number.isFinite(fare_min)) est_fare = Math.max(fare_min, est_fare);
+  const fareSettings = await getFareSettings();
+  const est_fare = computeFare(fareSettings, est_km, est_minutes);
 
   const created_at = nowMs();
   db.run(
-    `INSERT INTO orders (passenger_phone, pickup_text, pickup_lat, pickup_lon, dropoff_text, dropoff_lat, dropoff_lon, status, created_at, updated_at, driver_phone, accepted_at, arrived_at, started_at, completed_at, cancelled_at, est_km, est_fare)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'new', ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?)`,
-    [passenger.phone, pickup_text, pickup_lat, pickup_lon, dropoff_text, dropoff_lat, dropoff_lon, created_at, created_at, est_km, est_fare],
+    `INSERT INTO orders (passenger_phone, pickup_text, pickup_lat, pickup_lon, dropoff_text, dropoff_lat, dropoff_lon, status, created_at, updated_at, driver_phone, accepted_at, arrived_at, started_at, completed_at, cancelled_at, est_km, est_minutes, est_fare)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'new', ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, ?)`,
+    [passenger.phone, pickup_text, pickup_lat, pickup_lon, dropoff_text, dropoff_lat, dropoff_lon, created_at, created_at, est_km, est_minutes, est_fare],
     function(err){
       if (err) return res.json({ error: 'DB_ERROR' });
-      res.json({ success: true, order_id: this.lastID, est_km: Number(est_km.toFixed(3)), est_fare: Number(est_fare.toFixed(2)) });
+      res.json({ success: true, order_id: this.lastID, est_km: Number(est_km.toFixed(3)), est_minutes: Number(est_minutes.toFixed(1)), est_fare: Number(est_fare.toFixed(2)) });
     }
   );
 });
