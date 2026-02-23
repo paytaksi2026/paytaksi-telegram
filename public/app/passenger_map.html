@@ -852,14 +852,29 @@ async function loadMyOrders(){
       driverTimer = setInterval(refreshDriverLocation, 2000);
     }
   } else {
-    activeOrderObj = null;
-    activeOrderId = null;
-    renderRideUI(null);
-    stopOrderStream();
-    if (driverTimer){ clearInterval(driverTimer); driverTimer=null; }
-    if(driverMarker){ map.removeLayer(driverMarker); driverMarker=null; }
-    if(driverRouteLine){ map.removeLayer(driverRouteLine); driverRouteLine=null; }
-    lastDriverPos = null;
+    // If a driver hasn't been assigned yet, still show the order card so the passenger can cancel.
+    // Otherwise the UI shows only "Sifariş yaradıldı" and the user can't cancel while searching.
+    const pending = orders.find(o => ['new','searching'].includes(String(o.status||'').toLowerCase()));
+    if(pending){
+      activeOrderObj = pending;
+      activeOrderId = pending.id;
+      renderRideUI(pending);
+      startOrderStream(activeOrderId);
+      // no driver marker/route until a driver is assigned
+      if (driverTimer){ clearInterval(driverTimer); driverTimer=null; }
+      if(driverMarker){ map.removeLayer(driverMarker); driverMarker=null; }
+      if(driverRouteLine){ map.removeLayer(driverRouteLine); driverRouteLine=null; }
+      lastDriverPos = null;
+    } else {
+      activeOrderObj = null;
+      activeOrderId = null;
+      renderRideUI(null);
+      stopOrderStream();
+      if (driverTimer){ clearInterval(driverTimer); driverTimer=null; }
+      if(driverMarker){ map.removeLayer(driverMarker); driverMarker=null; }
+      if(driverRouteLine){ map.removeLayer(driverRouteLine); driverRouteLine=null; }
+      lastDriverPos = null;
+    }
   }
 }
 
