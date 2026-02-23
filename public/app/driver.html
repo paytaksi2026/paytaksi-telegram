@@ -440,14 +440,38 @@ async function updateRouteForOrder(o){
     const g = L.featureGroup([meMarker, pickupMarker, dropoffMarker, routeToPickup, routePickupToDropoff]);
     map.fitBounds(g.getBounds().pad(0.15));
     document.getElementById('mapInfo').textContent = `Marşrut: Siz → Götürmə → Təyinat (Sifariş #${o.id})`;
-    const nav = `https://www.google.com/maps/dir/?api=1&origin=${lastPos.lat},${lastPos.lng}&destination=${dLat},${dLng}&waypoints=${pLat},${pLng}&travelmode=driving`;
+
+    // Naviqasiya (Waze): mərhələyə görə hədəfi seç
+    // accepted/arrived => pickup, in_progress => dropoff
+    const toPickup = ['accepted','arrived'].includes(String(o.status||'').toLowerCase());
+    const tLat = toPickup ? pLat : dLat;
+    const tLng = toPickup ? pLng : dLng;
+    const nav = `https://waze.com/ul?ll=${tLat},${tLng}&navigate=yes`;
     const nb = document.getElementById('navBtn');
     nb.href = nav;
+    nb.textContent = toPickup ? 'Waze: Müştəriyə get' : 'Waze: Ünvana get';
     nb.style.display = 'inline-block';
   }catch(e){
     document.getElementById('mapInfo').textContent = 'Marşrut çəkilmədi (internet/OSRM).';
     console.warn(e);
   }
+}
+
+function wazeLinkForOrder(o, mode){
+  // mode: 'pickup' | 'dropoff'
+  const pLat = Number(o.pickup_lat), pLng = Number(o.pickup_lon);
+  const dLat = Number(o.dropoff_lat), dLng = Number(o.dropoff_lon);
+  const okPickup = isFinite(pLat) && isFinite(pLng);
+  const okDrop = isFinite(dLat) && isFinite(dLng);
+  if(mode==='pickup' && okPickup) return `https://waze.com/ul?ll=${pLat},${pLng}&navigate=yes`;
+  if(mode==='dropoff' && okDrop) return `https://waze.com/ul?ll=${dLat},${dLng}&navigate=yes`;
+  // fallback: text query (az dəqiq ola bilər)
+  const q = encodeURIComponent(mode==='pickup' ? (o.pickup_text||'') : (o.dropoff_text||''));
+  return `https://waze.com/ul?q=${q}&navigate=yes`;
+}
+
+function navBtnHtml(href, label){
+  return `<a href="${href}" target="_blank" rel="noreferrer" class="secondary" style="display:inline-block;padding:10px 12px;border-radius:10px;border:1px solid rgba(148,163,184,.25);background:rgba(148,163,184,.15);color:#e5e7eb;text-decoration:none;font-weight:700">${esc(label)}</a>`;
 }
 
 async function setOrderStatus(id, status){
@@ -567,18 +591,24 @@ async function loadMy(){
     const at = o.accepted_at ? fmtTs(o.accepted_at) : '';
     let actions = '';
     if(o.status==='accepted'){
+      const w = wazeLinkForOrder(o, 'pickup');
       actions = `<div class="row" style="margin-top:10px">
+        ${navBtnHtml(w, 'Waze: Müştəriyə get')}
         <button class="secondary" onclick="setOrderStatus(${o.id},'arrived')">Gəldim</button>
-        <button class="secondary" onclick="setOrderStatus(${o.id},'in_progress')">Başla</button>
+        <button class="secondary" onclick="setOrderStatus(${o.id},'in_progress')">Gedişə başla</button>
         <button class="secondary" onclick="setOrderStatus(${o.id},'cancelled')">Ləğv et</button>
       </div>`;
     } else if(o.status==='arrived'){
+      const w = wazeLinkForOrder(o, 'pickup');
       actions = `<div class="row" style="margin-top:10px">
-        <button class="secondary" onclick="setOrderStatus(${o.id},'in_progress')">Başla</button>
+        ${navBtnHtml(w, 'Waze: Müştəriyə get')}
+        <button class="secondary" onclick="setOrderStatus(${o.id},'in_progress')">Gedişə başla</button>
         <button class="secondary" onclick="setOrderStatus(${o.id},'cancelled')">Ləğv et</button>
       </div>`;
     } else if(o.status==='in_progress'){
+      const w = wazeLinkForOrder(o, 'dropoff');
       actions = `<div class="row" style="margin-top:10px">
+        ${navBtnHtml(w, 'Waze: Ünvana get')}
         <button onclick="setOrderStatus(${o.id},'completed')">Bitir</button>
       </div>`;
     }
