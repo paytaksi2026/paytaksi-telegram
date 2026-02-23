@@ -723,6 +723,35 @@ app.post('/api/driver/status', async (req, res) => {
 });
 
 
+// Driver: balance ledger (mini history)
+// Returns last N ledger rows so driver can see: "Admin balans artırdı" / "Komissiya çıxdı" etc.
+app.post('/api/driver/ledger', async (req, res) => {
+  const user = await authUser(req.body.phone, req.body.password, 'driver');
+  if (!user) return res.json({ error: "INVALID_CREDENTIALS" });
+
+  let limit = parseInt(req.body.limit, 10);
+  if (!Number.isFinite(limit)) limit = 20;
+  limit = Math.max(1, Math.min(50, limit));
+
+  db.all(
+    "SELECT id, amount, reason, order_id, admin_user, created_at FROM driver_balance_ledger WHERE driver_phone=? ORDER BY id DESC LIMIT ?",
+    [user.phone, limit],
+    (err, rows) => {
+      if (err) return res.status(500).json({ error: 'DB_ERROR' });
+      const list = (rows || []).map(r => ({
+        id: r.id,
+        amount: Number(r.amount || 0),
+        reason: r.reason || '',
+        order_id: r.order_id || null,
+        admin_user: r.admin_user || null,
+        created_at: r.created_at || null
+      }));
+      res.json({ success: true, ledger: list });
+    }
+  );
+});
+
+
 
 app.post('/api/driver/set-radius', async (req, res) => {
   const user = await authUser(req.body.phone, req.body.password, 'driver');
