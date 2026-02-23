@@ -825,9 +825,20 @@ app.post('/api/login', (req, res) => {
   db.get(
     "SELECT * FROM users WHERE phone=? AND password=? AND role=?",
     [phone, password, role],
-    (err, row) => {
+    async (err, row) => {
       if (err) return res.json({ error: "DB_ERROR" });
-      if (!row) return res.json({ error: "INVALID_CREDENTIALS" });
+      if (!row) {
+        // Helpful error: if credentials match but role is wrong
+        const any = await new Promise((resolve) => {
+          db.get(
+            "SELECT role FROM users WHERE phone=? AND password=?",
+            [phone, password],
+            (e2, r2) => resolve(e2 ? null : (r2 || null))
+          );
+        });
+        if (any && any.role) return res.json({ error: "WRONG_ROLE", actual_role: any.role });
+        return res.json({ error: "INVALID_CREDENTIALS" });
+      }
 
       const approved = parseInt(row.approved, 10) || 0;
       const is_online = parseInt(row.is_online, 10) || 0;
@@ -1815,6 +1826,7 @@ app.get('/api/admin/settings', requireAdmin, async (req, res) => {
     autoassign_timeout_sec: await getSetting('autoassign_timeout_sec', '20'),
     autoassign_scan_interval_sec: await getSetting('autoassign_scan_interval_sec', '5'),
     autoassign_driver_ttl_sec: await getSetting('autoassign_driver_ttl_sec', '300'),
+    auth_pages_mode: await getSetting('auth_pages_mode', 'split'),
   };
   res.json({ success: true, settings: s });
 });
@@ -1866,10 +1878,24 @@ app.post('/api/admin/settings', requireAdmin, async (req, res) => {
     await setSetting('autoassign_driver_ttl_sec', v);
   }
 
+  // Auth pages (split vs combined)
+  if (req.body.auth_pages_mode != null) {
+    const v = String(req.body.auth_pages_mode).toLowerCase().trim();
+    if (!['split','combined'].includes(v)) return res.status(400).json({ error: 'INVALID_VALUE' });
+    updates.auth_pages_mode = v;
+    await setSetting('auth_pages_mode', v);
+  }
+
   // Restart loop if needed
   await startAutoAssignLoop().catch(()=>{});
 
   res.json({ success: true, updates });
+});
+
+// Public settings (safe subset) for unauthenticated pages
+app.get('/api/public/settings', async (req, res) => {
+  const auth_pages_mode = await getSetting('auth_pages_mode', 'split');
+  res.json({ success: true, settings: { auth_pages_mode } });
 });
 
 app.get('/api/admin/stats', requireAdmin, (req, res) => {
