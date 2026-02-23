@@ -13,6 +13,40 @@
   button.secondary{background:rgba(148,163,184,.15);color:#e5e7eb;border:1px solid rgba(148,163,184,.25)}
   .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
   .badge{display:inline-block;padding:4px 10px;border-radius:999px;border:1px solid rgba(148,163,184,.25);background:rgba(148,163,184,.10);font-size:12px}
+
+  /* Driver status visual */
+  #st.st-online{
+    background:#0b7a2a;
+    color:#fff;
+    border-color:rgba(34,197,94,.55);
+    box-shadow:0 0 12px rgba(0,255,100,.55);
+    animation:ptPulseOnline 1.8s infinite;
+  }
+  #st.st-offline{
+    background:#c91c1c;
+    color:#fff;
+    border-color:rgba(239,68,68,.55);
+    box-shadow:none;
+    animation:none;
+    opacity:.9;
+  }
+  #st .pt-live-dot{
+    width:8px;height:8px;border-radius:50%;
+    background:#00ff66;
+    display:inline-block;
+    box-shadow:0 0 10px rgba(0,255,102,.75);
+    animation:ptBlink 1s infinite;
+  }
+  @keyframes ptPulseOnline{
+    0%{ box-shadow:0 0 6px rgba(0,255,100,.35); }
+    50%{ box-shadow:0 0 16px rgba(0,255,100,.9); }
+    100%{ box-shadow:0 0 6px rgba(0,255,100,.35); }
+  }
+  @keyframes ptBlink{
+    0%{ opacity:1; }
+    50%{ opacity:.3; }
+    100%{ opacity:1; }
+  }
   .msg{min-height:22px;margin-top:10px}
   .pill{display:inline-block;padding:6px 10px;border-radius:999px;border:1px solid rgba(148,163,184,.25);background:rgba(148,163,184,.10);font-size:12px}
   #map{height:340px;border-radius:14px;overflow:hidden;border:1px solid rgba(148,163,184,.22);background:rgba(2,6,23,.35)}
@@ -159,8 +193,18 @@ function fmtTs(v){
   return d.toLocaleString();
 }
 function setMsg(t){ document.getElementById('msg').textContent = t||''; }
-function setSt(on){ const el=document.getElementById('st'); el.textContent = on? 'ONLINE':'OFFLINE'; }
-
+function setSt(on){
+  const el=document.getElementById('st');
+  if(!el) return;
+  el.classList.remove('st-online','st-offline');
+  if(on){
+    el.classList.add('st-online');
+    el.innerHTML = '<span class="pt-live-dot"></span> ONLINE';
+  }else{
+    el.classList.add('st-offline');
+    el.textContent = 'OFFLINE';
+  }
+}
 function fmtMoney(v){
   const n = Number(v||0);
   if(!Number.isFinite(n)) return '0.00';
