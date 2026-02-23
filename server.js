@@ -218,6 +218,10 @@ async function initDb() {
   seedSetting('fare_min', 3.5);
   seedSetting('commission_rate', 0.10);
   seedSetting('driver_min_balance', -15);
+  seedSetting('autoassign_enabled', 1);
+  seedSetting('autoassign_offer_timeout_ms', 20000);
+  seedSetting('autoassign_loc_max_age_ms', 300000);
+
 
   // Fare packages (JSON). Additive + backward compatible.
   // Stored in settings to keep migrations minimal.
@@ -235,6 +239,10 @@ async function initDb() {
   await ensureColumn('orders', 'arrived_at', 'arrived_at BIGINT');
   await ensureColumn('orders', 'cancelled_at', 'cancelled_at BIGINT');
   await ensureColumn('orders', 'updated_at', 'updated_at BIGINT');
+  // Auto-assign (dispatcher) fields
+  await ensureColumn('orders', 'offer_assigned_at', 'offer_assigned_at BIGINT');
+  await ensureColumn('orders', 'offer_expires_at', 'offer_expires_at BIGINT');
+  await ensureColumn('orders', 'offer_tried', "offer_tried TEXT DEFAULT ''");
   // Estimated pricing (from pickup->dropoff)
   await ensureColumn('orders', 'est_km', 'est_km DOUBLE PRECISION');
   await ensureColumn('orders', 'est_minutes', 'est_minutes DOUBLE PRECISION');
@@ -438,6 +446,190 @@ async function osrmRouteMeta(pickup_lon, pickup_lat, dropoff_lon, dropoff_lat){
     }
   }catch(e){}
   return null;
+}
+
+
+// ---------------- Auto-Assign (Dispatcher)
+// Assign new orders to the nearest eligible driver (no manual picking).
+// Offer expires after N ms; if not accepted, it is reassigned to the next driver.
+
+async function getEligibleDriversForOrder(orderRow){
+  const enabled = Number(await getSetting('autoassign_enabled', 1)) === 1;
+  if (!enabled) return [];
+  const timeoutMs = Number(await getSetting('autoassign_offer_timeout_ms', 20000)) || 20000;
+  const locMaxAgeMs = Number(await getSetting('autoassign_loc_max_age_ms', 300000)) || 300000;
+  const minBal = Number(await getSetting('driver_min_balance', -15));
+
+  const pickupLat = Number(orderRow && orderRow.pickup_lat);
+  const pickupLon = Number(orderRow && orderRow.pickup_lon);
+  const pkgId = String(orderRow && (orderRow.fare_package || orderRow.farePackage) || 'economy').toLowerCase().trim();
+
+  if (!Number.isFinite(pickupLat) || !Number.isFinite(pickupLon)) return [];
+
+  const since = nowMs() - locMaxAgeMs;
+
+  // Get online+approved drivers with recent GPS
+  const drivers = await new Promise((resolve)=>{
+    db.all(
+      `SELECT u.phone, u.approved, u.is_online, u.driver_radius_km, u.allowed_packages, u.enabled_packages, u.driver_balance,
+              l.lat, l.lng, l.updated_at
+         FROM users u
+         LEFT JOIN driver_locations l ON l.driver_phone=u.phone
+        WHERE u.role='driver'
+          AND COALESCE(u.approved,0)=1
+          AND COALESCE(u.is_online,0)=1
+          AND l.updated_at IS NOT NULL
+          AND l.updated_at >= ?`,
+      [since],
+      (e, rows)=> resolve(!e ? (rows||[]) : [])
+    );
+  });
+
+  if (!drivers.length) return [];
+
+  // Active orders for drivers (block if already in-progress)
+  const active = await new Promise((resolve)=>{
+    db.all(
+      "SELECT driver_phone FROM orders WHERE status IN ('accepted','arrived','in_progress') AND driver_phone IS NOT NULL",
+      [],
+      (e, rows)=> resolve(!e ? (rows||[]) : [])
+    );
+  });
+  const busySet = new Set((active||[]).map(r=>String(r.driver_phone||'')));
+
+  const out = [];
+  for (const d of drivers){
+    const phone = String(d.phone||'');
+    if (!phone) continue;
+
+    // Balance gate
+    const bal = Number(d.driver_balance||0);
+    if (Number.isFinite(minBal) && bal <= minBal) continue;
+
+    // Busy gate
+    if (busySet.has(phone)) continue;
+
+    // Package gate
+    const enabledList = await getEnabledPackagesForUser(d);
+    const enabledSet = new Set((enabledList||[]).map(x=>String(x).toLowerCase().trim()));
+    if (!enabledSet.has(pkgId)) continue;
+
+    // Radius gate
+    const rad = (Number(d.driver_radius_km) > 0) ? Number(d.driver_radius_km) : Number(await getSetting('default_radius_km', 4)) || 4;
+    const dist = havKm(pickupLat, pickupLon, Number(d.lat), Number(d.lng));
+    if (Number.isFinite(rad) && rad > 0 && dist > rad) continue;
+
+    out.push({
+      phone,
+      lat: Number(d.lat),
+      lng: Number(d.lng),
+      radius_km: Number(rad),
+      pickup_distance_km: Number(dist.toFixed(3)),
+      offer_timeout_ms: timeoutMs,
+    });
+  }
+
+  out.sort((a,b)=> a.pickup_distance_km - b.pickup_distance_km);
+  return out;
+}
+
+function parseTried(raw){
+  const s = String(raw || '').trim();
+  if (!s) return new Set();
+  return new Set(s.split(',').map(x=>x.trim()).filter(Boolean));
+}
+
+async function assignOrderToNextDriver(orderId){
+  const enabled = Number(await getSetting('autoassign_enabled', 1)) === 1;
+  if (!enabled) return { assigned: false };
+
+  const row = await new Promise((resolve)=>{
+    db.get("SELECT * FROM orders WHERE id=?", [orderId], (e,r)=> resolve(!e ? (r||null) : null));
+  });
+  if (!row) return { assigned:false };
+  if (String(row.status) !== 'new') return { assigned:false };
+
+  const triedSet = parseTried(row.offer_tried);
+  const candidates = await getEligibleDriversForOrder(row);
+
+  const next = candidates.find(c => !triedSet.has(c.phone));
+  if (!next) {
+    // No driver found right now; keep unassigned so it can be retried later.
+    await new Promise((resolve)=>{
+      db.run("UPDATE orders SET driver_phone=NULL, offer_assigned_at=NULL, offer_expires_at=NULL, updated_at=? WHERE id=? AND status='new'",
+        [nowMs(), orderId],
+        ()=> resolve(true)
+      );
+    });
+    return { assigned:false };
+  }
+
+  const ts = nowMs();
+  const expires = ts + Number(next.offer_timeout_ms || 20000);
+  const triedNew = Array.from(new Set([...triedSet, next.phone])).join(',');
+
+  await new Promise((resolve)=>{
+    db.run(
+      "UPDATE orders SET driver_phone=?, offer_assigned_at=?, offer_expires_at=?, offer_tried=?, updated_at=? WHERE id=? AND status='new'",
+      [next.phone, ts, expires, triedNew, ts, orderId],
+      ()=> resolve(true)
+    );
+  });
+
+  return { assigned:true, driver_phone: next.phone, expires_at: expires };
+}
+
+async function rotateExpiredOffers(){
+  const enabled = Number(await getSetting('autoassign_enabled', 1)) === 1;
+  if (!enabled) return 0;
+
+  const ts = nowMs();
+  const rows = await new Promise((resolve)=>{
+    db.all(
+      "SELECT id FROM orders WHERE status='new' AND driver_phone IS NOT NULL AND offer_expires_at IS NOT NULL AND offer_expires_at < ? ORDER BY id ASC LIMIT 25",
+      [ts],
+      (e, r)=> resolve(!e ? (r||[]) : [])
+    );
+  });
+
+  let n = 0;
+  for (const r of rows){
+    const id = Number(r && r.id);
+    if (!id) continue;
+    // Unassign first (so the same driver doesn't accept after expiration)
+    await new Promise((resolve)=>{
+      db.run(
+        "UPDATE orders SET driver_phone=NULL, offer_assigned_at=NULL, offer_expires_at=NULL, updated_at=? WHERE id=? AND status='new'",
+        [ts, id],
+        ()=> resolve(true)
+      );
+    });
+    await assignOrderToNextDriver(id);
+    n++;
+  }
+  return n;
+}
+
+// Assign any unassigned new orders (best-effort), limited per call
+async function assignUnassignedNewOrders(){
+  const enabled = Number(await getSetting('autoassign_enabled', 1)) === 1;
+  if (!enabled) return 0;
+
+  const rows = await new Promise((resolve)=>{
+    db.all(
+      "SELECT id FROM orders WHERE status='new' AND driver_phone IS NULL ORDER BY id ASC LIMIT 25",
+      [],
+      (e,r)=> resolve(!e ? (r||[]) : [])
+    );
+  });
+  let n=0;
+  for (const r of rows){
+    const id = Number(r && r.id);
+    if (!id) continue;
+    const a = await assignOrderToNextDriver(id);
+    if (a && a.assigned) n++;
+  }
+  return n;
 }
 
 // Public estimate endpoint (server-side pricing; used by passenger preview)
@@ -915,6 +1107,7 @@ app.post('/api/orders/create', async (req, res) => {
     [passenger.phone, pickup_text, pickup_lat, pickup_lon, dropoff_text, dropoff_lat, dropoff_lon, created_at, created_at, est_km, est_minutes, est_fare, fareSettings.package_id],
     function(err){
       if (err) return res.json({ error: 'DB_ERROR' });
+      (async ()=>{ try{ await rotateExpiredOffers(); await assignOrderToNextDriver(this.lastID); }catch(_){} })();
       res.json({ success: true, order_id: this.lastID, package_id: fareSettings.package_id, package_name: fareSettings.name, est_km: Number(est_km.toFixed(3)), est_minutes: Number(est_minutes.toFixed(1)), est_fare: Number(est_fare.toFixed(2)) });
     }
   );
@@ -971,6 +1164,10 @@ app.get('/api/orders/feed', async (req, res) => {
   if (!driver) return res.status(401).json({ error: 'INVALID_CREDENTIALS' });
   if (parseInt(driver.approved, 10) !== 1) return res.status(403).json({ error: 'DRIVER_PENDING' });
   if (parseInt(driver.is_online, 10) !== 1) return res.status(403).json({ error: 'DRIVER_OFFLINE' });
+  // Auto-assign housekeeping
+  await rotateExpiredOffers();
+  await assignUnassignedNewOrders();
+
 
   // Filter new orders by driver's allowed packages
   const enabledList = await getEnabledPackagesForUser(driver);
@@ -985,8 +1182,8 @@ app.get('/api/orders/feed', async (req, res) => {
     const hasLoc = !!(loc && Number.isFinite(loc.lat) && Number.isFinite(loc.lng));
 
     db.all(
-      "SELECT id, passenger_phone, pickup_text, dropoff_text, pickup_lat, pickup_lon, dropoff_lat, dropoff_lon, est_km, est_minutes, est_fare, fare_package, status, created_at FROM orders WHERE status='new' ORDER BY id DESC LIMIT 50",
-      [],
+      "SELECT id, passenger_phone, pickup_text, dropoff_text, pickup_lat, pickup_lon, dropoff_lat, dropoff_lon, est_km, est_minutes, est_fare, fare_package, status, created_at, driver_phone, offer_expires_at, offer_assigned_at FROM orders WHERE status='new' AND driver_phone=? ORDER BY id DESC LIMIT 5",
+      [driver.phone],
       (err, rows) => {
         if (err) return res.status(500).json({ error: 'DB_ERROR' });
         let list = (rows || []).map(o => ({...o})).filter(o => enabledSet.has(String(o.fare_package || 'economy').toLowerCase().trim()));
@@ -1056,8 +1253,8 @@ app.post('/api/orders/accept', async (req, res) => {
 
   const accepted_at = nowMs();
   db.run(
-    "UPDATE orders SET status='accepted', driver_phone=?, accepted_at=?, updated_at=? WHERE id=? AND status='new'",
-    [driver.phone, accepted_at, accepted_at, order_id],
+    "UPDATE orders SET status='accepted', driver_phone=?, accepted_at=?, updated_at=? WHERE id=? AND status='new' AND (driver_phone IS NULL OR driver_phone=?) AND (offer_expires_at IS NULL OR offer_expires_at >= ?)",
+    [driver.phone, accepted_at, accepted_at, order_id, driver.phone, accepted_at],
     function(err){
       if (err) return res.status(500).json({ error: 'DB_ERROR' });
       if (this.changes === 0) return res.status(409).json({ error: 'NOT_AVAILABLE' });
