@@ -55,7 +55,9 @@
   .df-icon{font-size:44px;line-height:1;margin-bottom:8px;filter: drop-shadow(0 10px 18px rgba(0,0,0,.35))}
   .df-title{font-weight:900;font-size:20px;letter-spacing:.2px}
   .df-sub{margin-top:6px;color:#cbd5e1;font-size:13px;line-height:1.25}
-  .df-card:before{content:'';position:absolute;inset:-140px; background: radial-gradient(circle at 50% 50%, rgba(34,197,94,.22), transparent 55%); transform: scale(.6); opacity:0}
+  
+.df-sub2{font-size:15px; opacity:.85; margin-top:6px;}
+.df-card:before{content:'';position:absolute;inset:-140px; background: radial-gradient(circle at 50% 50%, rgba(34,197,94,.22), transparent 55%); transform: scale(.6); opacity:0}
   .df-show .df-card{animation: dfPop .22s ease-out, dfFloat 1.8s ease-in-out}
   .df-show .df-card:before{animation: dfGlow 1.2s ease-out}
   @keyframes dfPop{from{transform: translateY(14px) scale(.92);opacity:0}to{transform: translateY(0) scale(1);opacity:1}}
@@ -142,7 +144,8 @@
   <div class="df-card">
     <div class="df-icon" aria-hidden="true">🚗</div>
     <div class="df-title">Sürücü tapıldı</div>
-    <div class="df-sub" id="driverFoundSub">—</div>
+    <div class="df-sub" id="driverFoundName">—</div>
+      <div class="df-sub2" id="driverFoundCar"></div>
   </div>
 </div>
 
@@ -498,19 +501,19 @@ function playDriverFoundSound(){
 
 function showDriverFoundOverlay(order){
   const el = document.getElementById('driverFoundOverlay');
-  const sub = document.getElementById('driverFoundSub');
-  if(!el || !sub) return;
+  const nameEl = document.getElementById('driverFoundName');
+  const carEl = document.getElementById('driverFoundCar');
+  if(!el || !nameEl || !carEl) return;
 
   const name = order?.driver_name || '';
-  const carBrand = order?.car_brand || '';
-  const carModel = order?.car_model || '';
-  const plate = order?.car_plate || '';
+  const carBrand = order?.driver_car_make || '';
+  const carModel = order?.driver_car_model || '';
+  const plate = order?.driver_car_plate || '';
+
+  nameEl.textContent = name || 'Sifarişiniz qəbul olundu';
   const carLine = [carBrand, carModel].filter(Boolean).join(' ');
   const line2 = [carLine, plate].filter(Boolean).join(' • ');
-  const parts = [];
-  if(name) parts.push(name);
-  if(line2) parts.push(line2);
-  sub.textContent = parts.length ? parts.join(' — ') : 'Sifarişiniz qəbul olundu';
+  carEl.textContent = line2;
 
   el.style.display = 'flex';
   el.setAttribute('aria-hidden','false');
@@ -525,7 +528,7 @@ function showDriverFoundOverlay(order){
     el.classList.remove('df-show');
     el.setAttribute('aria-hidden','true');
     el.style.display = 'none';
-  }, 1800);
+  }, 15000);
 }
 
 function triggerDriverFound(order){
