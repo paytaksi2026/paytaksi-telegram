@@ -83,6 +83,7 @@
   <div class="card">
     <div id="map"></div>
     <div class="pad">
+      <div id="orderForm">
       <div class="row">
         <button class="secondary" onclick="useMyLocation()">Cari yer</button>
         <button class="secondary" onclick="swap()">↕ Dəyiş</button>
@@ -107,6 +108,8 @@
 
       <div style="height:12px"></div>
       <button onclick="createOrder()">Sifariş et</button>
+
+      </div><!-- /#orderForm -->
 
       <div class="msg" id="msg"></div>
 
@@ -565,11 +568,18 @@ function statusLabel(status){
   return 'Sürücü axtarılır';
 }
 
+function setOrderFormHidden(hidden){
+  const el = document.getElementById('orderForm');
+  if(!el) return;
+  el.style.display = hidden ? 'none' : '';
+}
+
 async function renderRideUI(order){
   const box = document.getElementById('rideUI');
   if(!box) return;
   if(!order || !order.id){
     box.style.display='none';
+    setOrderFormHidden(false);
     setEtaText('');
     const drvEl0 = document.getElementById('rideDriver');
     if (drvEl0) { drvEl0.style.display='none'; drvEl0.innerHTML=''; }
@@ -578,6 +588,11 @@ async function renderRideUI(order){
     return;
   }
   box.style.display='block';
+
+  // After driver accepts (and during active ride), hide the order form so it won't reopen.
+  // Cancellation remains available inside the active order card.
+  const curSt = String(order.status||'new').toLowerCase();
+  setOrderFormHidden(['accepted','arrived','started','in_progress'].includes(curSt));
 
   document.getElementById('rideTitle').textContent = 'Sifariş #' + order.id;
   // Subtitle: status + fare (estimate/live)
@@ -632,7 +647,6 @@ async function renderRideUI(order){
   try{ triggerDriverFound(order); }catch(e){}
 
   // Passenger cancel button (allowed before ride starts)
-  const curSt = String(order.status||'').toLowerCase();
   const canCancel = ['new','accepted','arrived'].includes(curSt) && !(Number(order.started_at||0) > 0) && curSt!=='in_progress' && curSt!=='completed' && curSt!=='cancelled';
   const cancelRow = document.getElementById('rideCancelRow');
   const cancelBtn = document.getElementById('rideCancelBtn');
