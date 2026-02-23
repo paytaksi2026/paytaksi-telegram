@@ -49,6 +49,19 @@
   .pkgbtn small{display:block;font-weight:400;opacity:.8;margin-top:2px}
   .pkgbtn.active{background:rgba(34,197,94,.18);border-color:rgba(34,197,94,.4)}
 
+  /* Driver-found overlay */
+  .df-overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(2,6,23,.55);backdrop-filter: blur(6px);z-index:9999}
+  .df-card{width:min(420px,92vw);border-radius:22px;padding:18px 18px 16px;border:1px solid rgba(255,255,255,.16);background:linear-gradient(180deg, rgba(15,23,42,.92), rgba(2,6,23,.92));box-shadow:0 18px 60px rgba(0,0,0,.45);text-align:center;position:relative;overflow:hidden}
+  .df-icon{font-size:44px;line-height:1;margin-bottom:8px;filter: drop-shadow(0 10px 18px rgba(0,0,0,.35))}
+  .df-title{font-weight:900;font-size:20px;letter-spacing:.2px}
+  .df-sub{margin-top:6px;color:#cbd5e1;font-size:13px;line-height:1.25}
+  .df-card:before{content:'';position:absolute;inset:-140px; background: radial-gradient(circle at 50% 50%, rgba(34,197,94,.22), transparent 55%); transform: scale(.6); opacity:0}
+  .df-show .df-card{animation: dfPop .22s ease-out, dfFloat 1.8s ease-in-out}
+  .df-show .df-card:before{animation: dfGlow 1.2s ease-out}
+  @keyframes dfPop{from{transform: translateY(14px) scale(.92);opacity:0}to{transform: translateY(0) scale(1);opacity:1}}
+  @keyframes dfFloat{0%,100%{transform: translateY(0)}50%{transform: translateY(-2px)}}
+  @keyframes dfGlow{0%{opacity:0;transform:scale(.6)}20%{opacity:1}100%{opacity:0;transform:scale(1)}}
+
   /* Leaflet custom icon wrapper */
   .pt-car-icon{background:transparent;border:none}
 </style>
@@ -124,6 +137,15 @@
   </div>
 </div>
 
+<!-- Driver-found celebration overlay (Bolt-like) -->
+<div id="driverFoundOverlay" class="df-overlay" style="display:none" aria-hidden="true">
+  <div class="df-card">
+    <div class="df-icon" aria-hidden="true">🚗</div>
+    <div class="df-title">Sürücü tapıldı</div>
+    <div class="df-sub" id="driverFoundSub">—</div>
+  </div>
+</div>
+
 <script>
 const NOMINATIM = 'https://nominatim.openstreetmap.org';
 
@@ -143,6 +165,8 @@ let lastRouteKey = '';
 let driverRouteLine = null;
 let lastDriverPos = null;
 let lastAnnouncedStatus = '';
+let lastDriverFoundOrderId = null;
+let dfTimer = null;
 let pickup = null;
 let dropoff = null;
 let activeOrderObj = null;
@@ -448,6 +472,75 @@ function beep(kind='info'){
   }catch(e){ /* ignore */ }
 }
 
+// Special “driver found” alert (sound + animation)
+function playDriverFoundSound(){
+  const enabled = document.getElementById('soundOn')?.checked;
+  if (!enabled) return;
+  try{
+    const ctx = new (window.AudioContext||window.webkitAudioContext)();
+    const notes = [659, 784, 988]; // bright 3-tone chime
+    const base = ctx.currentTime;
+    notes.forEach((freq, i)=>{
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = 'sine';
+      o.frequency.setValueAtTime(freq, base + i*0.08);
+      o.connect(g); g.connect(ctx.destination);
+      g.gain.setValueAtTime(0.0001, base + i*0.08);
+      g.gain.exponentialRampToValueAtTime(0.12, base + i*0.08 + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, base + i*0.08 + 0.18);
+      o.start(base + i*0.08);
+      o.stop(base + i*0.08 + 0.2);
+    });
+    setTimeout(()=>ctx.close().catch(()=>{}), 900);
+  }catch(e){ /* ignore */ }
+}
+
+function showDriverFoundOverlay(order){
+  const el = document.getElementById('driverFoundOverlay');
+  const sub = document.getElementById('driverFoundSub');
+  if(!el || !sub) return;
+
+  const name = order?.driver_name || '';
+  const carBrand = order?.car_brand || '';
+  const carModel = order?.car_model || '';
+  const plate = order?.car_plate || '';
+  const carLine = [carBrand, carModel].filter(Boolean).join(' ');
+  const line2 = [carLine, plate].filter(Boolean).join(' • ');
+  const parts = [];
+  if(name) parts.push(name);
+  if(line2) parts.push(line2);
+  sub.textContent = parts.length ? parts.join(' — ') : 'Sifarişiniz qəbul olundu';
+
+  el.style.display = 'flex';
+  el.setAttribute('aria-hidden','false');
+  el.classList.remove('df-show');
+  void el.offsetWidth; // restart animation
+  el.classList.add('df-show');
+
+  try{ if(navigator.vibrate) navigator.vibrate([80,60,80]); }catch(e){}
+
+  if(dfTimer) clearTimeout(dfTimer);
+  dfTimer = setTimeout(()=>{
+    el.classList.remove('df-show');
+    el.setAttribute('aria-hidden','true');
+    el.style.display = 'none';
+  }, 1800);
+}
+
+function triggerDriverFound(order){
+  const id = order?.id;
+  if(!id) return;
+  const st = String(order?.status||'').toLowerCase();
+  const hasDriver = !!(order?.driver_phone || order?.assigned_driver_phone);
+  if(!hasDriver) return;
+  if(!(st==='accepted' || st==='arrived' || st==='in_progress' || st==='started')) return;
+  if(lastDriverFoundOrderId === id) return;
+  lastDriverFoundOrderId = id;
+  playDriverFoundSound();
+  showDriverFoundOverlay(order);
+}
+
 function statusToStepIndex(status){
   let s = String(status||'').toLowerCase();
   if (s==='started') s = 'in_progress';
@@ -531,6 +624,9 @@ async function renderRideUI(order){
       drvEl.innerHTML='';
     }
   }
+
+  // Bolt-like alert when a driver is found (only once per order)
+  try{ triggerDriverFound(order); }catch(e){}
 
   // Passenger cancel button (allowed before ride starts)
   const curSt = String(order.status||'').toLowerCase();
