@@ -34,6 +34,7 @@
     </div>
 
     <p style="margin-top:14px">Status: <span class="badge" id="st">OFFLINE</span></p>
+    <p style="margin-top:6px">Balans: <span class="badge" id="bal">0.00 AZN</span> <span id="balHint" style="opacity:.75;font-size:12px"></span></p>
     <div class="row">
       <button onclick="goOnline()">Online ol</button>
       <button class="secondary" onclick="goOffline()">Offline ol</button>
@@ -99,10 +100,36 @@ function fmtTs(v){
 function setMsg(t){ document.getElementById('msg').textContent = t||''; }
 function setSt(on){ const el=document.getElementById('st'); el.textContent = on? 'ONLINE':'OFFLINE'; }
 
+function fmtMoney(v){
+  const n = Number(v||0);
+  if(!Number.isFinite(n)) return '0.00';
+  return n.toFixed(2);
+}
+function renderBalance(balance, minBalance){
+  const b = Number(balance||0);
+  const min = (minBalance===null || minBalance===undefined) ? -15 : Number(minBalance);
+  const el = document.getElementById('bal');
+  const hint = document.getElementById('balHint');
+  if(el){
+    el.textContent = fmtMoney(b) + ' AZN';
+    // Visual warning when below/at limit
+    if(Number.isFinite(min) && b <= min){
+      el.style.borderColor = 'rgba(239,68,68,.65)';
+      el.style.background = 'rgba(239,68,68,.12)';
+      if(hint) hint.textContent = ' (limit: ' + fmtMoney(min) + ' AZN — qəbul bağlanır)';
+    }else{
+      el.style.borderColor = 'rgba(148,163,184,.25)';
+      el.style.background = 'rgba(148,163,184,.10)';
+      if(hint) hint.textContent = (Number.isFinite(min) ? (' (limit: ' + fmtMoney(min) + ' AZN)') : '');
+    }
+  }
+}
+
 const s = getSession();
 if(!s || s.role !== 'driver'){ location.href='/'; }
 document.getElementById('who').textContent = 'Hörmətli ' + (s.name||'') + ' (' + (s.phone||'') + ')';
 setSt(!!s.is_online);
+renderBalance(s.driver_balance||0, (s.min_balance!=null?s.min_balance:-15));
 
 async function refreshDriverMeta(){
   try{
@@ -116,11 +143,15 @@ async function refreshDriverMeta(){
       localStorage.setItem('pt_session', JSON.stringify(s));
       const sel = document.getElementById('radiusSelect');
       if(sel) sel.value = String([2,4,8].includes(r)?r:4);
+      s.driver_balance = (data.driver_balance!=null)? Number(data.driver_balance): (s.driver_balance||0);
+      s.min_balance = (data.min_balance!=null)? Number(data.min_balance): (s.min_balance!=null?s.min_balance:-15);
+      renderBalance(s.driver_balance, s.min_balance);
       await renderPackagePrefs();
     }
   }catch(e){}
 }
 refreshDriverMeta();
+setInterval(refreshDriverMeta, 30000);
 
 async function getFarePackages(){
   try{
@@ -281,7 +312,15 @@ async function setOrderStatus(id, status){
     loadMy();
     loadFeed();
   } else {
-    setMsg(data.error || 'ERROR');
+    if(data && data.error==='BALANCE_LIMIT'){
+      const b = (data.driver_balance!=null)? Number(data.driver_balance): (s.driver_balance||0);
+      const min = (data.min_balance!=null)? Number(data.min_balance): (s.min_balance!=null?s.min_balance:-15);
+      s.driver_balance = b; s.min_balance = min; localStorage.setItem('pt_session', JSON.stringify(s));
+      renderBalance(b, min);
+      setMsg('Balans limitə düşüb: ' + fmtMoney(b) + ' AZN (limit ' + fmtMoney(min) + ' AZN). Admin balansı artırmalıdır.');
+    } else {
+      setMsg(data.error || 'ERROR');
+    }
   }
 }
 
@@ -350,7 +389,15 @@ async function acceptOrder(id){
     loadFeed();
     loadMy();
   } else {
-    setMsg(data.error || 'ERROR');
+    if(data && data.error==='BALANCE_LIMIT'){
+      const b = (data.driver_balance!=null)? Number(data.driver_balance): (s.driver_balance||0);
+      const min = (data.min_balance!=null)? Number(data.min_balance): (s.min_balance!=null?s.min_balance:-15);
+      s.driver_balance = b; s.min_balance = min; localStorage.setItem('pt_session', JSON.stringify(s));
+      renderBalance(b, min);
+      setMsg('Balans limitə düşüb: ' + fmtMoney(b) + ' AZN (limit ' + fmtMoney(min) + ' AZN). Admin balansı artırmalıdır.');
+    } else {
+      setMsg(data.error || 'ERROR');
+    }
   }
 }
 

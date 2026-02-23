@@ -708,6 +708,7 @@ app.post('/api/driver/offline', async (req, res) => {
 app.post('/api/driver/status', async (req, res) => {
   const user = await authUser(req.body.phone, req.body.password, 'driver');
   if (!user) return res.json({ error: "INVALID_CREDENTIALS" });
+  const minBal = await getSetting('driver_min_balance', -15);
   res.json({
     success: true,
     approved: parseInt(user.approved,10) || 0,
@@ -716,7 +717,8 @@ app.post('/api/driver/status', async (req, res) => {
     driver_radius_km: Number(user.driver_radius_km||0),
     allowed_packages: parseAllowedPackages(user.allowed_packages),
     enabled_packages: parseAllowedPackages(user.enabled_packages || user.allowed_packages),
-    driver_balance: Number(user.driver_balance || 0)
+    driver_balance: Number(user.driver_balance || 0),
+    min_balance: Number(minBal)
   });
 });
 
