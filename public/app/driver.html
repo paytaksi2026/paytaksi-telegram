@@ -21,6 +21,7 @@
   .sheet{width:min(760px,100%);max-height:88vh;background:rgba(2,6,23,.96);border:1px solid rgba(148,163,184,.18);border-radius:18px 18px 0 0;overflow:hidden}
   .sheetHead{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;border-bottom:1px solid rgba(148,163,184,.15)}
   .sheetBody{padding:12px 14px;max-height:78vh;overflow:auto}
+  #incomingMap{height:190px;border-radius:14px;overflow:hidden;border:1px solid rgba(148,163,184,.18);background:rgba(2,6,23,.35)}
   .kpi{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
   .kpi .badge{font-size:12px}
   .btnRow{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
@@ -557,6 +558,10 @@ function showIncoming(o){
       </div>
       <div style="margin-top:10px;opacity:.92"><b>Haradan:</b> ${esc(o.pickup_text||'')}</div>
       <div style="margin-top:8px;opacity:.92"><b>Haraya:</b> ${esc(o.dropoff_text||'')}</div>
+      <div style="margin-top:10px">
+        <div class="small" style="margin-bottom:6px;opacity:.75">Xəritə önbaxış (Götürmə → Təyinat)</div>
+        <div id="incomingMap"></div>
+      </div>
       <div style="margin-top:8px;opacity:.70;font-size:12px">${esc(dt)}</div>
       <div class="btnRow">
         ${navBtnHtml(wPickup, 'Waze: Müştəriyə get')}
@@ -569,6 +574,10 @@ function showIncoming(o){
 
   if(sub) sub.textContent = 'Sifariş gəldi — qəbul edin və ya bağlayın';
   m.style.display = 'flex';
+
+  // Xəritədə də dərhal göstər (Bolt kimi): həm əsas xəritədə, həm də modal önbaxışda
+  try{ updateRouteForOrder(o); }catch(e){}
+  try{ updateIncomingPreviewMap(o); }catch(e){}
 
   // strong alert (sound + vibration)
   __startIncomingAlert();
@@ -586,6 +595,65 @@ let lastLocSentAt = 0;
 // Map state
 let map, meMarker, pickupMarker, dropoffMarker, routeToPickup, routePickupToDropoff;
 let lastPos = null;
+
+// Incoming (Yeni sifariş) önbaxış xəritəsi
+let incomingMap, incomingPickupMarker, incomingDropoffMarker, incomingRoute;
+
+function ensureIncomingMap(lat=40.4093, lng=49.8671){
+  const el = document.getElementById('incomingMap');
+  if(!el) return;
+
+  // Modal hər dəfə açılıb-bağlananda container yenidən yarana bilər
+  const sameContainer = incomingMap && incomingMap._container === el;
+  if(sameContainer) return;
+
+  try{ if(incomingMap) incomingMap.remove(); }catch(e){}
+  incomingMap = L.map(el, {
+    zoomControl:false,
+    attributionControl:false,
+    dragging:true,
+    scrollWheelZoom:false,
+    doubleClickZoom:false,
+    boxZoom:false,
+    keyboard:false,
+    tap:true
+  }).setView([lat,lng], 13);
+
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(incomingMap);
+}
+
+async function updateIncomingPreviewMap(o){
+  if(!o) return;
+  const pLat = Number(o.pickup_lat), pLng = Number(o.pickup_lon);
+  const dLat = Number(o.dropoff_lat), dLng = Number(o.dropoff_lon);
+  if(!isFinite(pLat)||!isFinite(pLng)||!isFinite(dLat)||!isFinite(dLng)) return;
+
+  ensureIncomingMap(pLat,pLng);
+  if(!incomingMap) return;
+
+  // Leaflet modal içində ölçü problemi olmasın
+  try{ setTimeout(()=>{ try{ incomingMap.invalidateSize(); }catch(e){} }, 50); }catch(e){}
+
+  if(incomingPickupMarker) incomingPickupMarker.remove();
+  if(incomingDropoffMarker) incomingDropoffMarker.remove();
+  if(incomingRoute) incomingRoute.remove();
+
+  incomingPickupMarker = L.marker([pLat,pLng]).addTo(incomingMap).bindPopup('Götürmə');
+  incomingDropoffMarker = L.marker([dLat,dLng]).addTo(incomingMap).bindPopup('Təyinat');
+
+  try{
+    const poly = await osrmPolyline(pLat,pLng,dLat,dLng);
+    incomingRoute = L.polyline(poly, { weight: 5, dashArray: '6 10' }).addTo(incomingMap);
+  }catch(e){
+    // Fallback: düz xətt
+    incomingRoute = L.polyline([[pLat,pLng],[dLat,dLng]], { weight: 4, dashArray: '6 10' }).addTo(incomingMap);
+  }
+
+  try{
+    const g = L.featureGroup([incomingPickupMarker, incomingDropoffMarker, incomingRoute]);
+    incomingMap.fitBounds(g.getBounds().pad(0.18));
+  }catch(e){}
+}
 
 function ensureMap(lat=40.4093, lng=49.8671){
   if(map) return;
