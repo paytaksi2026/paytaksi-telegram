@@ -120,7 +120,6 @@
         <option value="8">8 km</option>
       </select>
 
-      <a href="/admin" class="badge" style="text-decoration:none;color:#e5e7eb">Admin Panel</a>
     </div>
 
     <div id="pkgSection" style="margin-top:10px">
@@ -813,7 +812,7 @@ async function setOrderStatus(id, status){
       const min = (data.min_balance!=null)? Number(data.min_balance): (s.min_balance!=null?s.min_balance:-15);
       s.driver_balance = b; s.min_balance = min; localStorage.setItem('pt_session', JSON.stringify(s));
       renderBalance(b, min);
-      setMsg('Balans limitə düşüb: ' + fmtMoney(b) + ' AZN (limit ' + fmtMoney(min) + ' AZN). Admin balansı artırmalıdır.');
+      setMsg('Balans limitə düşüb: ' + fmtMoney(b) + ' AZN (limit ' + fmtMoney(min) + ' AZN). Balansınızı artırın.');
     } else {
       setMsg(data.error || 'ERROR');
     }
@@ -889,7 +888,7 @@ async function acceptOrder(id){
       const min = (data.min_balance!=null)? Number(data.min_balance): (s.min_balance!=null?s.min_balance:-15);
       s.driver_balance = b; s.min_balance = min; localStorage.setItem('pt_session', JSON.stringify(s));
       renderBalance(b, min);
-      setMsg('Balans limitə düşüb: ' + fmtMoney(b) + ' AZN (limit ' + fmtMoney(min) + ' AZN). Admin balansı artırmalıdır.');
+      setMsg('Balans limitə düşüb: ' + fmtMoney(b) + ' AZN (limit ' + fmtMoney(min) + ' AZN). Balansınızı artırın.');
     } else if (data && data.error==='DRIVER_HAS_ACTIVE_ORDER') {
       setMsg('Sizin aktiv sifarişiniz var. Digər sifarişi götürmək üçün onu tamamlayın və ya ləğv edin. (ID: ' + (data.order_id||'') + ')');
       loadMy();
