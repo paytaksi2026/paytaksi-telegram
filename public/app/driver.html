@@ -475,7 +475,7 @@ function startLocationLoop(){
   if(!('geolocation' in navigator)) return;
   navigator.geolocation.watchPosition(async (pos)=>{
     const now = Date.now();
-    if(now - lastLocSentAt < 5000) return;
+    if(now - lastLocSentAt < 10000) return;
     lastLocSentAt = now;
     lastPos = { lat: pos.coords.latitude, lng: pos.coords.longitude };
     ensureMap(lastPos.lat, lastPos.lng);
