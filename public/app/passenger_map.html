@@ -48,16 +48,6 @@
 
   /* Leaflet custom icon wrapper */
   .pt-car-icon{background:transparent;border:none}
-
-  /* Recent orders hidden link + modal */
-  .recent-link-wrap{margin-top:14px;display:flex;justify-content:flex-end}
-  .recent-link{font-size:12px;opacity:.75;color:#e5e7eb;text-decoration:none;border-bottom:1px dashed rgba(148,163,184,.45)}
-  .recent-link:hover{opacity:1}
-  .modal{position:fixed;inset:0;z-index:9999}
-  .modal-backdrop{position:absolute;inset:0;background:rgba(0,0,0,.55)}
-  .modal-card{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(940px,92vw);max-height:82vh;display:flex;flex-direction:column;background:rgba(15,23,42,.95);border:1px solid rgba(148,163,184,.22);border-radius:16px;box-shadow:0 22px 60px rgba(0,0,0,.6);overflow:hidden}
-  .modal-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;border-bottom:1px solid rgba(148,163,184,.18)}
-  .modal-body{padding:12px 14px;overflow:auto}
 </style>
 
 <link rel="stylesheet" href="/assets/bolt.css" />
@@ -118,22 +108,9 @@
           <button class="secondary" id="focusDriverBtn" style="display:none">Sürücüyə fokus</button>
         </div>
       </div>
-
-      <!-- Hidden link to open recent orders (keeps UI compact) -->
-      <div class="recent-link-wrap">
-        <a href="#" class="recent-link" onclick="openOrdersModal(); return false;">Son sifarişlər</a>
-      </div>
-
-      <!-- Recent orders modal -->
-      <div id="ordersModal" class="modal" style="display:none">
-        <div class="modal-backdrop" onclick="closeOrdersModal()"></div>
-        <div class="modal-card">
-          <div class="modal-head">
-            <div class="pill">Son sifarişlər</div>
-            <button class="secondary" onclick="closeOrdersModal()">Bağla</button>
-          </div>
-          <div id="orders" class="modal-body"></div>
-        </div>
+      <div style="margin-top:16px">
+        <div class="pill">Son sifarişlər</div>
+        <div id="orders" style="margin-top:10px"></div>
       </div>
     </div>
   </div>
@@ -174,15 +151,6 @@ let lastStreamRefresh = 0;
 // ETA (driver -> destination) throttling
 let lastEtaAt = 0;
 let lastEtaKey = '';
-
-function openOrdersModal(){
-  const m = document.getElementById('ordersModal');
-  if(m) m.style.display = 'block';
-}
-function closeOrdersModal(){
-  const m = document.getElementById('ordersModal');
-  if(m) m.style.display = 'none';
-}
 
 function getCarDivIcon(){
   // Lightweight SVG car icon (works without external assets)
@@ -791,10 +759,14 @@ async function loadMyOrders(){
     const estLine = (o.est_fare != null) ? `<div style="opacity:.9;margin-top:4px"><b>Təxmini:</b> ${Number(o.est_km||0).toFixed(1)} km • ${o.est_fare} AZN</div>` : '';
 
     const st = String(o.status||'').toLowerCase();
+    const stText = (st==='cancelled') ? 'Ləğv olundu' : (st==='completed' ? 'Uğurlu' : (o.status||''));
+    const stStyle = (st==='cancelled') ? 'border-color:rgba(239,68,68,.55);background:rgba(239,68,68,.18);color:#fecaca;' :
+                    (st==='completed') ? 'border-color:rgba(34,197,94,.55);background:rgba(34,197,94,.16);color:#bbf7d0;' : '';
+
     const canCancel = (st==='new' || st==='accepted') && !(Number(o.started_at||0) > 0) && st!=='in_progress' && st!=='completed' && st!=='cancelled';
     const cancelBtn = canCancel ? `<div class="row" style="margin-top:10px"><button class="secondary" onclick="cancelOrder(${o.id})">Sifarişi ləğv et</button></div>` : '';
     return `<div style="padding:10px 0;border-bottom:1px solid rgba(148,163,184,.12)">
-      <div><b>#${o.id}</b> <span class="pill">${o.status}</span>${pkgLine}</div>
+      <div><b>#${o.id}</b> <span class="pill" style="${stStyle}">${stText}</span>${pkgLine}</div>
       <div style="opacity:.9;margin-top:4px"><b>Haradan:</b> ${o.pickup_text}</div>
       <div style="opacity:.9;margin-top:4px"><b>Haraya:</b> ${o.dropoff_text}</div>
       ${estLine}
