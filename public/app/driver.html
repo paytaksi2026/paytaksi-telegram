@@ -566,6 +566,9 @@ async function acceptOrder(id){
       s.driver_balance = b; s.min_balance = min; localStorage.setItem('pt_session', JSON.stringify(s));
       renderBalance(b, min);
       setMsg('Balans limitə düşüb: ' + fmtMoney(b) + ' AZN (limit ' + fmtMoney(min) + ' AZN). Admin balansı artırmalıdır.');
+    } else if (data && data.error==='DRIVER_HAS_ACTIVE_ORDER') {
+      setMsg('Sizin aktiv sifarişiniz var. Digər sifarişi götürmək üçün onu tamamlayın və ya ləğv edin. (ID: ' + (data.order_id||'') + ')');
+      loadMy();
     } else {
       setMsg(data.error || 'ERROR');
     }

@@ -639,7 +639,14 @@ async function createOrder(){
     const pkg = data.package_name ? ` • ${data.package_name}` : '';
     setMsg('Sifariş yaradıldı. ID: ' + data.order_id + pkg + ' • ' + (data.est_fare ?? '') + ' AZN (təxmini)');
     loadMyOrders();
-  } else setMsg(data.error || 'ERROR');
+  } else {
+    if (data && data.error === 'PASSENGER_HAS_ACTIVE_ORDER') {
+      setMsg('Aktiv sifarişiniz var. Yeni sifariş üçün əvvəlkini bitirin və ya ləğv edin. (ID: ' + (data.order_id||'') + ')');
+      loadMyOrders();
+    } else {
+      setMsg(data.error || 'ERROR');
+    }
+  }
 }
 
 async function loadMyOrders(){

@@ -866,6 +866,18 @@ app.post('/api/orders/create', async (req, res) => {
   const passenger = await authUser(req.body.phone, req.body.password, 'passenger');
   if (!passenger) return res.json({ error: 'INVALID_CREDENTIALS' });
 
+  // Passenger can only have one active order at a time
+  const activePassenger = await new Promise((resolve) => {
+    db.get(
+      "SELECT id, status FROM orders WHERE passenger_phone=? AND status IN ('new','accepted','arrived','in_progress') ORDER BY id DESC LIMIT 1",
+      [passenger.phone],
+      (e, row) => resolve(!e ? (row || null) : null)
+    );
+  });
+  if (activePassenger) {
+    return res.status(409).json({ error: 'PASSENGER_HAS_ACTIVE_ORDER', order_id: activePassenger.id, status: activePassenger.status });
+  }
+
   const package_id = String(req.body.package_id || req.body.package || 'economy');
 
   const pickup = req.body.pickup || {};
@@ -1019,6 +1031,18 @@ app.post('/api/orders/accept', async (req, res) => {
 
   const order_id = parseInt(req.body.order_id, 10);
   if (!order_id) return res.status(400).json({ error: 'ORDER_ID_REQUIRED' });
+
+  // Driver can only have one active order at a time
+  const activeDriver = await new Promise((resolve) => {
+    db.get(
+      "SELECT id, status FROM orders WHERE driver_phone=? AND status IN ('accepted','arrived','in_progress') ORDER BY id DESC LIMIT 1",
+      [driver.phone],
+      (e, row) => resolve(!e ? (row || null) : null)
+    );
+  });
+  if (activeDriver) {
+    return res.status(409).json({ error: 'DRIVER_HAS_ACTIVE_ORDER', order_id: activeDriver.id, status: activeDriver.status });
+  }
 
   // Enforce driver's allowed packages (server-side)
   const enabledList = await getEnabledPackagesForUser(driver);
