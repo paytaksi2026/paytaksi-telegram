@@ -125,8 +125,21 @@ async function initDb() {
     car_plate TEXT,
     car_color TEXT,
     car_year INTEGER,
+    driver_balance DOUBLE PRECISION DEFAULT 0,
     UNIQUE(phone, role)
   )`);
+
+  // Driver balance ledger (audit)
+  await db._query(`CREATE TABLE IF NOT EXISTS driver_balance_ledger (
+    id BIGSERIAL PRIMARY KEY,
+    driver_phone TEXT NOT NULL,
+    amount DOUBLE PRECISION NOT NULL,
+    reason TEXT,
+    order_id BIGINT,
+    admin_user TEXT,
+    created_at BIGINT NOT NULL
+  )`);
+  await db._query(`CREATE INDEX IF NOT EXISTS idx_driver_balance_ledger_phone ON driver_balance_ledger(driver_phone, id DESC)`);
 
   await db._query(`CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
@@ -190,6 +203,7 @@ async function initDb() {
   ensureColumn('users', 'car_plate', 'car_plate TEXT');
   ensureColumn('users', 'car_color', 'car_color TEXT');
   ensureColumn('users', 'car_year', 'car_year INTEGER');
+  ensureColumn('users', 'driver_balance', 'driver_balance DOUBLE PRECISION DEFAULT 0');
 
   function seedSetting(k, v){
     db.get("SELECT value FROM settings WHERE key=?", [k], (e, row)=>{
@@ -203,6 +217,7 @@ async function initDb() {
   seedSetting('fare_per_min', 0.0);
   seedSetting('fare_min', 3.5);
   seedSetting('commission_rate', 0.10);
+  seedSetting('driver_min_balance', -15);
 
   // Fare packages (JSON). Additive + backward compatible.
   // Stored in settings to keep migrations minimal.
@@ -536,11 +551,24 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+function adminUserFromReq(req){
+  try{
+    const cookies = parseCookies(req);
+    const token = cookies[ADMIN_COOKIE];
+    if (!verifyAdmin(token)) return '';
+    const value = token.slice(0, token.lastIndexOf('.'));
+    const payload = JSON.parse(Buffer.from(value, 'base64').toString('utf8'));
+    return String(payload && payload.u ? payload.u : '');
+  }catch(_){
+    return '';
+  }
+}
+
 
 // Protect sensitive admin-only static pages (e.g. pricing) even if someone types the URL
 app.use((req, res, next) => {
   // Only guard the pricing page (others can stay public/login-gated by UI)
-  if (req.path === '/admin/pricing.html' || req.path === '/admin/pricing') {
+  if (req.path === '/admin/pricing.html' || req.path === '/admin/pricing' || req.path === '/admin/driver_balance.html') {
     // Allow only logged-in admin (cookie)
     const cookies = parseCookies(req);
     const token = cookies[ADMIN_COOKIE];
@@ -563,7 +591,7 @@ function authUser(phone, password, role) {
     if (!phone || !password) return resolve(null);
 
     db.get(
-      "SELECT id, phone, role, name, approved, is_online, driver_radius_km, allowed_packages, enabled_packages FROM users WHERE phone=? AND password=? AND role=?",
+      "SELECT id, phone, role, name, approved, is_online, driver_radius_km, allowed_packages, enabled_packages, driver_balance FROM users WHERE phone=? AND password=? AND role=?",
       [phone, password, role],
       (err, row) => {
         if (err || !row) return resolve(null);
@@ -642,11 +670,13 @@ app.post('/api/login', (req, res) => {
       const allowed_packages = parseAllowedPackages(row.allowed_packages);
       const enabled_packages = parseAllowedPackages(row.enabled_packages || row.allowed_packages);
 
+      const driver_balance = Number(row.driver_balance || 0);
+
       if (role === "driver" && approved === 0) {
         return res.json({ pending: true, name: row.name || "", role });
       }
 
-      return res.json({ success: true, name: row.name || "", role, is_online, driver_radius_km: Number(row.driver_radius_km||0), allowed_packages, enabled_packages });
+      return res.json({ success: true, name: row.name || "", role, is_online, driver_radius_km: Number(row.driver_radius_km||0), allowed_packages, enabled_packages, driver_balance });
     }
   );
 });
@@ -685,7 +715,8 @@ app.post('/api/driver/status', async (req, res) => {
     name: user.name || '',
     driver_radius_km: Number(user.driver_radius_km||0),
     allowed_packages: parseAllowedPackages(user.allowed_packages),
-    enabled_packages: parseAllowedPackages(user.enabled_packages || user.allowed_packages)
+    enabled_packages: parseAllowedPackages(user.enabled_packages || user.allowed_packages),
+    driver_balance: Number(user.driver_balance || 0)
   });
 });
 
@@ -948,6 +979,13 @@ app.post('/api/orders/accept', async (req, res) => {
   if (!driver) return res.status(401).json({ error: 'INVALID_CREDENTIALS' });
   if (parseInt(driver.approved, 10) !== 1) return res.status(403).json({ error: 'DRIVER_PENDING' });
 
+  // Balance gate: if driver's balance is <= min threshold, block accepting new orders
+  const minBal = Number(await getSetting('driver_min_balance', -15));
+  const bal = Number(driver.driver_balance || 0);
+  if (Number.isFinite(minBal) && bal <= minBal) {
+    return res.status(403).json({ error: 'BALANCE_LIMIT', driver_balance: bal, min_balance: minBal });
+  }
+
   const order_id = parseInt(req.body.order_id, 10);
   if (!order_id) return res.status(400).json({ error: 'ORDER_ID_REQUIRED' });
 
@@ -1139,6 +1177,24 @@ app.post('/api/orders/status', async (req, res) => {
         [km, minutes, final_fare, admin_fee, driver_earn, order_id]
       );
 
+      // Driver balance system:
+      // - driver_balance tracks driver's debt/credit with the platform.
+      // - On each completed ride, commission (admin_fee) is added as NEGATIVE balance (debt).
+      //   Admin can top-up/adjust from admin panel.
+      try{
+        const delta = -Number(admin_fee || 0);
+        if (Number.isFinite(delta) && delta !== 0) {
+          await dbRun(
+            "UPDATE users SET driver_balance = COALESCE(driver_balance,0) + ? WHERE phone=? AND role='driver'",
+            [delta, driver.phone]
+          );
+          await dbRun(
+            "INSERT INTO driver_balance_ledger(driver_phone, amount, reason, order_id, admin_user, created_at) VALUES (?,?,?,?,?,?)",
+            [driver.phone, delta, 'commission', order_id, null, ts]
+          );
+        }
+      }catch(_){ /* keep completion flow resilient */ }
+
       // Real-time notify with final fare
       try {
         const snap2 = await dbGet(
@@ -1326,12 +1382,13 @@ app.get('/api/admin/drivers', requireAdmin, (req, res) => {
   if (status === 'pending') where += " AND approved=0";
   if (status === 'approved') where += " AND approved=1";
 
-  db.all(`SELECT id, phone, name, approved, is_online, allowed_packages, enabled_packages FROM users WHERE ${where} ORDER BY approved ASC, is_online DESC, id DESC`, [], (err, rows) => {
+  db.all(`SELECT id, phone, name, approved, is_online, allowed_packages, enabled_packages, driver_balance FROM users WHERE ${where} ORDER BY approved ASC, is_online DESC, id DESC`, [], (err, rows) => {
     if (err) return res.status(500).json({ error: 'DB_ERROR' });
     const list = (rows || []).map(r => ({
       ...r,
       allowed_packages: parseAllowedPackages(r.allowed_packages),
-      enabled_packages: parseAllowedPackages(r.enabled_packages || r.allowed_packages)
+      enabled_packages: parseAllowedPackages(r.enabled_packages || r.allowed_packages),
+      driver_balance: Number(r.driver_balance || 0)
     }));
     res.json({ success: true, drivers: list });
   });
@@ -1490,6 +1547,7 @@ app.post('/api/fare-packages', requireAdmin, async (req, res) => {
 app.get('/api/admin/settings', requireAdmin, async (req, res) => {
   const s = {
     default_radius_km: await getSetting('default_radius_km', 4),
+    driver_min_balance: await getSetting('driver_min_balance', -15),
     fare_base: await getSetting('fare_base', 1.0),
     fare_per_km: await getSetting('fare_per_km', 0.6),
     fare_per_min: await getSetting('fare_per_min', 0.15),
@@ -1506,6 +1564,13 @@ app.post('/api/admin/settings', requireAdmin, async (req, res) => {
     if (![2,4,8].includes(r)) return res.status(400).json({ error: 'INVALID_RADIUS' });
     updates.default_radius_km = r;
     await setSetting('default_radius_km', r);
+  }
+
+  if (req.body.driver_min_balance != null) {
+    const v = Number(req.body.driver_min_balance);
+    if (!Number.isFinite(v)) return res.status(400).json({ error: 'INVALID_VALUE' });
+    updates.driver_min_balance = v;
+    await setSetting('driver_min_balance', v);
   }
   // Optional: allow pricing edits later (kept additive)
   for (const k of ['fare_base','fare_per_km','fare_per_min','fare_min','commission_rate']) {
@@ -1552,6 +1617,72 @@ app.post('/api/admin/delete-driver', requireAdmin, (req, res) => {
     if (err) return res.status(500).json({ error: "DB_ERROR" });
     res.json({ success: true, changes: this.changes });
   });
+});
+
+
+// ---------------- Driver balance (admin)
+app.get('/api/admin/driver-balances', requireAdmin, (req, res) => {
+  db.all(
+    "SELECT id, phone, name, approved, is_online, COALESCE(driver_balance,0) AS driver_balance FROM users WHERE role='driver' ORDER BY approved ASC, is_online DESC, id DESC",
+    [],
+    (err, rows) => {
+      if (err) return res.status(500).json({ error:'DB_ERROR' });
+      const list = (rows || []).map(r => ({
+        id: r.id,
+        phone: r.phone,
+        name: r.name,
+        approved: r.approved,
+        is_online: r.is_online,
+        driver_balance: Number(r.driver_balance || 0)
+      }));
+      res.json({ success:true, drivers:list });
+    }
+  );
+});
+
+app.post('/api/admin/driver-balance/adjust', requireAdmin, async (req, res) => {
+  try{
+    const id = parseInt(req.body.id, 10);
+    const phone = normPhone(req.body.phone);
+    const amount = Number(req.body.amount);
+    const reason = String(req.body.reason || '').slice(0, 120);
+    if (!Number.isFinite(amount) || amount === 0) return res.status(400).json({ error:'AMOUNT_REQUIRED' });
+    if (!id && !phone) return res.status(400).json({ error:'ID_OR_PHONE_REQUIRED' });
+
+    const adminUser = adminUserFromReq(req);
+    const ts = nowMs();
+
+    const where = id ? 'id=?' : 'phone=?';
+    const params = id ? [amount, id] : [amount, phone];
+    await db._query(
+      `UPDATE users SET driver_balance = COALESCE(driver_balance,0) + $1 WHERE ${where} AND role='driver' RETURNING phone, driver_balance`,
+      params
+    ).then(async (r)=>{
+      const row = (r && r.rows && r.rows[0]) ? r.rows[0] : null;
+      if (!row) throw { status:404, error:'NOT_FOUND' };
+      await db._query(
+        "INSERT INTO driver_balance_ledger(driver_phone, amount, reason, order_id, admin_user, created_at) VALUES($1,$2,$3,$4,$5,$6)",
+        [row.phone, amount, reason || 'admin_adjust', null, adminUser || null, ts]
+      );
+      res.json({ success:true, phone: row.phone, driver_balance: Number(row.driver_balance||0) });
+    });
+  }catch(e){
+    if (e && e.status) return res.status(e.status).json({ error: e.error || 'ERROR' });
+    res.status(500).json({ error:'DB_ERROR' });
+  }
+});
+
+app.get('/api/admin/driver-balance/ledger', requireAdmin, (req, res) => {
+  const phone = normPhone(req.query.phone);
+  if (!phone) return res.status(400).json({ error:'PHONE_REQUIRED' });
+  db.all(
+    "SELECT id, driver_phone, amount, reason, order_id, admin_user, created_at FROM driver_balance_ledger WHERE driver_phone=? ORDER BY id DESC LIMIT 50",
+    [phone],
+    (err, rows)=>{
+      if (err) return res.status(500).json({ error:'DB_ERROR' });
+      res.json({ success:true, ledger: rows || [] });
+    }
+  );
 });
 
 app.get('/admin', (req, res) => {

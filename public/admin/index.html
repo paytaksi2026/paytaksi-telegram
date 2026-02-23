@@ -69,6 +69,7 @@
           <button class="secondary" onclick="saveSettings()">Yadda saxla</button>
           <button class="secondary" onclick="loadStats()">Statistika</button>
           <button class="secondary" onclick="location.href='/admin/pricing.html'">Tariflər (Pricing)</button>
+          <button class="secondary" onclick="location.href='/admin/driver_balance.html'">Sürücü Balans</button>
         </div>
         <div class="msg" id="statMsg"></div>
         <div id="statsBox" style="opacity:.9"></div>
@@ -79,6 +80,7 @@
               <th>ID</th>
               <th>Ad</th>
               <th>Telefon</th>
+              <th>Balans</th>
               <th>Status</th>
               <th>Online</th>
               <th>Paketlər</th>
@@ -156,6 +158,7 @@ async function loadDrivers(status){
       <td>${d.id}</td>
       <td>${(d.name||'')}</td>
       <td>${d.phone}</td>
+      <td>${fmtMoney(d.driver_balance)}</td>
       <td><span class="${badgeClass}">${statusText}</span></td>
       <td>${onlineText}</td>
       <td>
@@ -172,6 +175,12 @@ async function loadDrivers(status){
     tb.appendChild(tr);
   }
   setText('msg', 'Drivers: ' + list.length);
+}
+
+function fmtMoney(n){
+  n = Number(n);
+  if(!Number.isFinite(n)) n = 0;
+  return (Math.round(n*100)/100).toFixed(2);
 }
 
 function esc(s){ return String(s||'').replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])); }
