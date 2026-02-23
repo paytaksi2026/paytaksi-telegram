@@ -16,6 +16,16 @@
   .msg{min-height:22px;margin-top:10px}
   .pill{display:inline-block;padding:6px 10px;border-radius:999px;border:1px solid rgba(148,163,184,.25);background:rgba(148,163,184,.10);font-size:12px}
   #map{height:340px;border-radius:14px;overflow:hidden;border:1px solid rgba(148,163,184,.22);background:rgba(2,6,23,.35)}
+  /* incoming modal */
+  .overlay{position:fixed;inset:0;display:none;align-items:flex-end;justify-content:center;background:rgba(0,0,0,.55);z-index:9999}
+  .sheet{width:min(760px,100%);max-height:88vh;background:rgba(2,6,23,.96);border:1px solid rgba(148,163,184,.18);border-radius:18px 18px 0 0;overflow:hidden}
+  .sheetHead{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;border-bottom:1px solid rgba(148,163,184,.15)}
+  .sheetBody{padding:12px 14px;max-height:78vh;overflow:auto}
+  .kpi{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+  .kpi .badge{font-size:12px}
+  .btnRow{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+  .btnDanger{background:rgba(239,68,68,.15);color:#fecaca;border:1px solid rgba(239,68,68,.35)}
+  .small{font-size:12px;opacity:.8}
 </style>
 
 <link rel="stylesheet" href="/assets/bolt.css" />
@@ -95,8 +105,8 @@
 
     <div class="row" style="justify-content:space-between;align-items:flex-end">
       <div>
-        <h3 style="margin:0">Yeni sifarişlər</h3>
-        <div style="opacity:.75;font-size:13px">Sifarişi qəbul etmək üçün “Qəbul et” basın.</div>
+        <h3 style="margin:0">Yeni sifariş</h3>
+        <div style="opacity:.75;font-size:13px">Sifariş gələn kimi ekranda çıxacaq. “Qəbul et” və ya “Görməzlikdən gəl” seçin.</div>
       </div>
       <div class="row">
         <button class="secondary" onclick="loadFeed()">Yenilə</button>
@@ -107,6 +117,22 @@
     <hr style="border:none;border-top:1px solid rgba(148,163,184,.18);margin:16px 0" />
     <h3 style="margin:0">Mənim qəbul etdiklərim</h3>
     <div id="my" style="margin-top:10px"></div>
+  </div>
+</div>
+
+<!-- Incoming order modal (auto) -->
+<div id="incomingModal" class="overlay" onclick="onOverlayClick(event)">
+  <div class="sheet">
+    <div class="sheetHead">
+      <div>
+        <div style="font-weight:900">Yeni sifariş</div>
+        <div class="small" id="incomingSub">Sifariş gəldi</div>
+      </div>
+      <button class="secondary" onclick="hideIncoming()">Bağla</button>
+    </div>
+    <div class="sheetBody">
+      <div id="incomingBox"></div>
+    </div>
   </div>
 </div>
 
@@ -330,7 +356,20 @@ async function renderPackagePrefs(){
       ${esc(p.name||id)}${hint}
     </label>`;
   }).join('');
+
+  // update active order for map + modal gating
+  const activeMy = (data.orders||[]).find(x=>['accepted','arrived','in_progress'].includes(String(x.status||'').toLowerCase()));
+  currentActiveOrder = activeMy || null;
+  if(activeMy){
+    updateRouteForOrder(activeMy);
+  }else{
+    document.getElementById('mapInfo').textContent = 'Xəritə: aktiv sifariş yoxdur';
+    const nb = document.getElementById('navBtn');
+    if(nb) nb.style.display = 'none';
+    ensureMap();
+  }
 }
+
 
 async function savePackages(){
   const box = document.getElementById('pkgBox');
@@ -383,6 +422,80 @@ async function goOffline(){
   const data = await res.json();
   if(data.success){ s.is_online=0; localStorage.setItem('pt_session', JSON.stringify(s)); setSt(false); setMsg('Offline oldunuz.'); }
   else setMsg(data.error||'ERROR');
+}
+
+
+
+// Incoming order (modal)
+const ignoredOrders = new Map(); // orderId -> expiresAt
+let lastIncomingId = null;
+let currentActiveOrder = null;
+
+function pruneIgnored(){
+  const now = Date.now();
+  for(const [k,v] of ignoredOrders.entries()){
+    if(!v || v < now) ignoredOrders.delete(k);
+  }
+}
+
+function onOverlayClick(ev){
+  // click outside sheet closes
+  if(ev && ev.target && ev.target.id==='incomingModal') hideIncoming();
+}
+
+function hideIncoming(){
+  const m = document.getElementById('incomingModal');
+  if(m) m.style.display = 'none';
+}
+
+function ignoreIncoming(id){
+  // ignore for 2 minutes
+  ignoredOrders.set(Number(id), Date.now() + 120000);
+  hideIncoming();
+}
+
+function showIncoming(o){
+  if(!o) return;
+  const m = document.getElementById('incomingModal');
+  const box = document.getElementById('incomingBox');
+  const sub = document.getElementById('incomingSub');
+  if(!m || !box) return;
+
+  const dt = fmtTs(o.created_at);
+  const pk = o.fare_package ? `<span class="badge">${esc(o.fare_package)}</span>` : '';
+  const dist = (o.pickup_distance_km!=null) ? `<span class="badge">Məsafə: ${Number(o.pickup_distance_km).toFixed(2)} km</span>` : '';
+  const fare = (o.est_fare!=null) ? `<span class="badge">Təxmini: ${Number(o.est_fare).toFixed(2)} AZN</span>` : '';
+
+  const wPickup = wazeLinkForOrder(o, 'pickup');
+
+  box.innerHTML = `
+    <div style="padding:12px;border:1px solid rgba(148,163,184,.18);border-radius:14px;background:rgba(2,6,23,.35)">
+      <div class="row" style="justify-content:space-between">
+        <div><b>#${o.id}</b> <span class="badge">${esc(o.status||'new')}</span> ${pk}</div>
+        <div class="kpi">${dist}${fare}</div>
+      </div>
+      <div style="margin-top:10px;opacity:.92"><b>Haradan:</b> ${esc(o.pickup_text||'')}</div>
+      <div style="margin-top:8px;opacity:.92"><b>Haraya:</b> ${esc(o.dropoff_text||'')}</div>
+      <div style="margin-top:8px;opacity:.70;font-size:12px">${esc(dt)}</div>
+      <div class="btnRow">
+        ${navBtnHtml(wPickup, 'Waze: Müştəriyə get')}
+        <button onclick="acceptFromIncoming(${o.id})">Qəbul et</button>
+        <button class="secondary" onclick="ignoreIncoming(${o.id})">Görməzlikdən gəl</button>
+      </div>
+      <div class="small" style="margin-top:10px">Qeyd: Aktiv sifarişiniz varsa yeni sifariş göstərilməyəcək.</div>
+    </div>
+  `;
+
+  if(sub) sub.textContent = 'Sifariş gəldi — qəbul edin və ya bağlayın';
+  m.style.display = 'flex';
+
+  // gentle haptic
+  try{ if(navigator.vibrate) navigator.vibrate([80,60,80]); }catch(e){}
+}
+
+async function acceptFromIncoming(id){
+  hideIncoming();
+  await acceptOrder(id);
 }
 
 function esc(s){ return String(s||'').replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])); }
@@ -524,32 +637,30 @@ async function loadFeed(){
     box.innerHTML = '<div style="opacity:.75">Hazırda yeni sifariş yoxdur.</div>';
     return;
   }
-  box.innerHTML = data.orders.map(o=>{
-    const dt = fmtTs(o.created_at);
-    return `<div style="padding:12px;border:1px solid rgba(148,163,184,.18);border-radius:12px;margin-bottom:10px;background:rgba(2,6,23,.35)">
-      <div class="row" style="justify-content:space-between">
-        <div><b>#${o.id}</b> <span class="badge">${esc(o.status)}</span> ${o.fare_package?`<span class="badge">${esc(o.fare_package)}</span>`:''}</div>
-        <button onclick="acceptOrder(${o.id})">Qəbul et</button>
-      </div>
-      <div style="margin-top:8px;opacity:.9"><b>Haradan:</b> ${esc(o.pickup_text)}</div>
-      ${o.pickup_distance_km!=null ? `<div style="margin-top:6px;opacity:.8"><b>Məsafə:</b> ${Number(o.pickup_distance_km).toFixed(2)} km</div>` : ''}
-      ${o.est_fare!=null ? `<div style="margin-top:6px;opacity:.8"><b>Təxmini:</b> ${Number(o.est_km||0).toFixed(1)} km • ${Number(o.est_fare).toFixed(2)} AZN</div>` : ''}
-      <div style="margin-top:6px;opacity:.9"><b>Haraya:</b> ${esc(o.dropoff_text)}</div>
-      ${(o.status==='completed' && o.final_fare!=null) ? `<div style="margin-top:6px;opacity:.85"><b>Yekun:</b> ${Number(o.final_fare).toFixed(2)} AZN • <b>Sizin:</b> ${Number(o.driver_earn||0).toFixed(2)} AZN</div>` : `<div style="margin-top:6px;opacity:.85"><b>Təxmini:</b> ${Number(o.est_fare||0).toFixed(2)} AZN</div>`}
-      <div style="margin-top:6px;opacity:.65">${dt}</div>
-    </div>`;
-  }).join('');
+  pruneIgnored();
+  // Compact feed: show only counter + bring newest order as modal
+  const orders = (data.orders||[]).filter(o=>!['accepted','arrived','in_progress','completed','cancelled'].includes(String(o.status||'').toLowerCase()));
+  box.innerHTML = `<div style="opacity:.8">Yeni sifariş sayı: <b>${orders.length}</b></div>`;
 
-	// marşrutu aktiv sifariş üçün çək (accepted/arrived/in_progress)
-	const active = (data.orders||[]).find(x=>['accepted','arrived','in_progress'].includes(x.status));
-	if(active){
-		updateRouteForOrder(active);
-	}else{
-		document.getElementById('mapInfo').textContent = 'Xəritə: aktiv sifariş yoxdur';
-		document.getElementById('navBtn').style.display = 'none';
-		ensureMap();
-	}
+  // if driver already has active order, don't pop new ones
+  if(currentActiveOrder){
+    return;
+  }
+
+  // pick first non-ignored
+  const cand = orders.find(x=>!ignoredOrders.has(Number(x.id)));
+  if(!cand){
+    return;
+  }
+
+  // avoid reopening same order repeatedly
+  const cid = Number(cand.id);
+  if(lastIncomingId !== cid){
+    lastIncomingId = cid;
+    showIncoming(cand);
+  }
 }
+
 
 async function acceptOrder(id){
   setMsg('Qəbul edilir...');
@@ -627,12 +738,37 @@ async function loadMy(){
       ${actions}
     </div>`;
   }).join('');
+
+  // update active order for map + modal gating
+  const activeMy = (data.orders||[]).find(x=>['accepted','arrived','in_progress'].includes(String(x.status||'').toLowerCase()));
+  currentActiveOrder = activeMy || null;
+  if(activeMy){
+    updateRouteForOrder(activeMy);
+  }else{
+    document.getElementById('mapInfo').textContent = 'Xəritə: aktiv sifariş yoxdur';
+    const nb = document.getElementById('navBtn');
+    if(nb) nb.style.display = 'none';
+    ensureMap();
+  }
 }
+
 
 // initial + polling
 loadFeed();
 loadMy();
-setInterval(()=>{ loadFeed(); loadMy(); }, 10000);
+let _polling = false;
+setInterval(async ()=>{
+  if(_polling) return;
+  _polling = true;
+  try{
+    await loadFeed();
+    // my orders less frequent to reduce load
+    if(!window._myTick || (Date.now()-window._myTick>8000)){
+      window._myTick = Date.now();
+      await loadMy();
+    }
+  }finally{ _polling = false; }
+}, 3000);
 startLocationLoop();
 </script>
 </body>
