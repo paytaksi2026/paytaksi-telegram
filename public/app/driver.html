@@ -444,6 +444,7 @@ function onOverlayClick(ev){
 }
 
 function hideIncoming(){
+  __stopIncomingAlert();
   const m = document.getElementById('incomingModal');
   if(m) m.style.display = 'none';
 }
@@ -452,6 +453,86 @@ function ignoreIncoming(id){
   // ignore for 2 minutes
   ignoredOrders.set(Number(id), Date.now() + 120000);
   hideIncoming();
+}
+
+
+let __alertInterval = null;
+let __vibeInterval = null;
+let __audioCtx = null;
+let __audioUnlocked = false;
+
+function __unlockAudioOnce(){
+  if(__audioUnlocked) return;
+  try{
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if(!AC) { __audioUnlocked = true; return; }
+    __audioCtx = __audioCtx || new AC();
+    if(__audioCtx.state === 'suspended'){
+      __audioCtx.resume().catch(()=>{});
+    }
+    // create a tiny silent buffer to "prime" on iOS
+    const o = __audioCtx.createOscillator();
+    const g = __audioCtx.createGain();
+    g.gain.value = 0.00001;
+    o.connect(g); g.connect(__audioCtx.destination);
+    o.start();
+    o.stop(__audioCtx.currentTime + 0.02);
+    __audioUnlocked = true;
+  }catch(e){
+    __audioUnlocked = true;
+  }
+}
+
+// Try to unlock audio on first user gesture (required by many mobile browsers)
+window.addEventListener('pointerdown', __unlockAudioOnce, {once:true, passive:true});
+window.addEventListener('touchstart', __unlockAudioOnce, {once:true, passive:true});
+
+function __beepOnce(){
+  try{
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if(!AC) return;
+    __audioCtx = __audioCtx || new AC();
+    if(__audioCtx.state === 'suspended'){ __audioCtx.resume().catch(()=>{}); }
+    const o = __audioCtx.createOscillator();
+    const g = __audioCtx.createGain();
+    o.type = 'sine';
+    o.frequency.value = 880; // "Bolt-like" sharp beep
+    g.gain.value = 0.18;
+    o.connect(g); g.connect(__audioCtx.destination);
+    const t = __audioCtx.currentTime;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.18, t + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
+    o.start(t);
+    o.stop(t + 0.20);
+  }catch(e){}
+}
+
+function __startIncomingAlert(){
+  __stopIncomingAlert();
+  // Sound: beep every 700ms (for up to 20s unless user acts)
+  let startedAt = Date.now();
+  __beepOnce();
+  __alertInterval = setInterval(()=>{
+    if(Date.now() - startedAt > 20000){ __stopIncomingAlert(); return; }
+    __beepOnce();
+  }, 700);
+
+  // Vibration: repeat pattern (if supported)
+  try{
+    if(navigator.vibrate){
+      navigator.vibrate([200,120,200,120,200]);
+      __vibeInterval = setInterval(()=>{
+        try{ navigator.vibrate([200,120,200,120,200]); }catch(e){}
+      }, 2200);
+    }
+  }catch(e){}
+}
+
+function __stopIncomingAlert(){
+  if(__alertInterval){ clearInterval(__alertInterval); __alertInterval=null; }
+  if(__vibeInterval){ clearInterval(__vibeInterval); __vibeInterval=null; }
+  try{ if(navigator.vibrate) navigator.vibrate(0); }catch(e){}
 }
 
 function showIncoming(o){
@@ -489,8 +570,8 @@ function showIncoming(o){
   if(sub) sub.textContent = 'Sifariş gəldi — qəbul edin və ya bağlayın';
   m.style.display = 'flex';
 
-  // gentle haptic
-  try{ if(navigator.vibrate) navigator.vibrate([80,60,80]); }catch(e){}
+  // strong alert (sound + vibration)
+  __startIncomingAlert();
 }
 
 async function acceptFromIncoming(id){
