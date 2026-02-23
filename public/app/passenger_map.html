@@ -48,6 +48,16 @@
 
   /* Leaflet custom icon wrapper */
   .pt-car-icon{background:transparent;border:none}
+
+  /* Recent orders hidden link + modal */
+  .recent-link-wrap{margin-top:14px;display:flex;justify-content:flex-end}
+  .recent-link{font-size:12px;opacity:.75;color:#e5e7eb;text-decoration:none;border-bottom:1px dashed rgba(148,163,184,.45)}
+  .recent-link:hover{opacity:1}
+  .modal{position:fixed;inset:0;z-index:9999}
+  .modal-backdrop{position:absolute;inset:0;background:rgba(0,0,0,.55)}
+  .modal-card{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(940px,92vw);max-height:82vh;display:flex;flex-direction:column;background:rgba(15,23,42,.95);border:1px solid rgba(148,163,184,.22);border-radius:16px;box-shadow:0 22px 60px rgba(0,0,0,.6);overflow:hidden}
+  .modal-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;border-bottom:1px solid rgba(148,163,184,.18)}
+  .modal-body{padding:12px 14px;overflow:auto}
 </style>
 
 <link rel="stylesheet" href="/assets/bolt.css" />
@@ -108,9 +118,22 @@
           <button class="secondary" id="focusDriverBtn" style="display:none">Sürücüyə fokus</button>
         </div>
       </div>
-      <div style="margin-top:16px">
-        <div class="pill">Son sifarişlər</div>
-        <div id="orders" style="margin-top:10px"></div>
+
+      <!-- Hidden link to open recent orders (keeps UI compact) -->
+      <div class="recent-link-wrap">
+        <a href="#" class="recent-link" onclick="openOrdersModal(); return false;">Son sifarişlər</a>
+      </div>
+
+      <!-- Recent orders modal -->
+      <div id="ordersModal" class="modal" style="display:none">
+        <div class="modal-backdrop" onclick="closeOrdersModal()"></div>
+        <div class="modal-card">
+          <div class="modal-head">
+            <div class="pill">Son sifarişlər</div>
+            <button class="secondary" onclick="closeOrdersModal()">Bağla</button>
+          </div>
+          <div id="orders" class="modal-body"></div>
+        </div>
       </div>
     </div>
   </div>
@@ -151,6 +174,15 @@ let lastStreamRefresh = 0;
 // ETA (driver -> destination) throttling
 let lastEtaAt = 0;
 let lastEtaKey = '';
+
+function openOrdersModal(){
+  const m = document.getElementById('ordersModal');
+  if(m) m.style.display = 'block';
+}
+function closeOrdersModal(){
+  const m = document.getElementById('ordersModal');
+  if(m) m.style.display = 'none';
+}
 
 function getCarDivIcon(){
   // Lightweight SVG car icon (works without external assets)
