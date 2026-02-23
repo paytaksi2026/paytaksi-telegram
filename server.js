@@ -80,6 +80,44 @@ function sseBroadcast(orderId, event, data){
   if (set.size === 0) sseOrderClients.delete(key);
 }
 
+// Helper: build an order snapshot that includes public driver info (for passenger UI).
+// NOTE: Keep this resilient across schema changes.
+async function getOrderSnapshotForPassenger(orderId){
+  const id = Number(orderId);
+  if (!id) return null;
+  try{
+    const cols = await getTableCols('orders');
+    const base = ['id','passenger_phone','status','driver_phone','fare_package','created_at','updated_at'];
+    const optional = [
+      'pickup_text','dropoff_text',
+      'pickup_lat','pickup_lon','dropoff_lat','dropoff_lon',
+      'est_km','est_minutes','est_fare',
+      'real_km','real_minutes','final_fare','admin_fee','driver_earn',
+      'accepted_at','arrived_at','started_at','completed_at','cancelled_at',
+      'assigned_driver_phone','assigned_at','assign_expires_at'
+    ];
+    const selectCols = base.concat(optional.filter(c => cols.has(c)));
+    const sel = selectCols.map(c => `o.${c} AS ${c}`).join(', ');
+    const q = `
+      SELECT ${sel},
+             d.name AS driver_name,
+             d.car_make AS driver_car_make,
+             d.car_model AS driver_car_model,
+             d.car_plate AS driver_car_plate,
+             d.car_color AS driver_car_color,
+             d.car_year AS driver_car_year
+        FROM orders o
+        LEFT JOIN users d ON d.phone=o.driver_phone
+       WHERE o.id=$1
+       LIMIT 1
+    `;
+    const r = await db._query(q, [id]);
+    return (r.rows && r.rows[0]) ? r.rows[0] : null;
+  }catch(_){
+    return null;
+  }
+}
+
 app.use(bodyParser.json({ limit: '1mb' }));
 
 // ---------------- DB init + lightweight migrations (PostgreSQL)
@@ -1006,8 +1044,9 @@ app.get('/api/orders/stream', async (req, res) => {
   sseOrderClients.get(key).add(res);
 
   // Send initial snapshot
-  sseWrite(res, 'snapshot', {
-    order: {
+  try{
+    const snap = await getOrderSnapshotForPassenger(order_id);
+    sseWrite(res, 'snapshot', { order: snap || {
       id: ord.id,
       status: ord.status,
       driver_phone: ord.driver_phone,
@@ -1018,8 +1057,21 @@ app.get('/api/orders/stream', async (req, res) => {
       completed_at: ord.completed_at,
       cancelled_at: ord.cancelled_at,
       updated_at: ord.updated_at,
-    }
-  });
+    }});
+  }catch(_){
+    sseWrite(res, 'snapshot', { order: {
+      id: ord.id,
+      status: ord.status,
+      driver_phone: ord.driver_phone,
+      fare_package: ord.fare_package,
+      accepted_at: ord.accepted_at,
+      arrived_at: ord.arrived_at,
+      started_at: ord.started_at,
+      completed_at: ord.completed_at,
+      cancelled_at: ord.cancelled_at,
+      updated_at: ord.updated_at,
+    }});
+  }
 
   // Keep-alive ping (prevents idle timeouts)
   const ka = setInterval(() => {
@@ -1277,13 +1329,10 @@ app.post('/api/orders/accept', async (req, res) => {
       if (this.changes === 0) return res.status(409).json({ error: 'NOT_AVAILABLE' });
 
       // Real-time notify passenger
-      db.get(
-        "SELECT id, status, driver_phone, accepted_at, arrived_at, started_at, completed_at, cancelled_at, updated_at FROM orders WHERE id=?",
-        [order_id],
-        (e2, row2) => {
-          if (!e2 && row2) sseBroadcast(order_id, 'status', { order: row2 });
-        }
-      );
+      (async ()=>{
+        const snap = await getOrderSnapshotForPassenger(order_id);
+        if (snap) sseBroadcast(order_id, 'status', { order: snap });
+      })().catch(()=>{});
 
       res.json({ success: true });
     }
@@ -1338,13 +1387,10 @@ app.post('/api/orders/cancel', async (req, res) => {
       if (this.changes === 0) return res.status(409).json({ error: 'NOT_CANCELLABLE' });
 
       // Real-time notify (if passenger has multiple tabs)
-      db.get(
-        "SELECT id, status, driver_phone, accepted_at, arrived_at, started_at, completed_at, cancelled_at, updated_at FROM orders WHERE id=?",
-        [order_id],
-        (e2, row2) => {
-          if (!e2 && row2) sseBroadcast(order_id, 'status', { order: row2 });
-        }
-      );
+      (async ()=>{
+        const snap = await getOrderSnapshotForPassenger(order_id);
+        if (snap) sseBroadcast(order_id, 'status', { order: snap });
+      })().catch(()=>{});
 
       res.json({ success: true });
     }
@@ -1406,10 +1452,7 @@ app.post('/api/orders/status', async (req, res) => {
 
     // Real-time notify passenger about status change ASAP
     try {
-      const snap = await dbGet(
-        "SELECT id, status, driver_phone, accepted_at, arrived_at, started_at, completed_at, cancelled_at, updated_at, fare_package FROM orders WHERE id=?",
-        [order_id]
-      );
+      const snap = await getOrderSnapshotForPassenger(order_id);
       if (snap) sseBroadcast(order_id, 'status', { order: snap });
     } catch(_){ /* ignore */ }
 
@@ -1466,10 +1509,7 @@ app.post('/api/orders/status', async (req, res) => {
 
       // Real-time notify with final fare
       try {
-        const snap2 = await dbGet(
-          "SELECT id, status, driver_phone, accepted_at, arrived_at, started_at, completed_at, cancelled_at, updated_at, fare_package, real_km, real_minutes, final_fare, admin_fee, driver_earn FROM orders WHERE id=?",
-          [order_id]
-        );
+        const snap2 = await getOrderSnapshotForPassenger(order_id);
         if (snap2) sseBroadcast(order_id, 'status', { order: snap2, fare: { real_km: snap2.real_km, real_minutes: snap2.real_minutes, final_fare: snap2.final_fare, admin_fee: snap2.admin_fee, driver_earn: snap2.driver_earn } });
       } catch(_){ /* ignore */ }
 

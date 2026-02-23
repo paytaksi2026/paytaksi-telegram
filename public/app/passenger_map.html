@@ -31,6 +31,9 @@
   .ride-ui .title { font-weight:700; }
   .ride-ui .sub { font-size:12px; color:#94a3b8; margin-top:2px; }
   .ride-ui .eta { font-size:12px; color:#cbd5e1; margin-top:6px; }
+  .ride-ui .driverline{margin-top:8px;font-size:12px;color:#e2e8f0;line-height:1.35}
+  .ride-ui .driverline a{color:#93c5fd;text-decoration:none}
+  .ride-ui .driverline .muted{color:#94a3b8}
   .steps { display:flex; gap:8px; margin-top:10px; }
   .step { flex:1; padding:8px 6px; border-radius:12px; text-align:center; font-size:12px; border:1px solid rgba(255,255,255,.10); background: rgba(255,255,255,.03); color:#94a3b8; }
   .step.active { background: rgba(34,197,94,.15); border-color: rgba(34,197,94,.35); color:#e2e8f0; }
@@ -98,6 +101,7 @@
             <div class="title" id="rideTitle">Sifariş</div>
             <div class="sub" id="rideSub">—</div>
             <div class="eta" id="rideEta" style="display:none">—</div>
+            <div class="driverline" id="rideDriver" style="display:none"></div>
           </div>
           <span class="pill" id="ridePill">—</span>
         </div>
@@ -106,6 +110,9 @@
         <div class="status-actions">
           <label class="sound-toggle"><input type="checkbox" id="soundOn" checked> Səsli bildiriş</label>
           <button class="secondary" id="focusDriverBtn" style="display:none">Sürücüyə fokus</button>
+        </div>
+        <div class="row" id="rideCancelRow" style="margin-top:10px;display:none">
+          <button class="secondary" id="rideCancelBtn">Sifarişi ləğv et</button>
         </div>
       </div>
       <div style="margin-top:16px">
@@ -465,7 +472,15 @@ function statusLabel(status){
 async function renderRideUI(order){
   const box = document.getElementById('rideUI');
   if(!box) return;
-  if(!order || !order.id){ box.style.display='none'; setEtaText(''); return; }
+  if(!order || !order.id){
+    box.style.display='none';
+    setEtaText('');
+    const drvEl0 = document.getElementById('rideDriver');
+    if (drvEl0) { drvEl0.style.display='none'; drvEl0.innerHTML=''; }
+    const cancelRow0 = document.getElementById('rideCancelRow');
+    if (cancelRow0) cancelRow0.style.display='none';
+    return;
+  }
   box.style.display='block';
 
   document.getElementById('rideTitle').textContent = 'Sifariş #' + order.id;
@@ -493,6 +508,45 @@ async function renderRideUI(order){
   const pill = document.getElementById('ridePill');
   pill.textContent = order.status || 'new';
 
+  // Driver info line (shows when driver is assigned/accepted)
+  const drvEl = document.getElementById('rideDriver');
+  if (drvEl){
+    const dp = order.driver_phone || order.assigned_driver_phone || '';
+    if (dp){
+      const tel = `<a href="tel:${dp}">${dp}</a>`;
+      const nm = order.driver_name ? ` • ${escapeHtml(order.driver_name)}` : '';
+      const carBits = [];
+      if (order.driver_car_make) carBits.push(escapeHtml(order.driver_car_make));
+      if (order.driver_car_model) carBits.push(escapeHtml(order.driver_car_model));
+      const plate = order.driver_car_plate ? escapeHtml(order.driver_car_plate) : '';
+      const color = order.driver_car_color ? escapeHtml(order.driver_car_color) : '';
+      const year = order.driver_car_year ? escapeHtml(String(order.driver_car_year)) : '';
+      const carLine = (carBits.length || plate || color || year)
+        ? `<div class="muted" style="margin-top:3px"><b>Avto:</b> ${carBits.join(' ')}${plate?(' • '+plate):''}${color?(' • '+color):''}${year?(' • '+year):''}</div>`
+        : '';
+      drvEl.innerHTML = `<b>Sürücü:</b> ${tel}${nm}${carLine}`;
+      drvEl.style.display='block';
+    } else {
+      drvEl.style.display='none';
+      drvEl.innerHTML='';
+    }
+  }
+
+  // Passenger cancel button (allowed before ride starts)
+  const curSt = String(order.status||'').toLowerCase();
+  const canCancel = ['new','accepted','arrived'].includes(curSt) && !(Number(order.started_at||0) > 0) && curSt!=='in_progress' && curSt!=='completed' && curSt!=='cancelled';
+  const cancelRow = document.getElementById('rideCancelRow');
+  const cancelBtn = document.getElementById('rideCancelBtn');
+  if (cancelRow && cancelBtn){
+    if (canCancel){
+      cancelRow.style.display='flex';
+      cancelBtn.onclick = ()=> cancelOrder(order.id);
+    } else {
+      cancelRow.style.display='none';
+      cancelBtn.onclick = null;
+    }
+  }
+
   const idx = statusToStepIndex(order.status);
   const steps = ['Axtarış','Qəbul','Gəldi','Başladı','Bitdi'];
   const wrap = document.getElementById('rideSteps');
@@ -513,6 +567,16 @@ async function renderRideUI(order){
     if (cur==='in_progress') beep('start');
     if (cur==='completed') beep('info');
   }
+}
+
+// Tiny HTML escape for safe inline rendering
+function escapeHtml(s){
+  return String(s||'')
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;')
+    .replace(/'/g,'&#39;');
 }
 
 function metersBetween(a,b){
