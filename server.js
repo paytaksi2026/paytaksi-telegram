@@ -875,7 +875,7 @@ app.post('/api/orders/create', async (req, res) => {
     );
   });
   if (activePassenger) {
-    return res.status(409).json({ error: 'PASSENGER_HAS_ACTIVE_ORDER', order_id: activePassenger.id, status: activePassenger.status });
+    return res.status(409).json({ error: 'Aktiv sifarişiniz var', order_id: activePassenger.id, status: activePassenger.status });
   }
 
   const package_id = String(req.body.package_id || req.body.package || 'economy');
