@@ -46,52 +46,16 @@
   .pkgbtn small{display:block;font-weight:400;opacity:.8;margin-top:2px}
   .pkgbtn.active{background:rgba(34,197,94,.18);border-color:rgba(34,197,94,.4)}
 
+  /* Recent orders modal (non-sticky) */
+  .pt-modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:flex-end;justify-content:center;z-index:9999;padding:10px}
+  .pt-modal .sheet{width:100%;max-width:980px;max-height:82vh;overflow:auto;background:rgba(15,23,42,.92);border:1px solid rgba(148,163,184,.22);border-radius:16px;box-shadow:0 20px 50px rgba(0,0,0,.5)}
+  .pt-modal .sheet .head{position:sticky;top:0;background:rgba(2,6,23,.75);backdrop-filter:blur(6px);border-bottom:1px solid rgba(148,163,184,.18);padding:12px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px}
+  .pt-modal .sheet .body{padding:10px 14px}
+  .pt-modal .sheet .actions{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-top:10px}
+  .pt-smallbtn{padding:10px 12px;border-radius:12px}
+
   /* Leaflet custom icon wrapper */
   .pt-car-icon{background:transparent;border:none}
-
-  /* Recent orders: floating button + modal */
-  .orders-fab{
-    position:fixed; left:50%; transform:translateX(-50%);
-    bottom:14px; z-index:1200;
-    width:auto; min-width:180px; max-width:92vw;
-    padding:10px 14px; border-radius:999px;
-    background:rgba(148,163,184,.14);
-    border:1px solid rgba(148,163,184,.25);
-    color:#e5e7eb;
-    backdrop-filter: blur(10px);
-    box-shadow:0 10px 25px rgba(0,0,0,.35);
-  }
-  .orders-fab:active{transform:translateX(-50%) scale(.98)}
-  .modal-overlay{
-    position:fixed; inset:0; background:rgba(0,0,0,.55);
-    display:none; z-index:1300;
-  }
-  .modal{
-    position:fixed; left:50%; transform:translateX(-50%);
-    bottom:0; width:min(980px, 100%);
-    background:rgba(15,23,42,.96);
-    border:1px solid rgba(148,163,184,.20);
-    border-top-left-radius:18px; border-top-right-radius:18px;
-    max-height:78vh; overflow:hidden;
-    display:none; z-index:1400;
-    box-shadow:0 -15px 40px rgba(0,0,0,.55);
-  }
-  .modal .modal-head{
-    display:flex; align-items:center; justify-content:space-between;
-    gap:10px; padding:12px 14px;
-    border-bottom:1px solid rgba(148,163,184,.14);
-  }
-  .modal .modal-title{font-weight:800}
-  .modal .modal-body{padding:0 14px 12px 14px; overflow:auto; max-height:66vh}
-  .modal .pager{display:flex; gap:10px; align-items:center; justify-content:space-between; padding:10px 14px; border-top:1px solid rgba(148,163,184,.14)}
-  .modal .pager button{width:auto; flex:1}
-  .modal .close-btn{
-    width:auto; padding:8px 12px; border-radius:999px;
-    background:rgba(148,163,184,.14);
-    border:1px solid rgba(148,163,184,.25);
-    color:#e5e7eb;
-  }
-
 </style>
 
 <link rel="stylesheet" href="/assets/bolt.css" />
@@ -152,109 +116,37 @@
           <button class="secondary" id="focusDriverBtn" style="display:none">Sürücüyə fokus</button>
         </div>
       </div>
-      <!-- Recent orders moved to modal (button) -->
-      <div id="ordersFabWrap"></div>
+      <!-- Recent orders button (non-sticky) -->
+      <div style="margin-top:16px">
+        <button class="secondary pt-smallbtn" id="recentOrdersBtn" type="button">Son sifarişlər</button>
+      </div>
+
+      <!-- Recent orders modal -->
+      <div class="pt-modal" id="ordersModal">
+        <div class="sheet">
+          <div class="head">
+            <div>
+              <div style="font-weight:800">Son sifarişlər</div>
+              <div style="opacity:.7;font-size:13px">Hər səhifədə 5 sifariş</div>
+            </div>
+            <button class="secondary pt-smallbtn" id="ordersCloseBtn" type="button">Bağla</button>
+          </div>
+          <div class="body">
+            <div id="ordersList"></div>
+            <div class="actions">
+              <button class="secondary pt-smallbtn" id="ordersPrevBtn" type="button">Əvvəlki</button>
+              <div class="pill" id="ordersPageInfo">1/1</div>
+              <button class="secondary pt-smallbtn" id="ordersNextBtn" type="button">Sonrakı</button>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </div>
 
-
-<!-- Recent Orders UI -->
-<button id="ordersFab" class="orders-fab" type="button">Son sifarişlər</button>
-
-<div id="ordersOverlay" class="modal-overlay"></div>
-<div id="ordersModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="ordersModalTitle">
-  <div class="modal-head">
-    <div class="modal-title" id="ordersModalTitle">Son sifarişlər</div>
-    <button class="close-btn" id="ordersCloseBtn" type="button">Bağla</button>
-  </div>
-  <div class="modal-body">
-    <div id="orders" style="margin-top:6px"></div>
-  </div>
-  <div class="pager">
-    <button class="secondary" id="ordersPrevBtn" type="button">Əvvəlki</button>
-    <div id="ordersPageInfo" style="opacity:.8;flex:1;text-align:center;font-size:13px"></div>
-    <button class="secondary" id="ordersNextBtn" type="button">Sonrakı</button>
-  </div>
-</div>
-
-
 <script>
 const NOMINATIM = 'https://nominatim.openstreetmap.org';
-
-
-// Recent orders modal + pagination
-let recentOrders = [];
-let recentPage = 0;
-const RECENT_PAGE_SIZE = 5;
-
-function openOrdersModal(){
-  document.getElementById('ordersOverlay').style.display='block';
-  document.getElementById('ordersModal').style.display='block';
-}
-function closeOrdersModal(){
-  document.getElementById('ordersOverlay').style.display='none';
-  document.getElementById('ordersModal').style.display='none';
-}
-
-function renderRecentOrders(){
-  const box = document.getElementById('orders');
-  const info = document.getElementById('ordersPageInfo');
-  const prevBtn = document.getElementById('ordersPrevBtn');
-  const nextBtn = document.getElementById('ordersNextBtn');
-  if(!box) return;
-
-  const total = recentOrders.length;
-  if(!total){
-    box.innerHTML = '<div style="opacity:.7;padding:10px 0">Hələ sifariş yoxdur.</div>';
-    if(info) info.textContent = '';
-    if(prevBtn) prevBtn.disabled = true;
-    if(nextBtn) nextBtn.disabled = true;
-    return;
-  }
-
-  const pages = Math.max(1, Math.ceil(total / RECENT_PAGE_SIZE));
-  if(recentPage < 0) recentPage = 0;
-  if(recentPage > pages-1) recentPage = pages-1;
-
-  const start = recentPage * RECENT_PAGE_SIZE;
-  const slice = recentOrders.slice(start, start + RECENT_PAGE_SIZE);
-
-  box.innerHTML = slice.map(o => {
-    const dt = fmtTs(o.created_at);
-    const pkgLine = (o.fare_package) ? `<span class="pill" style="margin-left:6px">${o.fare_package}</span>` : '';
-    const driverLine = o.driver_phone ? (() => {
-      const tel = `<a href="tel:${o.driver_phone}" style="color:#93c5fd;text-decoration:none">${o.driver_phone}</a>`;
-      const nm = o.driver_name ? ` • ${o.driver_name}` : '';
-      const car = (o.driver_car_make || o.driver_car_model || o.driver_car_plate || o.driver_car_color || o.driver_car_year)
-        ? `<div style="opacity:.9;margin-top:4px"><b>Avto:</b> ${(o.driver_car_make||'')}${(o.driver_car_model?' '+o.driver_car_model:'')}${(o.driver_car_plate?' • '+o.driver_car_plate:'')}${(o.driver_car_color?' • '+o.driver_car_color:'')}${(o.driver_car_year?' • '+o.driver_car_year:'')}</div>`
-        : '';
-      return `<div style="opacity:.9;margin-top:4px"><b>Sürücü:</b> ${tel}${nm}</div>${car}`;
-    })() : '';
-    const estLine = (o.est_fare != null) ? `<div style="opacity:.9;margin-top:4px"><b>Təxmini:</b> ${Number(o.est_km||0).toFixed(1)} km • ${o.est_fare} AZN</div>` : '';
-
-    const st = String(o.status||'').toLowerCase();
-    const stText = (st==='cancelled') ? 'Ləğv olundu' : (st==='completed' ? 'Uğurlu' : (o.status||''));
-    const stStyle = (st==='cancelled') ? 'border-color:rgba(239,68,68,.55);background:rgba(239,68,68,.18);color:#fecaca;' :
-                    (st==='completed') ? 'border-color:rgba(34,197,94,.55);background:rgba(34,197,94,.16);color:#bbf7d0;' : '';
-
-    const canCancel = (st==='new' || st==='accepted') && !(Number(o.started_at||0) > 0) && st!=='in_progress' && st!=='completed' && st!=='cancelled';
-    const cancelBtn = canCancel ? `<div class="row" style="margin-top:10px"><button class="secondary" onclick="cancelOrder(${o.id})">Sifarişi ləğv et</button></div>` : '';
-    return `<div style="padding:10px 0;border-bottom:1px solid rgba(148,163,184,.12)">
-      <div><b>#${o.id}</b> <span class="pill" style="${stStyle}">${stText}</span>${pkgLine}</div>
-      <div style="opacity:.9;margin-top:4px"><b>Haradan:</b> ${o.pickup_text}</div>
-      <div style="opacity:.9;margin-top:4px"><b>Haraya:</b> ${o.dropoff_text}</div>
-      ${estLine}
-      ${driverLine}
-      <div style="opacity:.65;margin-top:4px">${dt}</div>
-      ${cancelBtn}
-    </div>`;
-  }).join('');
-
-  if(info) info.textContent = `Səhifə ${recentPage+1} / ${pages} • ${total} sifariş`;
-  if(prevBtn) prevBtn.disabled = (recentPage <= 0);
-  if(nextBtn) nextBtn.disabled = (recentPage >= pages-1);
-}
 
 
 function fmtTs(v){
@@ -267,6 +159,10 @@ function fmtTs(v){
   return d.toLocaleString();
 }
 let map, meMarker, fromMarker, toMarker, driverMarker;
+let ordersCache = [];
+let ordersPage = 0;
+const ORDERS_PAGE_SIZE = 5;
+let ordersModalOpen = false;
 let routeLine = null;
 let lastRouteKey = '';
 let driverRouteLine = null;
@@ -864,10 +760,84 @@ async function createOrder(){
   }
 }
 
+function openOrdersModal(){
+  ordersModalOpen = true;
+  const m = document.getElementById('ordersModal');
+  if(m){ m.style.display = 'flex'; }
+  ordersPage = 0;
+  renderOrdersPage();
+}
+function closeOrdersModal(){
+  ordersModalOpen = false;
+  const m = document.getElementById('ordersModal');
+  if(m){ m.style.display = 'none'; }
+}
+function renderOrdersPage(){
+  const box = document.getElementById('ordersList');
+  const info = document.getElementById('ordersPageInfo');
+  const prev = document.getElementById('ordersPrevBtn');
+  const next = document.getElementById('ordersNextBtn');
+  if(!box) return;
+
+  const total = ordersCache.length;
+  const pages = Math.max(1, Math.ceil(total / ORDERS_PAGE_SIZE));
+  ordersPage = Math.min(Math.max(0, ordersPage), pages-1);
+
+  if(total===0){
+    box.innerHTML = '<div style="opacity:.7">Hələ sifariş yoxdur.</div>';
+  } else {
+    const start = ordersPage * ORDERS_PAGE_SIZE;
+    const items = ordersCache.slice(start, start + ORDERS_PAGE_SIZE);
+    box.innerHTML = items.map(renderOrderRow).join('');
+  }
+
+  if(info) info.textContent = (ordersPage+1) + '/' + pages;
+  if(prev) prev.disabled = (ordersPage<=0);
+  if(next) next.disabled = (ordersPage>=pages-1);
+}
+function renderOrderRow(o){
+  const dt = fmtTs(o.created_at);
+  const pkgLine = (o.fare_package) ? `<span class="pill" style="margin-left:6px">${o.fare_package}</span>` : '';
+
+  const st = String(o.status||'').toLowerCase();
+  const stText = (st==='cancelled') ? 'Ləğv olundu' : (st==='completed' ? 'Uğurlu' : (o.status||''));
+  const stStyle = (st==='cancelled') ? 'border-color:rgba(239,68,68,.55);background:rgba(239,68,68,.18);color:#fecaca;' :
+                  (st==='completed') ? 'border-color:rgba(34,197,94,.55);background:rgba(34,197,94,.16);color:#bbf7d0;' : '';
+
+  const estLine = (o.est_fare != null) ? `<div style="opacity:.9;margin-top:4px"><b>Təxmini:</b> ${Number(o.est_km||0).toFixed(1)} km • ${o.est_fare} AZN</div>` : '';
+
+  const driverLine = o.driver_phone ? (() => {
+    const tel = `<a href="tel:${o.driver_phone}" style="color:#93c5fd;text-decoration:none">${o.driver_phone}</a>`;
+    const nm = o.driver_name ? ` • ${o.driver_name}` : '';
+    const car = (o.driver_car_make || o.driver_car_model || o.driver_car_plate || o.driver_car_color || o.driver_car_year)
+      ? `<div style="opacity:.9;margin-top:4px"><b>Avto:</b> ${(o.driver_car_make||'')}${(o.driver_car_model?' '+o.driver_car_model:'')}${(o.driver_car_plate?' • '+o.driver_car_plate:'')}${(o.driver_car_color?' • '+o.driver_car_color:'')}${(o.driver_car_year?' • '+o.driver_car_year:'')}</div>`
+      : '';
+    return `<div style="opacity:.9;margin-top:4px"><b>Sürücü:</b> ${tel}${nm}</div>${car}`;
+  })() : '';
+
+  const canCancel = (st==='new' || st==='accepted') && !(Number(o.started_at||0) > 0) && st!=='in_progress' && st!=='completed' && st!=='cancelled';
+  const cancelBtn = canCancel ? `<div class="row" style="margin-top:10px"><button class="secondary" onclick="cancelOrder(${o.id})">Sifarişi ləğv et</button></div>` : '';
+
+  return `<div style="padding:10px 0;border-bottom:1px solid rgba(148,163,184,.12)">
+    <div><b>#${o.id}</b> <span class="pill" style="${stStyle}">${stText}</span>${pkgLine}</div>
+    <div style="opacity:.9;margin-top:4px"><b>Haradan:</b> ${o.pickup_text}</div>
+    <div style="opacity:.9;margin-top:4px"><b>Haraya:</b> ${o.dropoff_text}</div>
+    ${estLine}
+    ${driverLine}
+    <div style="opacity:.65;margin-top:4px">${dt}</div>
+    ${cancelBtn}
+  </div>`;
+}
+
+
 async function loadMyOrders(){
   const res = await fetch('/api/orders/my?phone=' + encodeURIComponent(s.phone) + '&password=' + encodeURIComponent(s.password));
   const data = await res.json().catch(()=> ({}));
-  if(!data.success){ recentOrders = []; recentPage = 0; renderRecentOrders(); return; }
+  const listBox = document.getElementById('ordersList');
+  if(!data.success){
+    if(ordersModalOpen && listBox){ listBox.innerHTML = '<div style="opacity:.7">Sifarişlər yüklənmədi.</div>'; }
+    return;
+  }
 
   // Defensive: dedupe by order id (can happen if DB has duplicate driver rows and JOIN multiplies results)
   const raw = Array.isArray(data.orders) ? data.orders : [];
@@ -879,11 +849,10 @@ async function loadMyOrders(){
   }
   const orders = Array.from(byId.values()).sort((a,b)=> Number(b.id||0) - Number(a.id||0));
 
-  if(!orders.length){ recentOrders = []; recentPage = 0; renderRecentOrders(); return; }
-
-  recentOrders = orders;
-  recentPage = 0;
-  renderRecentOrders();
+  ordersCache = orders;
+  const btn = document.getElementById('recentOrdersBtn');
+  if(btn){ btn.textContent = 'Son sifarişlər' + (orders.length ? (' (' + orders.length + ')') : ''); }
+  if(ordersModalOpen){ renderOrdersPage(); }
 
   const active = orders.find(o => ['accepted','arrived','started','in_progress'].includes(String(o.status||'').toLowerCase()) && o.driver_phone);
   if(active){
@@ -932,37 +901,18 @@ function startPolling(){
   pollTimer = setInterval(loadMyOrders, 5000);
 }
 
-
-// Recent orders UI hooks
+// recent orders modal wiring
 (function(){
-  const fab = document.getElementById('ordersFab');
-  const ov = document.getElementById('ordersOverlay');
-  const closeBtn = document.getElementById('ordersCloseBtn');
-  const prevBtn = document.getElementById('ordersPrevBtn');
-  const nextBtn = document.getElementById('ordersNextBtn');
-
-  if(fab){
-    fab.addEventListener('click', ()=>{
-      openOrdersModal();
-      // refresh list on open
-      loadMyOrders();
-    });
-  }
-  if(ov) ov.addEventListener('click', closeOrdersModal);
-  if(closeBtn) closeBtn.addEventListener('click', closeOrdersModal);
-
-  if(prevBtn){
-    prevBtn.addEventListener('click', ()=>{
-      recentPage = Math.max(0, recentPage-1);
-      renderRecentOrders();
-    });
-  }
-  if(nextBtn){
-    nextBtn.addEventListener('click', ()=>{
-      recentPage = recentPage+1;
-      renderRecentOrders();
-    });
-  }
+  const btn = document.getElementById(recentOrdersBtn);
+  const modal = document.getElementById(ordersModal);
+  const closeBtn = document.getElementById(ordersCloseBtn);
+  const prev = document.getElementById(ordersPrevBtn);
+  const next = document.getElementById(ordersNextBtn);
+  if(btn){ btn.addEventListener(click, ()=>{ openOrdersModal(); loadMyOrders(); }); }
+  if(closeBtn){ closeBtn.addEventListener(click, closeOrdersModal); }
+  if(modal){ modal.addEventListener(click, (e)=>{ if(e.target===modal) closeOrdersModal(); }); }
+  if(prev){ prev.addEventListener(click, ()=>{ ordersPage=Math.max(0, ordersPage-1); renderOrdersPage(); }); }
+  if(next){ next.addEventListener(click, ()=>{ ordersPage=ordersPage+1; renderOrdersPage(); }); }
 })();
 
 
