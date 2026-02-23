@@ -48,6 +48,56 @@
 
   /* Leaflet custom icon wrapper */
   .pt-car-icon{background:transparent;border:none}
+
+/* Recent orders modal */
+.pt-modal{
+  position:fixed;
+  inset:0;
+  z-index:9999;
+  background:rgba(0,0,0,.55);
+  backdrop-filter:blur(2px);
+  display:flex;
+  align-items:flex-end;
+  justify-content:center;
+  padding:14px;
+}
+.pt-modal-card{
+  width:min(720px,100%);
+  max-height:82vh;
+  overflow:auto;
+  background:rgba(15,23,42,.96);
+  border:1px solid rgba(148,163,184,.18);
+  border-radius:18px;
+  padding:14px;
+  box-shadow:0 10px 40px rgba(0,0,0,.5);
+}
+@media (min-width:640px){
+  .pt-modal{ align-items:center; }
+  .pt-modal-card{ max-height:80vh; }
+}
+.pt-modal-head{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  position:sticky;
+  top:0;
+  background:rgba(15,23,42,.96);
+  padding-bottom:10px;
+  margin-bottom:2px;
+}
+.pt-modal-pager{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  position:sticky;
+  bottom:0;
+  background:rgba(15,23,42,.96);
+  padding-top:10px;
+  margin-top:10px;
+}
+
 </style>
 
 <link rel="stylesheet" href="/assets/bolt.css" />
@@ -108,10 +158,29 @@
           <button class="secondary" id="focusDriverBtn" style="display:none">Sürücüyə fokus</button>
         </div>
       </div>
-      <div style="margin-top:16px">
-        <div class="pill">Son sifarişlər</div>
-        <div id="orders" style="margin-top:10px"></div>
+
+      <div style="margin-top:14px;display:flex;justify-content:center">
+        <button id="openOrdersBtn" class="secondary" style="padding:8px 12px;font-size:13px;opacity:.9">Son sifarişlər</button>
       </div>
+
+      <!-- Recent orders modal (opens on button tap) -->
+      <div id="ordersModal" class="pt-modal" style="display:none">
+        <div class="pt-modal-card">
+          <div class="pt-modal-head">
+            <div class="pill">Son sifarişlər</div>
+            <button class="secondary" id="closeOrdersBtn" style="padding:6px 10px">Bağla</button>
+          </div>
+
+          <div id="orders" style="margin-top:10px"></div>
+
+          <div class="pt-modal-pager">
+            <button class="secondary" id="prevOrdersBtn" style="padding:8px 10px">Əvvəlki</button>
+            <div id="ordersPageInfo" style="opacity:.75;font-size:13px">—</div>
+            <button class="secondary" id="nextOrdersBtn" style="padding:8px 10px">Sonrakı</button>
+          </div>
+        </div>
+      </div>
+
     </div>
   </div>
 </div>
@@ -142,6 +211,11 @@ let activeOrderId = null;
 let debounceT = null;
 let pollTimer = null;
 let driverTimer = null;
+
+// Recent orders paging
+let myOrdersAll = [];
+let myOrdersPage = 0;
+const MY_ORDERS_PAGE_SIZE = 5;
 
 // Real-time stream (SSE) for active order
 let orderStream = null;
@@ -727,25 +801,38 @@ async function createOrder(){
   }
 }
 
-async function loadMyOrders(){
-  const res = await fetch('/api/orders/my?phone=' + encodeURIComponent(s.phone) + '&password=' + encodeURIComponent(s.password));
-  const data = await res.json().catch(()=> ({}));
+function setOrdersBtnCount(){
+  const btn = document.getElementById('openOrdersBtn');
+  if(!btn) return;
+  const n = Array.isArray(myOrdersAll) ? myOrdersAll.length : 0;
+  btn.textContent = n ? (`Son sifarişlər (${n})`) : 'Son sifarişlər';
+}
+
+function renderMyOrdersPage(){
   const box = document.getElementById('orders');
-  if(!data.success){ box.innerHTML = '<div style="opacity:.7">Sifarişlər yüklənmədi.</div>'; return; }
+  const info = document.getElementById('ordersPageInfo');
+  const prevBtn = document.getElementById('prevOrdersBtn');
+  const nextBtn = document.getElementById('nextOrdersBtn');
 
-  // Defensive: dedupe by order id (can happen if DB has duplicate driver rows and JOIN multiplies results)
-  const raw = Array.isArray(data.orders) ? data.orders : [];
-  const byId = new Map();
-  for (const o of raw){
-    const id = Number(o && o.id);
-    if (!id) continue;
-    if (!byId.has(id)) byId.set(id, o);
+  const total = Array.isArray(myOrdersAll) ? myOrdersAll.length : 0;
+  const pages = Math.max(1, Math.ceil(total / MY_ORDERS_PAGE_SIZE));
+  if(myOrdersPage < 0) myOrdersPage = 0;
+  if(myOrdersPage > pages-1) myOrdersPage = pages-1;
+
+  if(info) info.textContent = pages ? `${myOrdersPage+1}/${pages}` : '—';
+  if(prevBtn) prevBtn.disabled = (myOrdersPage<=0);
+  if(nextBtn) nextBtn.disabled = (myOrdersPage>=pages-1);
+
+  if(!box) return;
+  if(!total){
+    box.innerHTML = '<div style="opacity:.7">Hələ sifariş yoxdur.</div>';
+    return;
   }
-  const orders = Array.from(byId.values()).sort((a,b)=> Number(b.id||0) - Number(a.id||0));
 
-  if(!orders.length){ box.innerHTML = '<div style="opacity:.7">Hələ sifariş yoxdur.</div>'; return; }
+  const start = myOrdersPage * MY_ORDERS_PAGE_SIZE;
+  const slice = myOrdersAll.slice(start, start + MY_ORDERS_PAGE_SIZE);
 
-  box.innerHTML = orders.map(o => {
+  box.innerHTML = slice.map(o => {
     const dt = fmtTs(o.created_at);
     const pkgLine = (o.fare_package) ? `<span class="pill" style="margin-left:6px">${o.fare_package}</span>` : '';
     const driverLine = o.driver_phone ? (() => {
@@ -775,6 +862,70 @@ async function loadMyOrders(){
       ${cancelBtn}
     </div>`;
   }).join('');
+}
+
+function setupOrdersModal(){
+  const btn = document.getElementById('openOrdersBtn');
+  const modal = document.getElementById('ordersModal');
+  const closeBtn = document.getElementById('closeOrdersBtn');
+  const prevBtn = document.getElementById('prevOrdersBtn');
+  const nextBtn = document.getElementById('nextOrdersBtn');
+
+  if(btn && modal){
+    btn.addEventListener('click', ()=>{
+      modal.style.display = 'flex';
+      renderMyOrdersPage();
+    });
+  }
+  if(closeBtn && modal){
+    closeBtn.addEventListener('click', ()=>{ modal.style.display = 'none'; });
+  }
+  if(modal){
+    modal.addEventListener('click', (e)=>{
+      if(e.target === modal) modal.style.display = 'none';
+    });
+  }
+  if(prevBtn){
+    prevBtn.addEventListener('click', ()=>{
+      myOrdersPage = Math.max(0, myOrdersPage-1);
+      renderMyOrdersPage();
+    });
+  }
+  if(nextBtn){
+    nextBtn.addEventListener('click', ()=>{
+      myOrdersPage = myOrdersPage + 1;
+      renderMyOrdersPage();
+    });
+  }
+}
+
+
+async function loadMyOrders(){
+  const res = await fetch('/api/orders/my?phone=' + encodeURIComponent(s.phone) + '&password=' + encodeURIComponent(s.password));
+  const data = await res.json().catch(()=> ({}));
+
+  if(!data.success){
+    myOrdersAll = [];
+    setOrdersBtnCount();
+    renderMyOrdersPage();
+    return;
+  }
+
+  // Defensive: dedupe by order id (can happen if DB has duplicate driver rows and JOIN multiplies results)
+  const raw = Array.isArray(data.orders) ? data.orders : [];
+  const byId = new Map();
+  for (const o of raw){
+    const id = Number(o && o.id);
+    if (!id) continue;
+    if (!byId.has(id)) byId.set(id, o);
+  }
+  const orders = Array.from(byId.values()).sort((a,b)=> Number(b.id||0) - Number(a.id||0));
+
+  myOrdersAll = orders;
+  setOrdersBtnCount();
+  const pages = Math.max(1, Math.ceil((orders.length||0) / MY_ORDERS_PAGE_SIZE));
+  if (myOrdersPage > pages-1) myOrdersPage = pages-1;
+  renderMyOrdersPage();
 
   const active = orders.find(o => ['accepted','arrived','started','in_progress'].includes(String(o.status||'').toLowerCase()) && o.driver_phone);
   if(active){
@@ -796,6 +947,7 @@ async function loadMyOrders(){
     if(driverRouteLine){ map.removeLayer(driverRouteLine); driverRouteLine=null; }
     lastDriverPos = null;
   }
+}
 }
 
 async function trackDriver(driverPhone){
@@ -823,6 +975,7 @@ function startPolling(){
   pollTimer = setInterval(loadMyOrders, 5000);
 }
 
+setupOrdersModal();
 loadPackages();
 initMap();
 useMyLocation();
