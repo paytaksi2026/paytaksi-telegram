@@ -34,7 +34,7 @@
     </div>
 
     <p style="margin-top:14px">Status: <span class="badge" id="st">OFFLINE</span></p>
-    <p style="margin-top:6px">Balans: <span class="badge" id="bal">0.00 AZN</span> <span id="balHint" style="opacity:.75;font-size:12px"></span></p>
+    <p style="margin-top:6px">Balans: <span class="badge" id="bal" style="cursor:pointer" title="Balans tarixçəsini aç/bağla">0.00 AZN</span> <span id="balHint" style="opacity:.75;font-size:12px"></span></p>
 
     <details id="ledgerWrap" style="margin-top:10px">
   <summary class="row" style="justify-content:space-between;align-items:center;list-style:none;cursor:pointer;padding:10px 12px;border-radius:12px;border:1px solid rgba(148,163,184,.18);background:rgba(2,6,23,.35)">
@@ -141,6 +141,23 @@ function renderBalance(balance, minBalance){
   const hint = document.getElementById('balHint');
   if(el){
     el.textContent = fmtMoney(b) + ' AZN';
+
+  // Balansın üzərinə basanda tarixçə açılsın
+  // (details/summary çox yer tutmasın deyə tarixçə default qapalı qalır)
+  if(el && !el.dataset.bindLedger){
+    el.dataset.bindLedger = '1';
+    el.addEventListener('click', ()=>{
+      const wrap = document.getElementById('ledgerWrap');
+      if(!wrap) return;
+      wrap.open = !wrap.open;
+      if(wrap.open){
+        // Açılan kimi yüklə
+        try{ loadLedger(); }catch(e){}
+        // Açılan hissəyə scroll et (mobil üçün)
+        try{ wrap.scrollIntoView({behavior:'smooth', block:'start'}); }catch(e){}
+      }
+    });
+  }
     // Visual warning when below/at limit
     if(Number.isFinite(min) && b <= min){
       el.style.borderColor = 'rgba(239,68,68,.65)';
