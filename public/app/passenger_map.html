@@ -640,7 +640,7 @@ async function createOrder(){
     setMsg('Sifariş yaradıldı. ID: ' + data.order_id + pkg + ' • ' + (data.est_fare ?? '') + ' AZN (təxmini)');
     loadMyOrders();
   } else {
-    if (data && data.error === 'PASSENGER_HAS_ACTIVE_ORDER') {
+    if (data && data.error === 'Aktiv sifarişiniz var') {
       setMsg('Aktiv sifarişiniz var. Yeni sifariş üçün əvvəlkini bitirin və ya ləğv edin. (ID: ' + (data.order_id||'') + ')');
       loadMyOrders();
     } else {
