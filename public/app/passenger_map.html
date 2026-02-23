@@ -109,8 +109,9 @@
         </div>
       </div>
       <div style="margin-top:16px">
-        <div class="pill">Son sifarişlər</div>
-        <div id="orders" style="margin-top:10px"></div>
+        <button class="secondary" onclick="window.location.href='/app/order_history.html'">Sifariş tarixçəsi</button>
+        <!-- Keep container for backward-compat: loadMyOrders() may render into it (hidden on this screen) -->
+        <div id="orders" style="display:none"></div>
       </div>
     </div>
   </div>
