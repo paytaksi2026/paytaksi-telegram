@@ -1654,20 +1654,28 @@ app.post('/api/admin/driver-balance/adjust', requireAdmin, async (req, res) => {
     const adminUser = adminUserFromReq(req);
     const ts = nowMs();
 
+    // NOTE: This project uses a small adapter that converts sqlite-style "?" placeholders
+    // to PostgreSQL "$1, $2, ...". Therefore, DO NOT mix "$1" with "?" in the same query.
     const where = id ? 'id=?' : 'phone=?';
     const params = id ? [amount, id] : [amount, phone];
-    await db._query(
-      `UPDATE users SET driver_balance = COALESCE(driver_balance,0) + $1 WHERE ${where} AND role='driver' RETURNING phone, driver_balance`,
+
+    const r = await db._query(
+      `UPDATE users
+          SET driver_balance = COALESCE(driver_balance,0) + ?
+        WHERE ${where} AND role='driver'
+    RETURNING phone, driver_balance`,
       params
-    ).then(async (r)=>{
-      const row = (r && r.rows && r.rows[0]) ? r.rows[0] : null;
-      if (!row) throw { status:404, error:'NOT_FOUND' };
-      await db._query(
-        "INSERT INTO driver_balance_ledger(driver_phone, amount, reason, order_id, admin_user, created_at) VALUES($1,$2,$3,$4,$5,$6)",
-        [row.phone, amount, reason || 'admin_adjust', null, adminUser || null, ts]
-      );
-      res.json({ success:true, phone: row.phone, driver_balance: Number(row.driver_balance||0) });
-    });
+    );
+
+    const row = (r && r.rows && r.rows[0]) ? r.rows[0] : null;
+    if (!row) return res.status(404).json({ error:'NOT_FOUND' });
+
+    await db._query(
+      "INSERT INTO driver_balance_ledger(driver_phone, amount, reason, order_id, admin_user, created_at) VALUES(?,?,?,?,?,?)",
+      [row.phone, amount, reason || 'admin_adjust', null, adminUser || null, ts]
+    );
+
+    res.json({ success:true, phone: row.phone, driver_balance: Number(row.driver_balance||0) });
   }catch(e){
     if (e && e.status) return res.status(e.status).json({ error: e.error || 'ERROR' });
     res.status(500).json({ error:'DB_ERROR' });
