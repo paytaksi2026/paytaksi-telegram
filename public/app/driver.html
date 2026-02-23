@@ -37,6 +37,26 @@
     <p style="margin-top:6px">Balans: <span class="badge" id="bal" style="cursor:pointer" title="Balans tarixçəsini aç/bağla">0.00 AZN</span> <span id="balHint" style="opacity:.75;font-size:12px"></span></p>
 
 
+	      <details id="ledgerWrap" style="margin-top:10px">
+  <summary class="row" style="justify-content:space-between;align-items:center;list-style:none;cursor:pointer;padding:10px 12px;border-radius:12px;border:1px solid rgba(148,163,184,.18);background:rgba(2,6,23,.35)">
+
+
+
+
+
+
+	  
+    <div id="ledgerMini" class="badge" style="opacity:.9"></div>
+  </summary>
+
+  <div class="row" style="justify-content:flex-end;gap:8px;margin-top:8px">
+    <button class="secondary" onclick="loadLedger()">Yenilə</button>
+    <button class="secondary" onclick="openLedgerModal()">Hamısı</button>
+  </div>
+
+  <div id="ledgerList" style="margin-top:8px;max-height:220px;overflow:auto"></div>
+</details>
+
 
 <div id="ledgerModal" style="position:fixed;inset:0;display:none;align-items:flex-end;justify-content:center;background:rgba(0,0,0,.55);z-index:9999">
   <div style="width:min(720px,100%);max-height:85vh;background:rgba(2,6,23,.96);border:1px solid rgba(148,163,184,.18);border-radius:18px 18px 0 0;overflow:hidden">
