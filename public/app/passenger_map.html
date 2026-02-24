@@ -568,14 +568,27 @@ function showDriverFoundOverlay(order){
   }, 15000);
 }
 
+
 function triggerDriverFound(order){
   const id = order?.id;
   if(!id) return;
+
   const st = String(order?.status||'').toLowerCase();
   const hasDriver = !!(order?.driver_phone || order?.assigned_driver_phone);
+
+  const hasCarInfo =
+    order?.driver_car_make ||
+    order?.driver_car_model ||
+    order?.driver_car_plate ||
+    order?.driver_car_color;
+
+  // yalnız accepted + driver məlumatı tam gələndə
+  if(st !== 'accepted') return;
   if(!hasDriver) return;
-  if(!(st==='accepted' || st==='arrived' || st==='in_progress' || st==='started')) return;
+  if(!hasCarInfo) return;   // <-- ƏSAS FIX
+
   if(lastDriverFoundOrderId === id) return;
+
   lastDriverFoundOrderId = id;
   playDriverFoundSound();
   showDriverFoundOverlay(order);
