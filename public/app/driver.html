@@ -167,7 +167,16 @@
     </div>
 
     <hr style="border:none;border-top:1px solid rgba(148,163,184,.18);margin:16px 0" />
-    <h3 id="myTitle" style="margin:0">Mənim qəbul etdiklərim</h3>
+    
+<div style="margin-bottom:12px">
+  <a href="/app/driver_history.html" 
+     style="display:inline-block;padding:10px 14px;border-radius:10px;
+     background:#3b82f6;color:white;font-weight:700;text-decoration:none">
+     Tam Sifariş Tarixçəsi
+  </a>
+</div>
+
+<h3 id="myTitle" style="margin:0">Son 5 Sifariş</h3>
     <div id="my" style="margin-top:10px"></div>
   </div>
 </div>
@@ -287,7 +296,7 @@ function applyActiveOrderUI(activeOrder){
   if(controls) controls.style.display = has ? 'none' : 'flex';
   if(pkg) pkg.style.display = has ? 'none' : 'block';
   if(feed) feed.style.display = has ? 'none' : 'block';
-  if(title) title.textContent = has ? 'Aktiv sifariş' : 'Mənim qəbul etdiklərim';
+  if(title) title.textContent = has ? 'Aktiv sifariş' : 'Son 5 Sifariş';
 }
 
 function ledgerLabel(row){

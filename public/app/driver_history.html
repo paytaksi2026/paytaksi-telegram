@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="az">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sürücü - Sifariş Tarixçəsi</title>
+<style>
+body{margin:0;background:#0b1220;color:#e5e7eb;font-family:Arial,Helvetica,sans-serif}
+.wrap{max-width:980px;margin:0 auto;padding:18px}
+.card{background:rgba(15,23,42,.75);border:1px solid rgba(148,163,184,.2);
+border-radius:14px;padding:16px;box-shadow:0 10px 30px rgba(0,0,0,.35)}
+button{padding:8px 12px;border-radius:8px;border:none;background:#22c55e;color:#081014;font-weight:700;cursor:pointer}
+button.secondary{background:#3b82f6;color:white}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <div class="row" style="justify-content:space-between">
+      <h2>Sifariş Tarixçəsi</h2>
+      <a href="/app/driver.html" style="color:#3b82f6;text-decoration:none;font-weight:700">← Geri</a>
+    </div>
+    <div id="historyBox" style="margin-top:16px"></div>
+    <div class="row" style="justify-content:center;margin-top:16px">
+      <button class="secondary" onclick="prevPage()">Əvvəlki</button>
+      <button class="secondary" onclick="nextPage()">Sonrakı</button>
+    </div>
+  </div>
+</div>
+
+<script>
+function getSession(){ try{ return JSON.parse(localStorage.getItem('pt_session')||'null'); }catch(e){ return null; } }
+const s = getSession();
+if(!s || s.role !== 'driver'){ location.href='/'; }
+
+let currentPage = 1;
+const perPage = 5;
+let allOrders = [];
+
+async function loadHistory(){
+  const qs = new URLSearchParams({ phone:s.phone, password:s.password });
+  const res = await fetch('/api/orders/driver/my?' + qs.toString());
+  const data = await res.json();
+  if(!data.success) return;
+  allOrders = data.orders || [];
+  renderPage();
+}
+
+function renderPage(){
+  const start = (currentPage-1)*perPage;
+  const pageOrders = allOrders.slice(start, start+perPage);
+  const box = document.getElementById('historyBox');
+
+  if(!pageOrders.length){
+    box.innerHTML = '<div style="opacity:.75">Sifariş yoxdur.</div>';
+    return;
+  }
+
+  box.innerHTML = pageOrders.map(o=>`
+    <div style="padding:12px;border:1px solid rgba(148,163,184,.2);
+    border-radius:10px;margin-bottom:10px;background:rgba(2,6,23,.4)">
+      <div><b>#${o.id}</b> — ${o.status}</div>
+      <div style="margin-top:6px"><b>Haradan:</b> ${o.pickup_text}</div>
+      <div style="margin-top:6px"><b>Haraya:</b> ${o.dropoff_text}</div>
+      <div style="margin-top:6px;opacity:.7">${new Date(o.created_at).toLocaleString()}</div>
+    </div>
+  `).join('');
+}
+
+function nextPage(){
+  if((currentPage*perPage) < allOrders.length){
+    currentPage++;
+    renderPage();
+  }
+}
+
+function prevPage(){
+  if(currentPage>1){
+    currentPage--;
+    renderPage();
+  }
+}
+
+loadHistory();
+</script>
+</body>
+</html>
