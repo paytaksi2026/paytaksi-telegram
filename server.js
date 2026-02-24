@@ -6,6 +6,13 @@ const crypto = require('crypto');
 
 const app = express();
 
+// IMPORTANT: JSON body parser must be registered BEFORE any API routes
+// that read req.body. Some routes (like /api/orders/chat) are defined near
+// the top of this file; if bodyParser is only enabled later, req.body will
+// be undefined and can cause runtime crashes (seen as HTTP 502 on Render).
+app.use(bodyParser.json({ limit: '1mb' }));
+
+
 // ---------------- PostgreSQL connection (Render-compatible)
 // Render Postgres provides DATABASE_URL.
 // Keep this as the single source of truth (no local sqlite persistence).
@@ -92,11 +99,12 @@ app.get('/api/orders/chat', async (req, res) => {
 
 // Send message
 app.post('/api/orders/chat', async (req, res) => {
-  const order_id = parseInt(req.body.order_id, 10);
-  const role = normRole(req.body.role);
-  const phone = normPhone(req.body.phone);
-  const password = String(req.body.password || '');
-  const message = String(req.body.message || '').trim();
+  const b = req.body || {};
+  const order_id = parseInt(b.order_id, 10);
+  const role = normRole(b.role);
+  const phone = normPhone(b.phone);
+  const password = String(b.password || '');
+  const message = String(b.message || '').trim();
   if(!order_id) return res.status(400).json({ success:false, error:'ORDER_ID_REQUIRED' });
   if(!message) return res.status(400).json({ success:false, error:'EMPTY_MESSAGE' });
   if(message.length > 600) return res.status(400).json({ success:false, error:'MESSAGE_TOO_LONG' });
