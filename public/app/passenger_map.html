@@ -6,7 +6,46 @@
 <title>Xəritə & Sifariş - PayTaksi</title>
 
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js">
+function playMessageSound(){
+  try{
+    const ctx = new (window.AudioContext||window.webkitAudioContext)();
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.type='triangle';
+    o.frequency.value=720;
+    g.gain.value=0.15;
+    o.connect(g); g.connect(ctx.destination);
+    o.start();
+    setTimeout(()=>{o.stop();ctx.close();},180);
+  }catch(e){}
+}
+
+function showChatToast(text){
+  const box = document.getElementById('chatToast');
+  const t = document.getElementById('chatToastText');
+  if(!box || !t) return;
+  t.textContent = text;
+  box.style.display='block';
+  setTimeout(()=> box.classList.add('show'),10);
+  setTimeout(()=>{
+    box.classList.remove('show');
+    setTimeout(()=> box.style.display='none',350);
+  },4000);
+}
+
+function addChatBadge(btnId){
+  const btn = document.getElementById(btnId);
+  if(!btn) return;
+  if(btn.querySelector('.chatBadge')) return;
+  const b = document.createElement('span');
+  b.className='chatBadge';
+  b.textContent='1';
+  btn.style.position='relative';
+  btn.appendChild(b);
+}
+
+</script>
 
 <style>
   body{margin:0;background:#0b1220;color:#e5e7eb;font-family:Arial,Helvetica,sans-serif}
@@ -78,6 +117,44 @@
   .chatFoot{padding:12px 14px;border-top:1px solid rgba(148,163,184,.15);display:flex;gap:10px;align-items:center}
   .chatFoot input{flex:1}
   .chatNote{font-size:12px;opacity:.75;margin-top:6px}
+
+/* Chat notification toast */
+.chatToast {
+  position: fixed;
+  right: 20px;
+  top: 50%;
+  transform: translateY(-50%) translateX(120%);
+  background: rgba(15,23,42,0.85);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(148,163,184,.3);
+  padding: 14px 18px;
+  border-radius: 16px;
+  color: #fff;
+  z-index: 20000;
+  min-width: 220px;
+  max-width: 300px;
+  box-shadow: 0 15px 40px rgba(0,0,0,.45);
+  transition: all .35s ease;
+}
+.chatToast.show {
+  transform: translateY(-50%) translateX(0);
+}
+.chatToast .title {
+  font-weight: 800;
+  margin-bottom: 4px;
+}
+.chatBadge {
+  position:absolute;
+  top:-5px;
+  right:-5px;
+  background:#ef4444;
+  color:white;
+  font-size:11px;
+  padding:3px 6px;
+  border-radius:999px;
+  font-weight:700;
+}
+
 </style>
 
 <link rel="stylesheet" href="/assets/bolt.css" />
@@ -1211,6 +1288,51 @@ initMap();
 useMyLocation();
 loadMyOrders();
 startPolling();
+
+function playMessageSound(){
+  try{
+    const ctx = new (window.AudioContext||window.webkitAudioContext)();
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.type='triangle';
+    o.frequency.value=720;
+    g.gain.value=0.15;
+    o.connect(g); g.connect(ctx.destination);
+    o.start();
+    setTimeout(()=>{o.stop();ctx.close();},180);
+  }catch(e){}
+}
+
+function showChatToast(text){
+  const box = document.getElementById('chatToast');
+  const t = document.getElementById('chatToastText');
+  if(!box || !t) return;
+  t.textContent = text;
+  box.style.display='block';
+  setTimeout(()=> box.classList.add('show'),10);
+  setTimeout(()=>{
+    box.classList.remove('show');
+    setTimeout(()=> box.style.display='none',350);
+  },4000);
+}
+
+function addChatBadge(btnId){
+  const btn = document.getElementById(btnId);
+  if(!btn) return;
+  if(btn.querySelector('.chatBadge')) return;
+  const b = document.createElement('span');
+  b.className='chatBadge';
+  b.textContent='1';
+  btn.style.position='relative';
+  btn.appendChild(b);
+}
+
 </script>
+
+<div id="chatToast" class="chatToast" style="display:none">
+  <div class="title">Yeni mesaj</div>
+  <div id="chatToastText"></div>
+</div>
+
 </body>
 </html>
