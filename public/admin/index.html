@@ -66,6 +66,9 @@
             <option value="4">4 km</option>
             <option value="8">8 km</option>
           </select>
+          <label style="opacity:.85;display:flex;align-items:center;gap:8px">
+            <input type="checkbox" id="chatEnabled" style="width:auto" /> Chat (sürücü↔müştəri)
+          </label>
           <button class="secondary" onclick="saveSettings()">Yadda saxla</button>
           <button class="secondary" onclick="loadStats()">Statistika</button>
           <button class="secondary" onclick="location.href='/admin/pricing.html'">Tariflər (Pricing)</button>
@@ -258,12 +261,17 @@ async function loadSettings(){
     if(!res.ok) throw data;
     const r = Number(data.settings?.default_radius_km || 4);
     defRadius.value = String([2,4,8].includes(r)?r:4);
+    const ce = String(data.settings?.chat_enabled ?? '1');
+    chatEnabled.checked = (ce === '1' || ce.toLowerCase()==='true');
   }catch(e){}
 }
 async function saveSettings(){
   setText('statMsg','...');
   try{
-    await api('/api/admin/settings', { default_radius_km: Number(defRadius.value) });
+    await api('/api/admin/settings', {
+      default_radius_km: Number(defRadius.value),
+      chat_enabled: chatEnabled.checked ? '1' : '0'
+    });
     setText('statMsg','Yadda saxlandı.');
   }catch(e){
     setText('statMsg', (e && e.error) ? e.error : 'ERROR');

@@ -61,6 +61,18 @@
   .btnRow{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
   .btnDanger{background:rgba(239,68,68,.15);color:#fecaca;border:1px solid rgba(239,68,68,.35)}
   .small{font-size:12px;opacity:.8}
+
+  /* Chat modal */
+  .chatOverlay{position:fixed;inset:0;display:none;align-items:flex-end;justify-content:center;background:rgba(0,0,0,.55);z-index:10000}
+  .chatSheet{width:min(760px,100%);max-height:88vh;background:rgba(2,6,23,.96);border:1px solid rgba(148,163,184,.18);border-radius:18px 18px 0 0;overflow:hidden}
+  .chatHead{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;border-bottom:1px solid rgba(148,163,184,.15)}
+  .chatBody{padding:12px 14px;max-height:62vh;overflow:auto}
+  .chatMsg{max-width:86%;padding:10px 12px;border-radius:14px;border:1px solid rgba(148,163,184,.18);background:rgba(148,163,184,.10);margin-bottom:8px;white-space:pre-wrap;word-break:break-word}
+  .chatMe{margin-left:auto;background:rgba(34,197,94,.15);border-color:rgba(34,197,94,.25)}
+  .chatMeta{font-size:11px;opacity:.7;margin-top:4px}
+  .chatFoot{padding:12px 14px;border-top:1px solid rgba(148,163,184,.15);display:flex;gap:10px;align-items:center}
+  .chatFoot input{flex:1}
+  .chatNote{font-size:12px;opacity:.75;margin-top:6px}
 </style>
 
 <link rel="stylesheet" href="/assets/bolt.css" />
@@ -173,6 +185,25 @@
     <div class="sheetBody">
       <div id="incomingBox"></div>
     </div>
+  </div>
+</div>
+
+<!-- Chat modal -->
+<div id="chatModal" class="chatOverlay" onclick="onChatOverlayClick(event)">
+  <div class="chatSheet">
+    <div class="chatHead">
+      <div>
+        <div style="font-weight:900">Chat</div>
+        <div class="small" id="chatSub">—</div>
+      </div>
+      <button class="secondary" onclick="closeChatModal()">Bağla</button>
+    </div>
+    <div class="chatBody" id="chatBody"></div>
+    <div class="chatFoot">
+      <input id="chatInput" placeholder="Mesaj yaz..." />
+      <button id="chatSendBtn" onclick="sendChat()">Göndər</button>
+    </div>
+    <div class="chatNote" id="chatNote" style="padding:0 14px 12px 14px"></div>
   </div>
 </div>
 
@@ -798,6 +829,123 @@ function navBtnHtml(href, label){
   return `<a href="${href}" target="_blank" rel="noreferrer" class="secondary" style="display:inline-block;padding:10px 12px;border-radius:10px;border:1px solid rgba(148,163,184,.25);background:rgba(148,163,184,.15);color:#e5e7eb;text-decoration:none;font-weight:700">${esc(label)}</a>`;
 }
 
+// ---------------- Chat modal (driver <-> passenger)
+let chatOrderId = null;
+let chatLastId = 0;
+let chatTimer = null;
+let chatCanWrite = true;
+
+function onChatOverlayClick(ev){
+  if(ev && ev.target && ev.target.id === 'chatModal') closeChatModal();
+}
+
+function closeChatModal(){
+  const m = document.getElementById('chatModal');
+  if(m) m.style.display = 'none';
+  chatOrderId = null;
+  chatLastId = 0;
+  chatCanWrite = true;
+  if(chatTimer){ clearInterval(chatTimer); chatTimer = null; }
+}
+
+async function openChatModal(orderId, status){
+  chatOrderId = Number(orderId)||null;
+  chatLastId = 0;
+  const m = document.getElementById('chatModal');
+  const body = document.getElementById('chatBody');
+  const sub = document.getElementById('chatSub');
+  const note = document.getElementById('chatNote');
+  if(!m || !body) return;
+  body.innerHTML = '<div style="opacity:.75">Yüklənir...</div>';
+  if(sub) sub.textContent = `Sifariş #${orderId} • ${status}`;
+  if(note) note.textContent = '';
+  m.style.display = 'flex';
+
+  await loadChat(true);
+  if(chatTimer) clearInterval(chatTimer);
+  chatTimer = setInterval(()=>loadChat(false), 1500);
+}
+
+function renderChatMsg(x){
+  const mine = String(x.sender_role||'')==='driver';
+  const who = mine ? 'Siz' : 'Müştəri';
+  const ts = fmtTs(x.created_at);
+  return `<div class="chatMsg ${mine?'chatMe':''}">
+    <div>${esc(x.message)}</div>
+    <div class="chatMeta">${esc(who)} • ${esc(ts)}</div>
+  </div>`;
+}
+
+async function loadChat(reset){
+  if(!chatOrderId) return;
+  const body = document.getElementById('chatBody');
+  const inp = document.getElementById('chatInput');
+  const btn = document.getElementById('chatSendBtn');
+  const note = document.getElementById('chatNote');
+  const qs = new URLSearchParams({
+    order_id: chatOrderId,
+    role: 'driver',
+    phone: s.phone,
+    password: s.password,
+    since_id: chatLastId
+  });
+  try{
+    const res = await fetch('/api/orders/chat?' + qs.toString());
+    const data = await res.json().catch(()=>({}));
+    if(!data.success){
+      const err = data.error || 'ERROR';
+      if(note) note.textContent = (err==='CHAT_DISABLED') ? 'Chat admin tərəfindən deaktiv edilib.' : ('Xəta: ' + err);
+      chatCanWrite = false;
+      if(inp) inp.disabled = true;
+      if(btn) btn.disabled = true;
+      if(reset && body) body.innerHTML = '';
+      return;
+    }
+    const canWrite = !!data.can_write;
+    chatCanWrite = canWrite;
+    if(inp) inp.disabled = !canWrite;
+    if(btn) btn.disabled = !canWrite;
+    if(note) note.textContent = canWrite ? '' : 'Bu mərhələdə yalnız oxumaq mümkündür.';
+
+    const msgs = Array.isArray(data.messages) ? data.messages : [];
+    if(reset) body.innerHTML = '';
+    if(msgs.length){
+      const atBottom = Math.abs(body.scrollHeight - body.scrollTop - body.clientHeight) < 40;
+      for(const x of msgs){
+        chatLastId = Math.max(chatLastId, Number(x.id)||chatLastId);
+        body.insertAdjacentHTML('beforeend', renderChatMsg(x));
+      }
+      if(atBottom || reset) body.scrollTop = body.scrollHeight;
+    }
+  }catch(e){
+    if(note) note.textContent = 'Şəbəkə xətası.';
+  }
+}
+
+async function sendChat(){
+  if(!chatOrderId || !chatCanWrite) return;
+  const inp = document.getElementById('chatInput');
+  const note = document.getElementById('chatNote');
+  const txt = String(inp.value||'').trim();
+  if(!txt) return;
+  inp.value = '';
+  try{
+    const res = await fetch('/api/orders/chat', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ order_id: chatOrderId, role:'driver', phone:s.phone, password:s.password, message: txt })
+    });
+    const data = await res.json().catch(()=>({}));
+    if(!data.success){
+      if(note) note.textContent = (data.error==='READ_ONLY') ? 'Bu mərhələdə yazmaq olmaz.' : ('Xəta: ' + (data.error||'ERROR'));
+      return;
+    }
+    await loadChat(false);
+  }catch(e){
+    if(note) note.textContent = 'Şəbəkə xətası.';
+  }
+}
+
 async function setOrderStatus(id, status){
   setMsg('...');
   const res = await fetch('/api/orders/status', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password, order_id:id, status })});
@@ -928,6 +1076,7 @@ async function loadMy(){
         <button class="secondary" onclick="setOrderStatus(${o.id},'arrived')">Gəldim</button>
         <button class="secondary" onclick="setOrderStatus(${o.id},'in_progress')">Gedişə başla</button>
         <button class="secondary" onclick="setOrderStatus(${o.id},'cancelled')">Ləğv et</button>
+        <button class="secondary" onclick="openChatModal(${o.id},'${esc(o.status)}')">Chat</button>
       </div>`;
     } else if(o.status==='arrived'){
       const w = wazeLinkForOrder(o, 'pickup');
@@ -935,12 +1084,18 @@ async function loadMy(){
         ${navBtnHtml(w, 'Waze: Müştəriyə get')}
         <button class="secondary" onclick="setOrderStatus(${o.id},'in_progress')">Gedişə başla</button>
         <button class="secondary" onclick="setOrderStatus(${o.id},'cancelled')">Ləğv et</button>
+        <button class="secondary" onclick="openChatModal(${o.id},'${esc(o.status)}')">Chat</button>
       </div>`;
     } else if(o.status==='in_progress'){
       const w = wazeLinkForOrder(o, 'dropoff');
       actions = `<div class="row" style="margin-top:10px">
         ${navBtnHtml(w, 'Waze: Ünvana get')}
         <button onclick="setOrderStatus(${o.id},'completed')">Bitir</button>
+        <button class="secondary" onclick="openChatModal(${o.id},'${esc(o.status)}')">Chat</button>
+      </div>`;
+    } else if(o.status==='completed' || o.status==='cancelled'){
+      actions = `<div class="row" style="margin-top:10px">
+        <button class="secondary" onclick="openChatModal(${o.id},'${esc(o.status)}')">Chat (oxu)</button>
       </div>`;
     }
     return `<div style="padding:12px;border:1px solid rgba(148,163,184,.18);border-radius:12px;margin-bottom:10px;background:rgba(2,6,23,.35)">

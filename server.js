@@ -20,6 +20,117 @@ const pool = new Pool({
   ssl: DATABASE_URL ? { rejectUnauthorized: false } : undefined,
 });
 
+
+// ---------------- Order Chat (driver <-> passenger)
+// - Writing allowed only on: accepted / arrived / in_progress
+// - completed / cancelled are read-only
+// - Admin can globally disable via settings: chat_enabled
+
+async function isChatEnabled(){
+  const v = await getSetting('chat_enabled', '1');
+  return String(v) === '1' || String(v).toLowerCase() === 'true';
+}
+
+function canWriteByStatus(st){
+  st = String(st||'').toLowerCase().trim();
+  return ['accepted','arrived','in_progress'].includes(st);
+}
+
+async function getOrderForChat(orderId){
+  const id = Number(orderId);
+  if(!id) return null;
+  try{
+    const r = await db._query('SELECT id, passenger_phone, driver_phone, status FROM orders WHERE id=$1 LIMIT 1', [id]);
+    return (r.rows && r.rows[0]) ? r.rows[0] : null;
+  }catch(_){
+    return null;
+  }
+}
+
+// Read messages
+app.get('/api/orders/chat', async (req, res) => {
+  const order_id = parseInt(req.query.order_id, 10);
+  const role = normRole(req.query.role);
+  const phone = normPhone(req.query.phone);
+  const password = String(req.query.password || '');
+  const since_id = parseInt(req.query.since_id, 10) || 0;
+  if(!order_id) return res.status(400).json({ success:false, error:'ORDER_ID_REQUIRED' });
+  const u = await authUser(phone, password, role);
+  if(!u) return res.status(401).json({ success:false, error:'INVALID_CREDENTIALS' });
+
+  const enabled = await isChatEnabled();
+  if(!enabled) return res.json({ success:false, error:'CHAT_DISABLED', chat_enabled:false });
+
+  const ord = await getOrderForChat(order_id);
+  if(!ord) return res.status(404).json({ success:false, error:'NOT_FOUND' });
+  if(role==='driver'){
+    if(String(ord.driver_phone||'') !== String(u.phone||'')) return res.status(403).json({ success:false, error:'NOT_ALLOWED' });
+  }else{
+    if(String(ord.passenger_phone||'') !== String(u.phone||'')) return res.status(403).json({ success:false, error:'NOT_ALLOWED' });
+  }
+
+  try{
+    const q = `SELECT id, order_id, sender_role, sender_phone, message, created_at
+                 FROM order_chat_messages
+                WHERE order_id=$1 AND id>$2
+                ORDER BY id ASC
+                LIMIT 200`;
+    const r = await db._query(q, [order_id, since_id]);
+    const msgs = (r.rows || []).map(x=>({
+      id: x.id,
+      order_id: x.order_id,
+      sender_role: x.sender_role,
+      sender_phone: x.sender_phone,
+      message: x.message,
+      created_at: x.created_at,
+    }));
+    res.json({ success:true, chat_enabled:true, order_status: ord.status, can_write: canWriteByStatus(ord.status), messages: msgs });
+  }catch(e){
+    res.status(500).json({ success:false, error:'DB_ERROR' });
+  }
+});
+
+// Send message
+app.post('/api/orders/chat', async (req, res) => {
+  const order_id = parseInt(req.body.order_id, 10);
+  const role = normRole(req.body.role);
+  const phone = normPhone(req.body.phone);
+  const password = String(req.body.password || '');
+  const message = String(req.body.message || '').trim();
+  if(!order_id) return res.status(400).json({ success:false, error:'ORDER_ID_REQUIRED' });
+  if(!message) return res.status(400).json({ success:false, error:'EMPTY_MESSAGE' });
+  if(message.length > 600) return res.status(400).json({ success:false, error:'MESSAGE_TOO_LONG' });
+  const u = await authUser(phone, password, role);
+  if(!u) return res.status(401).json({ success:false, error:'INVALID_CREDENTIALS' });
+
+  const enabled = await isChatEnabled();
+  if(!enabled) return res.json({ success:false, error:'CHAT_DISABLED', chat_enabled:false });
+
+  const ord = await getOrderForChat(order_id);
+  if(!ord) return res.status(404).json({ success:false, error:'NOT_FOUND' });
+  if(role==='driver'){
+    if(String(ord.driver_phone||'') !== String(u.phone||'')) return res.status(403).json({ success:false, error:'NOT_ALLOWED' });
+  }else{
+    if(String(ord.passenger_phone||'') !== String(u.phone||'')) return res.status(403).json({ success:false, error:'NOT_ALLOWED' });
+  }
+
+  if(!canWriteByStatus(ord.status)){
+    return res.status(409).json({ success:false, error:'READ_ONLY', order_status: ord.status });
+  }
+
+  try{
+    const ts = nowMs();
+    const r = await db._query(
+      'INSERT INTO order_chat_messages(order_id, sender_role, sender_phone, message, created_at) VALUES($1,$2,$3,$4,$5) RETURNING id',
+      [order_id, role, u.phone || null, message, ts]
+    );
+    const id = (r.rows && r.rows[0] && r.rows[0].id) ? r.rows[0].id : null;
+    res.json({ success:true, id, created_at: ts });
+  }catch(e){
+    res.status(500).json({ success:false, error:'DB_ERROR' });
+  }
+});
+
 // Small DB adapter to keep the rest of the code mostly unchanged.
 // - Supports db.get / db.all / db.run with sqlite-style "?" placeholders.
 // - Provides callback style, and sets this.changes / this.lastID (if RETURNING id).
@@ -213,6 +324,17 @@ async function initDb() {
     driver_earn DOUBLE PRECISION
   )`);
 
+  // Order chat (driver <-> passenger). Messages are tied to order_id.
+  await db._query(`CREATE TABLE IF NOT EXISTS order_chat_messages (
+    id BIGSERIAL PRIMARY KEY,
+    order_id BIGINT NOT NULL,
+    sender_role TEXT NOT NULL,
+    sender_phone TEXT,
+    message TEXT NOT NULL,
+    created_at BIGINT NOT NULL
+  )`);
+  await db._query(`CREATE INDEX IF NOT EXISTS idx_order_chat_order_id ON order_chat_messages(order_id, id ASC)`);
+
   
   // Auto-assign dispatcher (order -> driver attempts)
   await db._query(`CREATE TABLE IF NOT EXISTS order_assign_attempts (
@@ -271,6 +393,9 @@ await db._query(`CREATE TABLE IF NOT EXISTS driver_locations (
   seedSetting('autoassign_timeout_sec', '20');
   seedSetting('autoassign_scan_interval_sec', '5');
   seedSetting('autoassign_driver_ttl_sec', '300');
+
+  // Chat feature toggle (admin can turn ON/OFF)
+  seedSetting('chat_enabled', '1');
 
   // Fare packages (JSON). Additive + backward compatible.
   // Stored in settings to keep migrations minimal.
@@ -1867,6 +1992,7 @@ app.get('/api/admin/settings', requireAdmin, async (req, res) => {
     autoassign_scan_interval_sec: await getSetting('autoassign_scan_interval_sec', '5'),
     autoassign_driver_ttl_sec: await getSetting('autoassign_driver_ttl_sec', '300'),
     auth_pages_mode: await getSetting('auth_pages_mode', 'split'),
+    chat_enabled: await getSetting('chat_enabled', '1'),
   };
   res.json({ success: true, settings: s });
 });
@@ -1924,6 +2050,13 @@ app.post('/api/admin/settings', requireAdmin, async (req, res) => {
     if (!['split','combined'].includes(v)) return res.status(400).json({ error: 'INVALID_VALUE' });
     updates.auth_pages_mode = v;
     await setSetting('auth_pages_mode', v);
+  }
+
+  // Chat feature toggle
+  if (req.body.chat_enabled != null) {
+    const v = String(req.body.chat_enabled) === '1' || req.body.chat_enabled === true ? '1' : '0';
+    updates.chat_enabled = v;
+    await setSetting('chat_enabled', v);
   }
 
   // Restart loop if needed

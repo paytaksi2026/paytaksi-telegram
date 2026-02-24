@@ -66,6 +66,18 @@
 
   /* Leaflet custom icon wrapper */
   .pt-car-icon{background:transparent;border:none}
+
+  /* Chat modal */
+  .chatOverlay{position:fixed;inset:0;display:none;align-items:flex-end;justify-content:center;background:rgba(0,0,0,.55);z-index:10000}
+  .chatSheet{width:min(760px,100%);max-height:88vh;background:rgba(2,6,23,.96);border:1px solid rgba(148,163,184,.18);border-radius:18px 18px 0 0;overflow:hidden}
+  .chatHead{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;border-bottom:1px solid rgba(148,163,184,.15)}
+  .chatBody{padding:12px 14px;max-height:62vh;overflow:auto}
+  .chatMsg{max-width:86%;padding:10px 12px;border-radius:14px;border:1px solid rgba(148,163,184,.18);background:rgba(148,163,184,.10);margin-bottom:8px;white-space:pre-wrap;word-break:break-word}
+  .chatMe{margin-left:auto;background:rgba(34,197,94,.15);border-color:rgba(34,197,94,.25)}
+  .chatMeta{font-size:11px;opacity:.7;margin-top:4px}
+  .chatFoot{padding:12px 14px;border-top:1px solid rgba(148,163,184,.15);display:flex;gap:10px;align-items:center}
+  .chatFoot input{flex:1}
+  .chatNote{font-size:12px;opacity:.75;margin-top:6px}
 </style>
 
 <link rel="stylesheet" href="/assets/bolt.css" />
@@ -127,7 +139,10 @@
         <div class="progress"><div id="rideProgress"></div></div>
         <div class="status-actions">
           <label class="sound-toggle"><input type="checkbox" id="soundOn" checked> Səsli bildiriş</label>
-          <button class="secondary" id="focusDriverBtn" style="display:none">Sürücüyə fokus</button>
+          <div class="row" style="gap:8px;flex-wrap:nowrap">
+            <button class="secondary" id="chatBtn" style="display:none" onclick="openChatModal(activeOrderId, (activeOrderObj && activeOrderObj.status) ? activeOrderObj.status : '')">Chat</button>
+            <button class="secondary" id="focusDriverBtn" style="display:none">Sürücüyə fokus</button>
+          </div>
         </div>
         <div class="row" id="rideCancelRow" style="margin-top:10px;display:none">
           <button class="secondary" id="rideCancelBtn">Sifarişi ləğv et</button>
@@ -149,6 +164,25 @@
     <div class="df-title">Sürücü tapıldı</div>
     <div class="df-sub" id="driverFoundName">—</div>
       <div class="df-sub2" id="driverFoundCar"></div>
+  </div>
+</div>
+
+<!-- Chat modal -->
+<div id="chatModal" class="chatOverlay" onclick="onChatOverlayClick(event)">
+  <div class="chatSheet">
+    <div class="chatHead">
+      <div>
+        <div style="font-weight:900">Chat</div>
+        <div style="font-size:12px;opacity:.8" id="chatSub">—</div>
+      </div>
+      <button class="secondary" onclick="closeChatModal()" style="width:auto">Bağla</button>
+    </div>
+    <div class="chatBody" id="chatBody"></div>
+    <div class="chatFoot">
+      <input id="chatInput" placeholder="Mesaj yaz..." />
+      <button id="chatSendBtn" onclick="sendChat()" style="width:auto">Göndər</button>
+    </div>
+    <div class="chatNote" id="chatNote" style="padding:0 14px 12px 14px"></div>
   </div>
 </div>
 
@@ -672,6 +706,17 @@ async function renderRideUI(order){
   });
   document.getElementById('rideProgress').style.width = Math.round((idx/4)*100) + '%';
 
+  // Chat button visibility (accepted/arrived/in_progress write; completed/cancelled read-only)
+  try{
+    const btn = document.getElementById('chatBtn');
+    const st = String(order.status||'').toLowerCase();
+    const show = ['accepted','arrived','in_progress','completed','cancelled'].includes(st) && !!(order.driver_phone || order.assigned_driver_phone);
+    if(btn){
+      btn.style.display = show ? 'inline-block' : 'none';
+      btn.textContent = (st==='completed' || st==='cancelled') ? 'Chat (oxu)' : 'Chat';
+    }
+  }catch(e){}
+
   const cur = String(order.status||'').toLowerCase();
   if (cur && cur !== lastAnnouncedStatus){
     lastAnnouncedStatus = cur;
@@ -679,6 +724,123 @@ async function renderRideUI(order){
     if (cur==='arrived') beep('arrive');
     if (cur==='in_progress') beep('start');
     if (cur==='completed') beep('info');
+  }
+}
+
+// ---------------- Chat modal (passenger <-> driver)
+let chatOrderId = null;
+let chatLastId = 0;
+let chatTimer = null;
+let chatCanWrite = true;
+
+function onChatOverlayClick(ev){
+  if(ev && ev.target && ev.target.id === 'chatModal') closeChatModal();
+}
+
+function closeChatModal(){
+  const m = document.getElementById('chatModal');
+  if(m) m.style.display = 'none';
+  chatOrderId = null;
+  chatLastId = 0;
+  chatCanWrite = true;
+  if(chatTimer){ clearInterval(chatTimer); chatTimer = null; }
+}
+
+async function openChatModal(orderId, status){
+  if(!orderId) return;
+  chatOrderId = Number(orderId)||null;
+  chatLastId = 0;
+  const m = document.getElementById('chatModal');
+  const body = document.getElementById('chatBody');
+  const sub = document.getElementById('chatSub');
+  const note = document.getElementById('chatNote');
+  if(!m || !body) return;
+  body.innerHTML = '<div style="opacity:.75">Yüklənir...</div>';
+  if(sub) sub.textContent = `Sifariş #${orderId} • ${status||''}`;
+  if(note) note.textContent = '';
+  m.style.display = 'flex';
+  await loadChat(true);
+  if(chatTimer) clearInterval(chatTimer);
+  chatTimer = setInterval(()=>loadChat(false), 1500);
+}
+
+function renderChatMsg(x){
+  const mine = String(x.sender_role||'')==='passenger';
+  const who = mine ? 'Siz' : 'Sürücü';
+  const ts = fmtTs(x.created_at);
+  return `<div class="chatMsg ${mine?'chatMe':''}">
+    <div>${escapeHtml(x.message)}</div>
+    <div class="chatMeta">${escapeHtml(who)} • ${escapeHtml(ts)}</div>
+  </div>`;
+}
+
+async function loadChat(reset){
+  if(!chatOrderId) return;
+  const body = document.getElementById('chatBody');
+  const inp = document.getElementById('chatInput');
+  const btn = document.getElementById('chatSendBtn');
+  const note = document.getElementById('chatNote');
+  const qs = new URLSearchParams({
+    order_id: chatOrderId,
+    role: 'passenger',
+    phone: s.phone,
+    password: s.password,
+    since_id: chatLastId
+  });
+  try{
+    const res = await fetch('/api/orders/chat?' + qs.toString());
+    const data = await res.json().catch(()=>({}));
+    if(!data.success){
+      const err = data.error || 'ERROR';
+      if(note) note.textContent = (err==='CHAT_DISABLED') ? 'Chat admin tərəfindən deaktiv edilib.' : ('Xəta: ' + err);
+      chatCanWrite = false;
+      if(inp) inp.disabled = true;
+      if(btn) btn.disabled = true;
+      if(reset && body) body.innerHTML = '';
+      return;
+    }
+    const canWrite = !!data.can_write;
+    chatCanWrite = canWrite;
+    if(inp) inp.disabled = !canWrite;
+    if(btn) btn.disabled = !canWrite;
+    if(note) note.textContent = canWrite ? '' : 'Bu mərhələdə yalnız oxumaq mümkündür.';
+
+    const msgs = Array.isArray(data.messages) ? data.messages : [];
+    if(reset) body.innerHTML = '';
+    if(msgs.length){
+      const atBottom = Math.abs(body.scrollHeight - body.scrollTop - body.clientHeight) < 40;
+      for(const x of msgs){
+        chatLastId = Math.max(chatLastId, Number(x.id)||chatLastId);
+        body.insertAdjacentHTML('beforeend', renderChatMsg(x));
+      }
+      if(atBottom || reset) body.scrollTop = body.scrollHeight;
+    }
+  }catch(e){
+    if(note) note.textContent = 'Şəbəkə xətası.';
+  }
+}
+
+async function sendChat(){
+  if(!chatOrderId || !chatCanWrite) return;
+  const inp = document.getElementById('chatInput');
+  const note = document.getElementById('chatNote');
+  const txt = String(inp.value||'').trim();
+  if(!txt) return;
+  inp.value = '';
+  try{
+    const res = await fetch('/api/orders/chat', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ order_id: chatOrderId, role:'passenger', phone:s.phone, password:s.password, message: txt })
+    });
+    const data = await res.json().catch(()=>({}));
+    if(!data.success){
+      if(note) note.textContent = (data.error==='READ_ONLY') ? 'Bu mərhələdə yazmaq olmaz.' : ('Xəta: ' + (data.error||'ERROR'));
+      return;
+    }
+    await loadChat(false);
+  }catch(e){
+    if(note) note.textContent = 'Şəbəkə xətası.';
   }
 }
 
