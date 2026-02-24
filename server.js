@@ -2223,6 +2223,11 @@ app.get('/admin/reset-db', async (req, res) => {
 
 app.get('/health', (req, res) => res.send("OK"));
 
+// Ensure API routes always return JSON (helps the frontend show a real error instead of generic "ERROR").
+app.use('/api', (req, res) => {
+  res.status(404).json({ success:false, error:'NOT_FOUND' });
+});
+
 const PORT = process.env.PORT || 3000;
 initDb()
   .then(() => {

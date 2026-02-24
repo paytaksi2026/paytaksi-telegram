@@ -891,6 +891,15 @@ async function loadChat(reset){
   });
   try{
     const res = await fetch('/api/orders/chat?' + qs.toString());
+    const ct = (res.headers.get('content-type') || '').toLowerCase();
+    if(!ct.includes('application/json')){
+      if(note) note.textContent = 'Xəta: HTTP_' + res.status;
+      chatCanWrite = false;
+      if(inp) inp.disabled = true;
+      if(btn) btn.disabled = true;
+      if(reset && body) body.innerHTML = '';
+      return;
+    }
     const data = await res.json().catch(()=>({}));
     if(!data.success){
       const err = data.error || 'ERROR';
@@ -935,6 +944,11 @@ async function sendChat(){
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ order_id: chatOrderId, role:'driver', phone:s.phone, password:s.password, message: txt })
     });
+    const ct = (res.headers.get('content-type') || '').toLowerCase();
+    if(!ct.includes('application/json')){
+      if(note) note.textContent = 'Xəta: HTTP_' + res.status;
+      return;
+    }
     const data = await res.json().catch(()=>({}));
     if(!data.success){
       if(note) note.textContent = (data.error==='READ_ONLY') ? 'Bu mərhələdə yazmaq olmaz.' : ('Xəta: ' + (data.error||'ERROR'));
