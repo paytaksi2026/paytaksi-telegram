@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html>
 <head>
@@ -8,26 +9,10 @@
 <style>
 html,body{margin:0;height:100%;font-family:Arial}
 #map{height:100%;display:none}
-
-#loginBox{
-position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
-background:#111;color:white;z-index:10000;
-flex-direction:column;
-}
-
+#loginBox{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#111;color:white;z-index:10000;flex-direction:column;}
 input{padding:10px;margin:5px;border-radius:6px;border:none;width:220px}
 button{padding:10px 14px;margin:5px;border:none;border-radius:8px;cursor:pointer}
 .primary{background:#2ecc71;color:white}
-
-#incomingOverlay{
-position:fixed;inset:0;background:rgba(0,0,0,0.75);
-display:none;align-items:center;justify-content:center;z-index:9999;color:white;
-}
-.card{background:#111;padding:20px;border-radius:16px;width:90%;max-width:400px;text-align:center}
-
-#statusPanel{
-position:fixed;bottom:0;left:0;right:0;background:white;padding:10px;text-align:center;display:none;
-}
 </style>
 </head>
 <body>
@@ -41,39 +26,10 @@ position:fixed;bottom:0;left:0;right:0;background:white;padding:10px;text-align:
 
 <div id="map"></div>
 
-<div id="incomingOverlay">
-<div class="card">
-<h3>Yeni Sifariş</h3>
-<div id="pickup"></div>
-<div id="dropoff"></div>
-<div id="price"></div>
-<div id="countdown">20</div>
-<button onclick="acceptOrder()">Qəbul et</button>
-<button onclick="hideIncoming()">Rədd et</button>
-</div>
-</div>
-
-<div id="statusPanel">
-<button onclick="updateStatus('arrived')">ÇATDIM</button>
-<button onclick="updateStatus('in_progress')">GEDİŞİ BAŞLAT</button>
-<button onclick="updateStatus('completed')">GEDİŞİ BİTİR</button>
-</div>
-
-<audio id="alertSound" loop>
-<source src="https://actions.google.com/sounds/v1/alarms/alarm_clock.ogg">
-</audio>
-
 <script>
 let phone=null;
 let password=null;
 let map;
-let currentOrder=null;
-let countdownInt=null;
-
-function initMap(){
-map = L.map('map').setView([40.4093,49.8671],13);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
-}
 
 async function login(){
 phone=document.getElementById("phoneInput").value;
@@ -87,75 +43,20 @@ body:JSON.stringify({phone,password,role:'driver'})
 const d=await r.json();
 if(!d.success){alert("Login uğursuz");return;}
 
+// SET DRIVER ONLINE
+await fetch('/api/driver/online',{
+method:'POST',
+headers:{'Content-Type':'application/json'},
+body:JSON.stringify({phone,password})
+});
+
 document.getElementById("loginBox").style.display="none";
 document.getElementById("map").style.display="block";
-initMap();
-setInterval(checkIncoming,5000);
-loadActive();
-}
 
-async function checkIncoming(){
-const r=await fetch(`/api/orders/feed?phone=${phone}&password=${password}`);
-const d=await r.json();
-if(d.success && d.orders && d.orders.length>0){
-showIncoming(d.orders[0]);
-}
-}
+map=L.map('map').setView([40.4093,49.8671],13);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
-function showIncoming(o){
-currentOrder=o;
-document.getElementById("pickup").innerText=o.pickup_text;
-document.getElementById("dropoff").innerText=o.dropoff_text;
-document.getElementById("price").innerText=o.est_fare+" AZN";
-document.getElementById("incomingOverlay").style.display="flex";
-document.getElementById("alertSound").play().catch(()=>{});
-let sec=20;
-document.getElementById("countdown").innerText=sec;
-countdownInt=setInterval(()=>{
-sec--;
-document.getElementById("countdown").innerText=sec;
-if(sec<=0){hideIncoming();}
-},1000);
-}
-
-function hideIncoming(){
-document.getElementById("incomingOverlay").style.display="none";
-document.getElementById("alertSound").pause();
-clearInterval(countdownInt);
-}
-
-async function acceptOrder(){
-if(!currentOrder) return;
-await fetch('/api/orders/accept',{
-method:'POST',
-headers:{'Content-Type':'application/json'},
-body:JSON.stringify({phone,password,order_id:currentOrder.id})
-});
-hideIncoming();
-loadActive();
-}
-
-async function loadActive(){
-const r=await fetch(`/api/orders/driver/my?phone=${phone}&password=${password}`);
-const d=await r.json();
-if(!d.success) return;
-const o=d.orders.find(x=>['accepted','arrived','in_progress'].includes(x.status));
-if(!o) return;
-currentOrder=o;
-document.getElementById("statusPanel").style.display="block";
-map.fitBounds([[o.pickup_lat,o.pickup_lon],[o.dropoff_lat,o.dropoff_lon]]);
-L.marker([o.pickup_lat,o.pickup_lon]).addTo(map);
-L.marker([o.dropoff_lat,o.dropoff_lon]).addTo(map);
-}
-
-async function updateStatus(st){
-if(!currentOrder) return;
-await fetch('/api/orders/status',{
-method:'POST',
-headers:{'Content-Type':'application/json'},
-body:JSON.stringify({phone,password,order_id:currentOrder.id,status:st})
-});
-loadActive();
+alert("Driver online oldu. İndi sifariş gələcək.");
 }
 </script>
 
