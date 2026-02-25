@@ -17,8 +17,8 @@ html,body{margin:0;height:100%;font-family:Arial}
 <div id="statusBox">Sifariş statusu...</div>
 
 <script>
-const phone=localStorage.getItem("phone");
-const password=localStorage.getItem("password");
+const phone=prompt("Telefon:");
+const password=prompt("Şifrə:");
 
 const map=L.map('map').setView([40.4093,49.8671],13);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);

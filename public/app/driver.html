@@ -7,16 +7,37 @@
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <style>
 html,body{margin:0;height:100%;font-family:Arial}
-#map{height:100%}
-#incomingOverlay{position:fixed;inset:0;background:rgba(0,0,0,0.75);display:none;align-items:center;justify-content:center;z-index:9999;color:white;}
+#map{height:100%;display:none}
+
+#loginBox{
+position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+background:#111;color:white;z-index:10000;
+flex-direction:column;
+}
+
+input{padding:10px;margin:5px;border-radius:6px;border:none;width:220px}
+button{padding:10px 14px;margin:5px;border:none;border-radius:8px;cursor:pointer}
+.primary{background:#2ecc71;color:white}
+
+#incomingOverlay{
+position:fixed;inset:0;background:rgba(0,0,0,0.75);
+display:none;align-items:center;justify-content:center;z-index:9999;color:white;
+}
 .card{background:#111;padding:20px;border-radius:16px;width:90%;max-width:400px;text-align:center}
-.btn{padding:10px 14px;margin:5px;border:none;border-radius:8px;cursor:pointer}
-.accept{background:#2ecc71;color:white}
-.reject{background:#e74c3c;color:white}
-#statusPanel{position:fixed;bottom:0;left:0;right:0;background:white;padding:10px;text-align:center;display:none;}
+
+#statusPanel{
+position:fixed;bottom:0;left:0;right:0;background:white;padding:10px;text-align:center;display:none;
+}
 </style>
 </head>
 <body>
+
+<div id="loginBox">
+<h3>Sürücü Giriş</h3>
+<input id="phoneInput" placeholder="+994XXXXXXXXX">
+<input id="passInput" type="password" placeholder="Şifrə">
+<button class="primary" onclick="login()">Daxil ol</button>
+</div>
 
 <div id="map"></div>
 
@@ -27,8 +48,8 @@ html,body{margin:0;height:100%;font-family:Arial}
 <div id="dropoff"></div>
 <div id="price"></div>
 <div id="countdown">20</div>
-<button class="btn accept" onclick="acceptOrder()">Qəbul et</button>
-<button class="btn reject" onclick="hideIncoming()">Rədd et</button>
+<button onclick="acceptOrder()">Qəbul et</button>
+<button onclick="hideIncoming()">Rədd et</button>
 </div>
 </div>
 
@@ -43,14 +64,35 @@ html,body{margin:0;height:100%;font-family:Arial}
 </audio>
 
 <script>
-const phone = localStorage.getItem("phone");
-const password = localStorage.getItem("password");
-
-const map = L.map('map').setView([40.4093,49.8671],13);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
-
+let phone=null;
+let password=null;
+let map;
 let currentOrder=null;
 let countdownInt=null;
+
+function initMap(){
+map = L.map('map').setView([40.4093,49.8671],13);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+}
+
+async function login(){
+phone=document.getElementById("phoneInput").value;
+password=document.getElementById("passInput").value;
+
+const r=await fetch('/api/login',{
+method:'POST',
+headers:{'Content-Type':'application/json'},
+body:JSON.stringify({phone,password,role:'driver'})
+});
+const d=await r.json();
+if(!d.success){alert("Login uğursuz");return;}
+
+document.getElementById("loginBox").style.display="none";
+document.getElementById("map").style.display="block";
+initMap();
+setInterval(checkIncoming,5000);
+loadActive();
+}
 
 async function checkIncoming(){
 const r=await fetch(`/api/orders/feed?phone=${phone}&password=${password}`);
@@ -59,7 +101,6 @@ if(d.success && d.orders && d.orders.length>0){
 showIncoming(d.orders[0]);
 }
 }
-setInterval(checkIncoming,5000);
 
 function showIncoming(o){
 currentOrder=o;
@@ -106,7 +147,6 @@ map.fitBounds([[o.pickup_lat,o.pickup_lon],[o.dropoff_lat,o.dropoff_lon]]);
 L.marker([o.pickup_lat,o.pickup_lon]).addTo(map);
 L.marker([o.dropoff_lat,o.dropoff_lon]).addTo(map);
 }
-loadActive();
 
 async function updateStatus(st){
 if(!currentOrder) return;
