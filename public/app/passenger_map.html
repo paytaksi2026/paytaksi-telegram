@@ -187,7 +187,7 @@
 </div>
 
 <script>
-const NOMINATIM = 'https://nominatim.openstreetmap.org';
+const GEOCODER = 'https://photon.komoot.io/api';
 
 
 function fmtTs(v){
@@ -996,10 +996,16 @@ function setDropoff(lat, lon, text){
 }
 
 async function reverse(lat, lon){
-  const url = `${NOMINATIM}/reverse?format=jsonv2&lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&addressdetails=1&accept-language=az`;
-  const r = await fetch(url, { headers: { 'Accept': 'application/json' } });
+  const url = `${GEOCODER}?lat=${lat}&lon=${lon}`;
+  const r = await fetch(url);
   const j = await r.json();
-  return (j && j.display_name) ? j.display_name : `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+
+  if(j.features && j.features.length){
+    const p = j.features[0].properties;
+    return p.name || p.street || p.city || `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+  }
+
+  return `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
 }
 
 async function useMyLocation(){
@@ -1028,10 +1034,19 @@ function renderSug(el, items, onPick){
 }
 
 async function search(q){
-  const url = `${NOMINATIM}/search?format=jsonv2&addressdetails=1&limit=6&countrycodes=az&q=${encodeURIComponent(q)}&accept-language=az`;
-  const r = await fetch(url, { headers: { 'Accept': 'application/json' } });
+  const url = `${GEOCODER}?q=${encodeURIComponent(q)}&limit=8`;
+  const r = await fetch(url);
   const j = await r.json();
-  return (j||[]).map(x => ({ text: x.display_name, lat: Number(x.lat), lon: Number(x.lon) })).filter(x => Number.isFinite(x.lat) && Number.isFinite(x.lon));
+
+  if(!j.features) return [];
+
+  return j.features.map(f => ({
+    text: f.properties.name
+      ? `${f.properties.name}, ${f.properties.city || ''}`
+      : f.properties.street || f.properties.city || '',
+    lat: f.geometry.coordinates[1],
+    lon: f.geometry.coordinates[0]
+  }));
 }
 
 function hookAutocomplete(input, sugEl, setter){
