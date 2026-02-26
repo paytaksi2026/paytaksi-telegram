@@ -166,11 +166,24 @@
 
     </div>
 
-    <hr style="border:none;border-top:1px solid rgba(148,163,184,.18);margin:16px 0" />
-    <h3 id="myTitle" style="margin:0">Mənim qəbul etdiklərim</h3>
-    <div id="my" style="margin-top:10px"></div>
+    
   </div>
 </div>
+
+
+<hr style="border:none;border-top:1px solid rgba(148,163,184,.18);margin:16px 0" />
+<div style="text-align:center">
+  <a href="/app/driver_history.html"
+     style="display:inline-block;padding:12px 16px;border-radius:12px;
+     background:rgba(59,130,246,.15);
+     border:1px solid rgba(59,130,246,.35);
+     color:#93c5fd;
+     font-weight:700;
+     text-decoration:none;">
+     📜 Sifariş tarixçəsi
+  </a>
+</div>
+
 
 <!-- Incoming order modal (auto) -->
 <div id="incomingModal" class="overlay" onclick="onOverlayClick(event)">
@@ -966,7 +979,6 @@ async function setOrderStatus(id, status){
   const data = await res.json();
   if(data.success){
     setMsg('OK');
-    loadMy();
     loadFeed();
   } else {
     if(data && data.error==='BALANCE_LIMIT'){
@@ -1043,8 +1055,7 @@ async function acceptOrder(id){
   if(data.success){
     setMsg('Sifariş qəbul olundu.');
     loadFeed();
-    loadMy();
-  } else {
+    } else {
     if(data && data.error==='BALANCE_LIMIT'){
       const b = (data.driver_balance!=null)? Number(data.driver_balance): (s.driver_balance||0);
       const min = (data.min_balance!=null)? Number(data.min_balance): (s.min_balance!=null?s.min_balance:-15);
@@ -1053,8 +1064,7 @@ async function acceptOrder(id){
       setMsg('Balans limitə düşüb: ' + fmtMoney(b) + ' AZN (limit ' + fmtMoney(min) + ' AZN). Balansınızı artırın.');
     } else if (data && data.error==='DRIVER_HAS_ACTIVE_ORDER') {
       setMsg('Sizin aktiv sifarişiniz var. Digər sifarişi götürmək üçün onu tamamlayın və ya ləğv edin. (ID: ' + (data.order_id||'') + ')');
-      loadMy();
-    } else {
+      } else {
       setMsg(data.error || 'ERROR');
     }
   }
@@ -1141,7 +1151,6 @@ async function loadMy(){
 
 // initial + polling
 loadFeed();
-loadMy();
 let _polling = false;
 setInterval(async ()=>{
   if(_polling) return;
@@ -1151,8 +1160,7 @@ setInterval(async ()=>{
     // my orders less frequent to reduce load
     if(!window._myTick || (Date.now()-window._myTick>8000)){
       window._myTick = Date.now();
-      await loadMy();
-    }
+      await }
   }finally{ _polling = false; }
 }, 3000);
 startLocationLoop();
