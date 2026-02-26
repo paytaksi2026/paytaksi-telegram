@@ -996,29 +996,20 @@ function setDropoff(lat, lon, text){
 }
 
 async function reverse(lat, lon){
-  const url = `${GEOCODER}?lat=${lat}&lon=${lon}&limit=1`;
-  const r = await fetch(url);
+  const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}&addressdetails=1`;
+
+  const r = await fetch(url, {
+    headers: { 'Accept': 'application/json' }
+  });
+
   const j = await r.json();
 
-  if(j.features && j.features.length){
-    const p = j.features[0].properties;
-
-    const parts = [
-      p.name,
-      p.street,
-      p.housenumber,
-      p.city,
-      p.state
-    ].filter(Boolean);
-
-    if(parts.length){
-      return parts.join(', ');
-    }
+  if(j && j.display_name){
+    return j.display_name;
   }
 
   return `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
 }
-
 async function useMyLocation(){
   setMsg('GPS...');
   navigator.geolocation.getCurrentPosition(async (pos)=>{
