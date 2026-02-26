@@ -996,7 +996,7 @@ function setDropoff(lat, lon, text){
 }
 
 async function reverse(lat, lon){
-  const url = `${GEOCODER}?lat=${lat}&lon=${lon}`;
+  const url = `${GEOCODER}?lat=${lat}&lon=${lon}&limit=1`;
   const r = await fetch(url);
   const j = await r.json();
 
@@ -1034,7 +1034,7 @@ function renderSug(el, items, onPick){
 }
 
 async function search(q){
-  const url = `${GEOCODER}?q=${encodeURIComponent(q)}&limit=8`;
+  const url = `${GEOCODER}?q=${encodeURIComponent(q)}&limit=8&bbox=44.5,38.3,51.0,41.9`;
   const r = await fetch(url);
   const j = await r.json();
 
