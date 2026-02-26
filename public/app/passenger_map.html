@@ -1002,7 +1002,18 @@ async function reverse(lat, lon){
 
   if(j.features && j.features.length){
     const p = j.features[0].properties;
-    return p.name || p.street || p.city || `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+
+    const parts = [
+      p.name,
+      p.street,
+      p.housenumber,
+      p.city,
+      p.state
+    ].filter(Boolean);
+
+    if(parts.length){
+      return parts.join(', ');
+    }
   }
 
   return `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
