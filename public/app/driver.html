@@ -895,23 +895,12 @@ if(wazeBtn){
     window.open(nav, '_blank');
   };
 }
-
-function wazeLinkForOrder(o, mode){
-  // mode: 'pickup' | 'dropoff'
-  const pLat = Number(o.pickup_lat), pLng = Number(o.pickup_lon);
-  const dLat = Number(o.dropoff_lat), dLng = Number(o.dropoff_lon);
-  const okPickup = isFinite(pLat) && isFinite(pLng);
-  const okDrop = isFinite(dLat) && isFinite(dLng);
-  if(mode==='pickup' && okPickup) return `https://waze.com/ul?ll=${pLat},${pLng}&navigate=yes`;
-  if(mode==='dropoff' && okDrop) return `https://waze.com/ul?ll=${dLat},${dLng}&navigate=yes`;
-  // fallback: text query (az dəqiq ola bilər)
-  const q = encodeURIComponent(mode==='pickup' ? (o.pickup_text||'') : (o.dropoff_text||''));
-  return `https://waze.com/ul?q=${q}&navigate=yes`;
+	  } catch(e){
+  console.log(e);
+}
 }
 
-function navBtnHtml(href, label){
-  return `<a href="${href}" target="_blank" rel="noreferrer" class="secondary" style="display:inline-block;padding:10px 12px;border-radius:10px;border:1px solid rgba(148,163,184,.25);background:rgba(148,163,184,.15);color:#e5e7eb;text-decoration:none;font-weight:700">${esc(label)}</a>`;
-}
+
 
 // ---------------- Chat modal (driver <-> passenger)
 let chatOrderId = null;
