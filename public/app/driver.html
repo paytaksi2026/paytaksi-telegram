@@ -174,7 +174,6 @@
   </button>
 
 
-
 <button id="wazeFloatingBtn" style="
   position:absolute;
   bottom:85px;
@@ -191,32 +190,8 @@
   align-items:center;
   justify-content:center;
 ">
-<svg viewBox="0 0 100 100" width="56" height="56">
-  <!-- outer white ring -->
-  <circle cx="50" cy="50" r="48" fill="#ffffff"/>
-  
-  <!-- inner grey circle -->
-  <circle cx="50" cy="50" r="40" fill="#d1d5db"/>
-  
-  <!-- waze car -->
-  <g fill="#4b5563">
-    <!-- body -->
-    <path d="M30 58c0-12 9-20 20-20s20 8 20 20c0 6-4 10-9 10H39c-5 0-9-4-9-10z"/>
-    
-    <!-- wheels -->
-    <circle cx="40" cy="72" r="5"/>
-    <circle cx="60" cy="72" r="5"/>
-    
-    <!-- eyes -->
-    <circle cx="44" cy="56" r="3"/>
-    <circle cx="56" cy="56" r="3"/>
-  </g>
-  
-  <!-- smile -->
-  <path d="M45 63c3 3 7 3 10 0" stroke="#4b5563" stroke-width="3" fill="none" stroke-linecap="round"/>
-</svg>
+  <img src="waze_icon.png" style="width:58px;height:58px;border-radius:50%;object-fit:contain;">
 </button>
-
 
 		  
 </div>
@@ -856,6 +831,8 @@ async function updateRouteForOrder(o){
 
   ensureMap(lastPos.lat, lastPos.lng);
 
+  };
+}
 	
   if(meMarker) meMarker.setLatLng([lastPos.lat,lastPos.lng]);
 
@@ -1261,32 +1238,6 @@ setInterval(async ()=>{
   }finally{ _polling = false; }
 }, 3000);
 startLocationLoop();
-
-function wazeLinkForOrder(o, type){
-  if(!o) return '';
-  const pLat = Number(o.pickup_lat), pLng = Number(o.pickup_lon);
-  const dLat = Number(o.dropoff_lat), dLng = Number(o.dropoff_lon);
-  let lat = pLat, lng = pLng;
-  if(type === 'dropoff'){
-    lat = dLat; lng = dLng;
-  }
-  if(!isFinite(lat) || !isFinite(lng)) return '';
-  return `https://waze.com/ul?ll=${lat},${lng}&navigate=yes`;
-}
-
-function navBtnHtml(link, text){
-  if(!link) return '';
-  return `<a href="${link}" target="_blank" style="
-    padding:10px 12px;
-    border-radius:10px;
-    background:#22c55e;
-    color:#081014;
-    font-weight:700;
-    text-decoration:none;
-    display:inline-block;
-  ">${text}</a>`;
-}
-
 </script>
 </body>
 </html>
