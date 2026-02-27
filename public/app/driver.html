@@ -1238,6 +1238,32 @@ setInterval(async ()=>{
   }finally{ _polling = false; }
 }, 3000);
 startLocationLoop();
+
+function wazeLinkForOrder(o, type){
+  if(!o) return '';
+  const pLat = Number(o.pickup_lat), pLng = Number(o.pickup_lon);
+  const dLat = Number(o.dropoff_lat), dLng = Number(o.dropoff_lon);
+  let lat = pLat, lng = pLng;
+  if(type === 'dropoff'){
+    lat = dLat; lng = dLng;
+  }
+  if(!isFinite(lat) || !isFinite(lng)) return '';
+  return `https://waze.com/ul?ll=${lat},${lng}&navigate=yes`;
+}
+
+function navBtnHtml(link, text){
+  if(!link) return '';
+  return `<a href="${link}" target="_blank" style="
+    padding:10px 12px;
+    border-radius:10px;
+    background:#22c55e;
+    color:#081014;
+    font-weight:700;
+    text-decoration:none;
+    display:inline-block;
+  ">${text}</a>`;
+}
+
 </script>
 </body>
 </html>
