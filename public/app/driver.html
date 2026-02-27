@@ -833,25 +833,6 @@ async function updateRouteForOrder(o){
 
   ensureMap(lastPos.lat, lastPos.lng);
 
-
-const btn = document.getElementById('centerBtn');
-if(btn){
-  btn.onclick = function(){
-
-    if(map){
-
-      // Əgər GPS mövqeyi varsa ora get
-      if(lastPos && lastPos.lat && lastPos.lng){
-        map.flyTo([lastPos.lat, lastPos.lng], 16, { duration: 1 });
-      }
-      // GPS yoxdursa xəritənin hazırkı mərkəzinə zoom et
-      else{
-        const c = map.getCenter();
-        map.flyTo([c.lat, c.lng], 15, { duration: 1 });
-      }
-
-    }
-
   };
 }
 	
@@ -1223,6 +1204,24 @@ async function loadMy(){
   }
 }
 
+
+
+// --- Global center button fix (always works) ---
+document.addEventListener('DOMContentLoaded', function(){
+  const btn = document.getElementById('centerBtn');
+  if(btn){
+    btn.onclick = function(){
+      if(map){
+        if(lastPos && lastPos.lat && lastPos.lng){
+          map.flyTo([lastPos.lat, lastPos.lng], 16, { duration: 1 });
+        }else{
+          const c = map.getCenter();
+          map.flyTo([c.lat, c.lng], 15, { duration: 1 });
+        }
+      }
+    };
+  }
+});
 
 // initial + polling
 loadFeed();
