@@ -885,14 +885,15 @@ else{
     const tLat = toPickup ? pLat : dLat;
     const tLng = toPickup ? pLng : dLng;
     const nav = `https://waze.com/ul?ll=${tLat},${tLng}&navigate=yes`;
-    const nb = document.getElementById('navBtn');
-    nb.href = nav;
-    nb.textContent = toPickup ? 'Waze: Müştəriyə get' : 'Waze: Ünvana get';
-    nb.style.display = 'inline-block';
-  }catch(e){
-    document.getElementById('mapInfo').textContent = 'Marşrut çəkilmədi (internet/OSRM).';
-    console.warn(e);
-  }
+const nb = document.getElementById('navBtn');
+if(nb) nb.style.display = 'none'; // köhnə text link gizlə
+
+const wazeBtn = document.getElementById('wazeFloatingBtn');
+if(wazeBtn){
+  wazeBtn.style.display = 'flex';
+  wazeBtn.onclick = function(){
+    window.open(nav, '_blank');
+  };
 }
 
 function wazeLinkForOrder(o, mode){
