@@ -781,18 +781,6 @@ function ensureMap(lat=40.4093, lng=49.8671){
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(map);
   meMarker = L.marker([lat,lng]).addTo(map).bindPopup('Siz');
 }
-		document.addEventListener("DOMContentLoaded", function(){
-
-  const btn = document.getElementById("centerBtn");
-  if(!btn) return;
-
-  btn.onclick = function(){
-    if(lastPos && map){
-      map.setView([lastPos.lat, lastPos.lng], 16);
-    }
-  };
-
-});
 
 async function osrmPolyline(aLat,aLng,bLat,bLng){
   const url = `https://router.project-osrm.org/route/v1/driving/${aLng},${aLat};${bLng},${bLat}?overview=full&geometries=geojson`;
