@@ -509,7 +509,11 @@ async function renderPackagePrefs(){
     updateRouteForOrder(activeMy);
   }else{
     document.getElementById('mapInfo').textContent = 'Xəritə: aktiv sifariş yoxdur';
-    const nb = document.getElementById('navBtn');
+
+const wazeBtn = document.getElementById('wazeFloatingBtn');
+if(wazeBtn) wazeBtn.style.display = 'none';
+	  
+	  const nb = document.getElementById('navBtn');
     if(nb) nb.style.display = 'none';
     ensureMap();
   }
