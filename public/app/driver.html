@@ -429,8 +429,8 @@ async function loadLedger(){
   const box = document.getElementById('ledgerList');
   if(box) box.innerHTML = '<div style="opacity:.7;font-size:13px">Yüklənir...</div>';
   try{
-    const res = await fetch('/api/driver/ledger', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password, limit: 20 })});
-    const data = await res.json();
+    const res = fetch('/api/driver/ledger', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password, limit: 20 })});
+    const data = res.json();
     if(data && data.success){
       renderLedger(data.ledger||[]);
     }else{
@@ -449,8 +449,8 @@ renderBalance(s.driver_balance||0, (s.min_balance!=null?s.min_balance:-15));
 
 async function refreshDriverMeta(){
   try{
-    const res = await fetch('/api/driver/status', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password })});
-    const data = await res.json();
+    const res = fetch('/api/driver/status', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password })});
+    const data = res.json();
     if(data && data.success){
       const r = Number(data.driver_radius_km||s.driver_radius_km||4);
       s.driver_radius_km = r;
@@ -462,7 +462,7 @@ async function refreshDriverMeta(){
       s.driver_balance = (data.driver_balance!=null)? Number(data.driver_balance): (s.driver_balance||0);
       s.min_balance = (data.min_balance!=null)? Number(data.min_balance): (s.min_balance!=null?s.min_balance:-15);
       renderBalance(s.driver_balance, s.min_balance);
-      await renderPackagePrefs();
+      renderPackagePrefs();
       loadLedger();
     }
   }catch(e){}
@@ -473,8 +473,8 @@ setInterval(refreshDriverMeta, 30000);
 
 async function getFarePackages(){
   try{
-    const r = await fetch('/api/fare-packages');
-    const j = await r.json();
+    const r = fetch('/api/fare-packages');
+    const j = r.json();
     if(j && j.success && Array.isArray(j.packages)) return j.packages;
   }catch(e){}
   return [
@@ -487,7 +487,7 @@ async function getFarePackages(){
 async function renderPackagePrefs(){
   const box = document.getElementById('pkgBox');
   if(!box) return;
-  const pkgs = await getFarePackages();
+  const pkgs = getFarePackages();
   const allowed = new Set((s.allowed_packages||[]).map(x=>String(x).toLowerCase().trim()).filter(Boolean));
   const enabled = new Set((s.enabled_packages||s.allowed_packages||[]).map(x=>String(x).toLowerCase().trim()).filter(Boolean));
   box.innerHTML = pkgs.map(p=>{
@@ -532,8 +532,8 @@ async function savePackages(){
   }
   setMsg('...');
   try{
-    const res = await fetch('/api/driver/set-packages', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password, enabled_packages:list })});
-    const data = await res.json();
+    const res = fetch('/api/driver/set-packages', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password, enabled_packages:list })});
+    const data = res.json();
     if(data && data.success){
       s.allowed_packages = data.allowed_packages || (s.allowed_packages||[]);
       s.enabled_packages = data.enabled_packages || list;
@@ -550,8 +550,8 @@ async function savePackages(){
 
 async function goOnline(){
   setMsg('...');
-  const res = await fetch('/api/driver/online', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password })});
-  const data = await res.json();
+  const res = fetch('/api/driver/online', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password })});
+  const data = res.json();
   if(data.success){ s.is_online=1; localStorage.setItem('pt_session', JSON.stringify(s)); setSt(true); setMsg('Online oldunuz.'); }
   else if(data.error==='DRIVER_NOT_APPROVED'){ setMsg('Admin təsdiqi yoxdur.'); }
   else setMsg(data.error||'ERROR');
@@ -559,16 +559,16 @@ async function goOnline(){
 async function changeRadius(){
   const r = Number(document.getElementById('radiusSelect').value);
   setMsg('...');
-  const res = await fetch('/api/driver/set-radius', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password, radius_km:r })});
-  const data = await res.json();
+  const res = fetch('/api/driver/set-radius', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password, radius_km:r })});
+  const data = res.json();
   if(data.success){ setMsg('Radius: ' + data.driver_radius_km + ' km'); }
   else setMsg(data.error||'ERROR');
 }
 
 async function goOffline(){
   setMsg('...');
-  const res = await fetch('/api/driver/offline', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password })});
-  const data = await res.json();
+  const res = fetch('/api/driver/offline', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password })});
+  const data = res.json();
   if(data.success){ s.is_online=0; localStorage.setItem('pt_session', JSON.stringify(s)); setSt(false); setMsg('Offline oldunuz.'); }
   else setMsg(data.error||'ERROR');
 }
@@ -733,7 +733,7 @@ function showIncoming(o){
 
 async function acceptFromIncoming(id){
   hideIncoming();
-  await acceptOrder(id);
+  acceptOrder(id);
 }
 
 function esc(s){ return String(s||'').replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])); }
@@ -790,7 +790,7 @@ async function updateIncomingPreviewMap(o){
   incomingDropoffMarker = L.marker([dLat,dLng]).addTo(incomingMap).bindPopup('Təyinat');
 
   try{
-    const poly = await osrmPolyline(pLat,pLng,dLat,dLng);
+    const poly = osrmPolyline(pLat,pLng,dLat,dLng);
     incomingRoute = L.polyline(poly, { weight: 5, dashArray: '6 10' }).addTo(incomingMap);
   }catch(e){
     // Fallback: düz xətt
@@ -812,13 +812,36 @@ function ensureMap(lat=40.4093, lng=49.8671){
 
 async function osrmPolyline(aLat,aLng,bLat,bLng){
   const url = `https://router.project-osrm.org/route/v1/driving/${aLng},${aLat};${bLng},${bLat}?overview=full&geometries=geojson`;
-  const r = await fetch(url);
+  const r = fetch(url);
   if(!r.ok) throw new Error('OSRM_ERROR');
-  const j = await r.json();
+  const j = r.json();
   const coords = j.routes?.[0]?.geometry?.coordinates || [];
   return coords.map(c=>[c[1],c[0]]);
 }
 
+async function updateRouteForOrder(o){
+  if(!o) return;
+  const pLat = Number(o.pickup_lat), pLng = Number(o.pickup_lon);
+  const dLat = Number(o.dropoff_lat), dLng = Number(o.dropoff_lon);
+  if(!isFinite(pLat)||!isFinite(pLng)||!isFinite(dLat)||!isFinite(dLng)) return;
+
+  if(!lastPos){
+    document.getElementById('mapInfo').textContent = 'GPS gözlənilir...';
+    ensureMap(pLat,pLng);
+    return;
+  }
+
+  ensureMap(lastPos.lat, lastPos.lng);
+
+
+const btn = document.getElementById('centerBtn');
+if(btn){
+  btn.onclick = function(){
+    if(lastPos && map){
+      map.flyTo([lastPos.lat, lastPos.lng], 16, { duration: 1 });
+    }
+  };
+}
 	
   if(meMarker) meMarker.setLatLng([lastPos.lat,lastPos.lng]);
 
@@ -831,9 +854,9 @@ async function osrmPolyline(aLat,aLng,bLat,bLng){
   if(routePickupToDropoff) routePickupToDropoff.remove();
 
   try{
-    const poly1 = await osrmPolyline(lastPos.lat,lastPos.lng,pLat,pLng);
+    const poly1 = osrmPolyline(lastPos.lat,lastPos.lng,pLat,pLng);
     routeToPickup = L.polyline(poly1, { weight: 5 }).addTo(map);
-    const poly2 = await osrmPolyline(pLat,pLng,dLat,dLng);
+    const poly2 = osrmPolyline(pLat,pLng,dLat,dLng);
     routePickupToDropoff = L.polyline(poly2, { weight: 5, dashArray: '8 10' }).addTo(map);
     const g = L.featureGroup([meMarker, pickupMarker, dropoffMarker, routeToPickup, routePickupToDropoff]);
   const status = String(o.status||'').toLowerCase();
@@ -879,76 +902,6 @@ if(wazeBtn){
 
 
 
-
-async function updateRouteForOrder(o){
-  if(!o) return;
-
-  const pLat = Number(o.pickup_lat), pLng = Number(o.pickup_lon);
-  const dLat = Number(o.dropoff_lat), dLng = Number(o.dropoff_lon);
-  if(!isFinite(pLat)||!isFinite(pLng)||!isFinite(dLat)||!isFinite(dLng)) return;
-
-  if(!lastPos){
-    document.getElementById('mapInfo').textContent = 'GPS gözlənilir...';
-    ensureMap(pLat,pLng);
-    return;
-  }
-
-  ensureMap(lastPos.lat, lastPos.lng);
-
-  if(meMarker) meMarker.setLatLng([lastPos.lat,lastPos.lng]);
-
-  if(pickupMarker) pickupMarker.remove();
-  if(dropoffMarker) dropoffMarker.remove();
-  pickupMarker = L.marker([pLat,pLng]).addTo(map).bindPopup('Götürmə');
-  dropoffMarker = L.marker([dLat,dLng]).addTo(map).bindPopup('Təyinat');
-
-  if(routeToPickup) routeToPickup.remove();
-  if(routePickupToDropoff) routePickupToDropoff.remove();
-
-  try{
-    const poly1 = await osrmPolyline(lastPos.lat,lastPos.lng,pLat,pLng);
-    routeToPickup = L.polyline(poly1, { weight: 5 }).addTo(map);
-
-    const poly2 = await osrmPolyline(pLat,pLng,dLat,dLng);
-    routePickupToDropoff = L.polyline(poly2, { weight: 5, dashArray: '8 10' }).addTo(map);
-
-    const status = String(o.status||'').toLowerCase();
-
-    if(status === 'accepted'){
-      map.flyTo([pLat, pLng], 15, { duration: 1.2 });
-    }
-    else if(status === 'arrived'){
-      map.flyTo([pLat, pLng], 16, { duration: 1 });
-    }
-    else if(status === 'in_progress'){
-      map.flyTo([dLat, dLng], 15, { duration: 1.5 });
-    }
-    else{
-      const g = L.featureGroup([meMarker, pickupMarker, dropoffMarker]);
-      map.fitBounds(g.getBounds().pad(0.15));
-    }
-
-    document.getElementById('mapInfo').textContent =
-      `Marşrut: Siz → Götürmə → Təyinat (Sifariş #${o.id})`;
-
-    const toPickup = ['accepted','arrived'].includes(status);
-    const tLat = toPickup ? pLat : dLat;
-    const tLng = toPickup ? pLng : dLng;
-    const nav = `https://waze.com/ul?ll=${tLat},${tLng}&navigate=yes`;
-
-    const wazeBtn = document.getElementById('wazeFloatingBtn');
-    if(wazeBtn){
-      wazeBtn.style.display = 'flex';
-      wazeBtn.onclick = function(){
-        window.open(nav, '_blank');
-      };
-    }
-
-  }catch(e){
-    console.log(e);
-  }
-}
-
 // ---------------- Chat modal (driver <-> passenger)
 let chatOrderId = null;
 let chatLastId = 0;
@@ -981,7 +934,7 @@ async function openChatModal(orderId, status){
   if(note) note.textContent = '';
   m.style.display = 'flex';
 
-  await loadChat(true);
+  loadChat(true);
   if(chatTimer) clearInterval(chatTimer);
   chatTimer = setInterval(()=>loadChat(false), 1500);
 }
@@ -1010,7 +963,7 @@ async function loadChat(reset){
     since_id: chatLastId
   });
   try{
-    const res = await fetch('/api/orders/chat?' + qs.toString());
+    const res = fetch('/api/orders/chat?' + qs.toString());
     const ct = (res.headers.get('content-type') || '').toLowerCase();
     if(!ct.includes('application/json')){
       if(note) note.textContent = 'Xəta: HTTP_' + res.status;
@@ -1020,7 +973,7 @@ async function loadChat(reset){
       if(reset && body) body.innerHTML = '';
       return;
     }
-    const data = await res.json().catch(()=>({}));
+    const data = res.json().catch(()=>({}));
     if(!data.success){
       const err = data.error || 'ERROR';
       if(note) note.textContent = (err==='CHAT_DISABLED') ? 'Chat admin tərəfindən deaktiv edilib.' : ('Xəta: ' + err);
@@ -1059,7 +1012,7 @@ async function sendChat(){
   if(!txt) return;
   inp.value = '';
   try{
-    const res = await fetch('/api/orders/chat', {
+    const res = fetch('/api/orders/chat', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ order_id: chatOrderId, role:'driver', phone:s.phone, password:s.password, message: txt })
@@ -1069,12 +1022,12 @@ async function sendChat(){
       if(note) note.textContent = 'Xəta: HTTP_' + res.status;
       return;
     }
-    const data = await res.json().catch(()=>({}));
+    const data = res.json().catch(()=>({}));
     if(!data.success){
       if(note) note.textContent = (data.error==='READ_ONLY') ? 'Bu mərhələdə yazmaq olmaz.' : ('Xəta: ' + (data.error||'ERROR'));
       return;
     }
-    await loadChat(false);
+    loadChat(false);
   }catch(e){
     if(note) note.textContent = 'Şəbəkə xətası.';
   }
@@ -1082,8 +1035,8 @@ async function sendChat(){
 
 async function setOrderStatus(id, status){
   setMsg('...');
-  const res = await fetch('/api/orders/status', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password, order_id:id, status })});
-  const data = await res.json();
+  const res = fetch('/api/orders/status', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password, order_id:id, status })});
+  const data = res.json();
   if(data.success){
     setMsg('OK');
     loadMy();
@@ -1111,7 +1064,7 @@ function startLocationLoop(){
     ensureMap(lastPos.lat, lastPos.lng);
     if(meMarker) meMarker.setLatLng([lastPos.lat, lastPos.lng]);
     try{
-      await fetch('/api/driver/location', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password, lat: pos.coords.latitude, lng: pos.coords.longitude })});
+      fetch('/api/driver/location', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password, lat: pos.coords.latitude, lng: pos.coords.longitude })});
     }catch(e){/* ignore */}
   }, ()=>{}, {enableHighAccuracy:true, maximumAge:10000, timeout:13000});
 }
@@ -1120,8 +1073,8 @@ async function loadFeed(){
   const box = document.getElementById('feed');
   box.innerHTML = '<div style="opacity:.75">Yüklənir...</div>';
   const qs = new URLSearchParams({ phone: s.phone, password: s.password });
-  const res = await fetch('/api/orders/feed?' + qs.toString());
-  const data = await res.json();
+  const res = fetch('/api/orders/feed?' + qs.toString());
+  const data = res.json();
   if(!data.success){
     applyActiveOrderUI(null);
     box.innerHTML = `<div style="opacity:.85">${esc(data.error||'ERROR')}</div>`;
@@ -1158,8 +1111,8 @@ async function loadFeed(){
 
 async function acceptOrder(id){
   setMsg('Qəbul edilir...');
-  const res = await fetch('/api/orders/accept', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password, order_id:id })});
-  const data = await res.json();
+  const res = fetch('/api/orders/accept', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password, order_id:id })});
+  const data = res.json();
   if(data.success){
     setMsg('Sifariş qəbul olundu.');
     loadFeed();
@@ -1184,8 +1137,8 @@ async function loadMy(){
   const box = document.getElementById('my');
   box.innerHTML = '<div style="opacity:.75">Yüklənir...</div>';
   const qs = new URLSearchParams({ phone: s.phone, password: s.password });
-  const res = await fetch('/api/orders/driver/my?' + qs.toString());
-  const data = await res.json();
+  const res = fetch('/api/orders/driver/my?' + qs.toString());
+  const data = res.json();
   if(!data.success){
     box.innerHTML = `<div style="opacity:.85">${esc(data.error||'ERROR')}</div>`;
     return;
@@ -1267,11 +1220,11 @@ setInterval(async ()=>{
   if(_polling) return;
   _polling = true;
   try{
-    await loadFeed();
+    loadFeed();
     // my orders less frequent to reduce load
     if(!window._myTick || (Date.now()-window._myTick>8000)){
       window._myTick = Date.now();
-      await loadMy();
+      loadMy();
     }
   }finally{ _polling = false; }
 }, 3000);
