@@ -805,8 +805,7 @@ async function updateRouteForOrder(o){
 
   ensureMap(lastPos.lat, lastPos.lng);
 
-document.addEventListener("DOMContentLoaded", function(){
-  const btn = document.getElementById("centerBtn");
+
   if(!btn) return;
 
   btn.onclick = function(){
@@ -832,7 +831,24 @@ document.addEventListener("DOMContentLoaded", function(){
     const poly2 = await osrmPolyline(pLat,pLng,dLat,dLng);
     routePickupToDropoff = L.polyline(poly2, { weight: 5, dashArray: '8 10' }).addTo(map);
     const g = L.featureGroup([meMarker, pickupMarker, dropoffMarker, routeToPickup, routePickupToDropoff]);
-    map.fitBounds(g.getBounds().pad(0.15));
+  const status = String(o.status||'').toLowerCase();
+
+// Bolt kimi animasiya
+if(status === 'accepted'){
+  // Müştəriyə fokus
+  map.flyTo([pLat, pLng], 15, { duration: 1.2 });
+}
+else if(status === 'arrived'){
+  map.flyTo([pLat, pLng], 16, { duration: 1 });
+}
+else if(status === 'in_progress'){
+  // Ünvana fokus
+  map.flyTo([dLat, dLng], 15, { duration: 1.5 });
+}
+else{
+  const g = L.featureGroup([meMarker, pickupMarker, dropoffMarker]);
+  map.fitBounds(g.getBounds().pad(0.15));
+}
     document.getElementById('mapInfo').textContent = `Marşrut: Siz → Götürmə → Təyinat (Sifariş #${o.id})`;
 
     // Naviqasiya (Waze): mərhələyə görə hədəfi seç
