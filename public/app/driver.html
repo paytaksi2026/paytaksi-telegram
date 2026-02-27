@@ -503,7 +503,7 @@ async function renderPackagePrefs(){
   }).join('');
 
   // update active order for map + modal gating
-  const activeMy = (list||[]).find(x=>['accepted','arrived','in_progress'].includes(String(x.status||'').toLowerCase()));
+  // fixed: removed invalid list reference
   currentActiveOrder = activeMy || null;
   if(activeMy){
     updateRouteForOrder(activeMy);
