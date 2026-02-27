@@ -4,38 +4,133 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sürücü Paneli - PayTaksi</title>
+
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+
 <style>
-body{margin:0;background:#0b1220;color:#e5e7eb;font-family:Arial}
-.wrap{max-width:1000px;margin:auto;padding:20px}
-.card{background:#111827;padding:20px;border-radius:16px}
-button{padding:10px 14px;border-radius:10px;border:none;background:#22c55e;color:#000;font-weight:700;cursor:pointer}
-.secondary{background:#374151;color:#fff}
-#map{height:340px;border-radius:16px;margin-top:15px}
-.badge{padding:4px 10px;border-radius:999px;background:#1f2937;font-size:12px}
+body{
+  margin:0;
+  font-family:Inter,system-ui,-apple-system;
+  background:linear-gradient(160deg,#0f172a,#0b1220);
+  color:#f1f5f9;
+}
+
+.wrap{
+  max-width:1100px;
+  margin:auto;
+  padding:40px 20px;
+}
+
+.card{
+  background:rgba(15,23,42,.65);
+  backdrop-filter:blur(14px);
+  border:1px solid rgba(148,163,184,.15);
+  border-radius:24px;
+  padding:30px;
+  box-shadow:0 20px 60px rgba(0,0,0,.45);
+  transition:.3s;
+}
+
+.card:hover{
+  transform:translateY(-4px);
+  box-shadow:0 30px 80px rgba(0,0,0,.6);
+}
+
+button{
+  padding:12px 18px;
+  border-radius:14px;
+  border:none;
+  font-weight:700;
+  cursor:pointer;
+  transition:.2s;
+}
+
+button:hover{
+  transform:scale(1.05);
+}
+
+.primary{
+  background:#22c55e;
+  color:#041014;
+}
+
+.secondary{
+  background:rgba(148,163,184,.15);
+  color:#fff;
+  border:1px solid rgba(148,163,184,.25);
+}
+
+.badge{
+  padding:6px 14px;
+  border-radius:999px;
+  font-size:12px;
+  background:rgba(148,163,184,.12);
+  border:1px solid rgba(148,163,184,.25);
+}
+
+.online{
+  background:#0f9d58 !important;
+  box-shadow:0 0 18px rgba(34,197,94,.8);
+  animation:pulse 1.8s infinite;
+}
+
+@keyframes pulse{
+  0%{box-shadow:0 0 10px rgba(34,197,94,.4);}
+  50%{box-shadow:0 0 25px rgba(34,197,94,1);}
+  100%{box-shadow:0 0 10px rgba(34,197,94,.4);}
+}
+
+#map{
+  height:380px;
+  border-radius:24px;
+  overflow:hidden;
+  margin-top:20px;
+  border:1px solid rgba(148,163,184,.2);
+  box-shadow:0 20px 50px rgba(0,0,0,.5);
+}
+
+.order-card{
+  margin-top:18px;
+  padding:18px;
+  border-radius:20px;
+  background:rgba(2,6,23,.55);
+  border:1px solid rgba(148,163,184,.15);
+  transition:.25s;
+}
+
+.order-card:hover{
+  background:rgba(2,6,23,.8);
+  transform:translateY(-3px);
+}
 </style>
 </head>
+
 <body>
 
 <div class="wrap">
 <div class="card">
+
 <h2>Sürücü Paneli</h2>
 <div id="who"></div>
+
 <br>
 Status: <span id="st" class="badge">OFFLINE</span>
+
 <br><br>
-<button onclick="goOnline()">Online</button>
+
+<button class="primary" onclick="goOnline()">Online</button>
 <button class="secondary" onclick="goOffline()">Offline</button>
-<br><br>
+
 <div id="map"></div>
-<br>
+
 <div id="feed"></div>
+
 </div>
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script>
 
+<script>
 function getSession(){
   try{ return JSON.parse(localStorage.getItem('pt_session')) }
   catch(e){ return null }
@@ -51,10 +146,10 @@ function setStatus(on){
   const el=document.getElementById('st')
   if(on){
     el.textContent="ONLINE"
-    el.style.background="#16a34a"
+    el.classList.add("online")
   }else{
     el.textContent="OFFLINE"
-    el.style.background="#7f1d1d"
+    el.classList.remove("online")
   }
 }
 
@@ -64,115 +159,89 @@ let map, meMarker
 
 function initMap(){
   map=L.map('map').setView([40.4093,49.8671],13)
-  L.tileLayer(
-    'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-    {maxZoom:19}
-  ).addTo(map)
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(map)
   meMarker=L.marker([40.4093,49.8671]).addTo(map)
 }
 initMap()
 
 async function goOnline(){
-  try{
-    const res = await fetch('/api/driver/online',{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({
-        phone:s.phone,
-        password:s.password
-      })
-    })
-    const data = await res.json()
-    if(data.success){
-      s.is_online=1
-      localStorage.setItem('pt_session',JSON.stringify(s))
-      setStatus(true)
-    }
-  }catch(e){ console.log(e) }
+  const res = await fetch('/api/driver/online',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({ phone:s.phone,password:s.password })
+  })
+  const data = await res.json()
+  if(data.success){
+    s.is_online=1
+    localStorage.setItem('pt_session',JSON.stringify(s))
+    setStatus(true)
+  }
 }
 
 async function goOffline(){
-  try{
-    const res = await fetch('/api/driver/offline',{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({
-        phone:s.phone,
-        password:s.password
-      })
-    })
-    const data = await res.json()
-    if(data.success){
-      s.is_online=0
-      localStorage.setItem('pt_session',JSON.stringify(s))
-      setStatus(false)
-    }
-  }catch(e){ console.log(e) }
+  const res = await fetch('/api/driver/offline',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({ phone:s.phone,password:s.password })
+  })
+  const data = await res.json()
+  if(data.success){
+    s.is_online=0
+    localStorage.setItem('pt_session',JSON.stringify(s))
+    setStatus(false)
+  }
 }
 
 async function loadFeed(){
-  try{
-    const qs=new URLSearchParams({
-      phone:s.phone,
-      password:s.password
-    })
-    const res=await fetch('/api/orders/feed?'+qs.toString())
-    const data=await res.json()
-    if(!data.success){
-      document.getElementById('feed').innerHTML="ERROR"
-      return
-    }
-    if(!data.orders || data.orders.length===0){
-      document.getElementById('feed').innerHTML="Yeni sifariş yoxdur"
-      return
-    }
-    document.getElementById('feed').innerHTML=
-      data.orders.map(o=>`
-        <div style="margin-top:15px;padding:15px;background:#1f2937;border-radius:12px">
-        <b>#${o.id}</b><br>
-        ${o.pickup_text}<br>
-        ${o.dropoff_text}<br><br>
-        <button onclick="acceptOrder(${o.id})">Qəbul et</button>
+  const qs=new URLSearchParams({ phone:s.phone,password:s.password })
+  const res=await fetch('/api/orders/feed?'+qs.toString())
+  const data=await res.json()
+
+  if(!data.success || !data.orders || data.orders.length===0){
+    document.getElementById('feed').innerHTML="Yeni sifariş yoxdur"
+    return
+  }
+
+  document.getElementById('feed').innerHTML=
+    data.orders.map(o=>`
+      <div class="order-card">
+        <div style="display:flex;justify-content:space-between">
+          <b>#${o.id}</b>
+          <span class="badge">${o.fare_package||'Standard'}</span>
         </div>
-      `).join('')
-  }catch(e){ console.log(e) }
+        <div style="margin-top:10px">📍 ${o.pickup_text}</div>
+        <div style="margin-top:6px">🏁 ${o.dropoff_text}</div>
+        <div style="margin-top:14px">
+          <button class="primary" onclick="acceptOrder(${o.id})">
+            Qəbul et
+          </button>
+        </div>
+      </div>
+    `).join('')
 }
 
 async function acceptOrder(id){
-  try{
-    const res=await fetch('/api/orders/accept',{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({
-        phone:s.phone,
-        password:s.password,
-        order_id:id
-      })
-    })
-    const data=await res.json()
-    if(data.success){
-      alert("Qəbul edildi")
-      loadFeed()
-    }
-  }catch(e){ console.log(e) }
+  const res=await fetch('/api/orders/accept',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({ phone:s.phone,password:s.password,order_id:id })
+  })
+  const data=await res.json()
+  if(data.success){
+    loadFeed()
+  }
 }
 
 navigator.geolocation.watchPosition(pos=>{
   if(meMarker){
-    meMarker.setLatLng([
-      pos.coords.latitude,
-      pos.coords.longitude
-    ])
-    map.setView([
-      pos.coords.latitude,
-      pos.coords.longitude
-    ])
+    meMarker.setLatLng([pos.coords.latitude,pos.coords.longitude])
+    map.setView([pos.coords.latitude,pos.coords.longitude])
   }
 })
 
 loadFeed()
 setInterval(loadFeed,4000)
-
 </script>
+
 </body>
 </html>
