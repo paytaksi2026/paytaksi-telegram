@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sürücü Paneli - PayTaksi</title>
+<title>Sürücü Paneli - PayTaksi PRO</title>
 
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 
@@ -15,12 +15,7 @@ body{
   color:#f1f5f9;
 }
 
-.wrap{
-  max-width:1100px;
-  margin:auto;
-  padding:40px 20px;
-}
-
+.wrap{max-width:1100px;margin:auto;padding:40px 20px}
 .card{
   background:rgba(15,23,42,.65);
   backdrop-filter:blur(14px);
@@ -28,12 +23,6 @@ body{
   border-radius:24px;
   padding:30px;
   box-shadow:0 20px 60px rgba(0,0,0,.45);
-  transition:.3s;
-}
-
-.card:hover{
-  transform:translateY(-4px);
-  box-shadow:0 30px 80px rgba(0,0,0,.6);
 }
 
 button{
@@ -42,23 +31,10 @@ button{
   border:none;
   font-weight:700;
   cursor:pointer;
-  transition:.2s;
 }
 
-button:hover{
-  transform:scale(1.05);
-}
-
-.primary{
-  background:#22c55e;
-  color:#041014;
-}
-
-.secondary{
-  background:rgba(148,163,184,.15);
-  color:#fff;
-  border:1px solid rgba(148,163,184,.25);
-}
+.primary{background:#22c55e;color:#041014}
+.secondary{background:#374151;color:#fff}
 
 .badge{
   padding:6px 14px;
@@ -75,15 +51,14 @@ button:hover{
 }
 
 @keyframes pulse{
-  0%{box-shadow:0 0 10px rgba(34,197,94,.4);}
-  50%{box-shadow:0 0 25px rgba(34,197,94,1);}
-  100%{box-shadow:0 0 10px rgba(34,197,94,.4);}
+  0%{box-shadow:0 0 10px rgba(34,197,94,.4)}
+  50%{box-shadow:0 0 25px rgba(34,197,94,1)}
+  100%{box-shadow:0 0 10px rgba(34,197,94,.4)}
 }
 
 #map{
-  height:380px;
+  height:420px;
   border-radius:24px;
-  overflow:hidden;
   margin-top:20px;
   border:1px solid rgba(148,163,184,.2);
   box-shadow:0 20px 50px rgba(0,0,0,.5);
@@ -95,26 +70,28 @@ button:hover{
   border-radius:20px;
   background:rgba(2,6,23,.55);
   border:1px solid rgba(148,163,184,.15);
-  transition:.25s;
 }
 
-.order-card:hover{
-  background:rgba(2,6,23,.8);
-  transform:translateY(-3px);
+.balance-warning{
+  color:#f87171;
+  font-weight:700;
+  margin-top:10px;
 }
 </style>
 </head>
 
 <body>
-
 <div class="wrap">
 <div class="card">
 
-<h2>Sürücü Paneli</h2>
+<h2>Sürücü Paneli PRO</h2>
 <div id="who"></div>
 
 <br>
 Status: <span id="st" class="badge">OFFLINE</span>
+<div id="balanceBlock" class="balance-warning" style="display:none">
+Balans limitdən aşağıdır. Online ola bilməzsiniz.
+</div>
 
 <br><br>
 
@@ -122,7 +99,6 @@ Status: <span id="st" class="badge">OFFLINE</span>
 <button class="secondary" onclick="goOffline()">Offline</button>
 
 <div id="map"></div>
-
 <div id="feed"></div>
 
 </div>
@@ -132,30 +108,23 @@ Status: <span id="st" class="badge">OFFLINE</span>
 
 <script>
 function getSession(){
-  try{ return JSON.parse(localStorage.getItem('pt_session')) }
-  catch(e){ return null }
+  try{return JSON.parse(localStorage.getItem('pt_session'))}
+  catch(e){return null}
 }
 
 const s = getSession()
-if(!s || s.role!=='driver'){ location.href='/' }
+if(!s || s.role!=='driver'){location.href='/'}
 
 document.getElementById('who').textContent =
   "Hörmətli " + s.name + " (" + s.phone + ")"
 
 function setStatus(on){
   const el=document.getElementById('st')
-  if(on){
-    el.textContent="ONLINE"
-    el.classList.add("online")
-  }else{
-    el.textContent="OFFLINE"
-    el.classList.remove("online")
-  }
+  if(on){el.textContent="ONLINE";el.classList.add("online")}
+  else{el.textContent="OFFLINE";el.classList.remove("online")}
 }
 
-setStatus(!!s.is_online)
-
-let map, meMarker
+let map, meMarker, routeLine
 
 function initMap(){
   map=L.map('map').setView([40.4093,49.8671],13)
@@ -164,7 +133,21 @@ function initMap(){
 }
 initMap()
 
+navigator.geolocation.watchPosition(pos=>{
+  if(meMarker){
+    const lat=pos.coords.latitude
+    const lng=pos.coords.longitude
+    meMarker.setLatLng([lat,lng])
+    map.setView([lat,lng])
+  }
+})
+
 async function goOnline(){
+  if(s.driver_balance && s.driver_balance < -15){
+    document.getElementById('balanceBlock').style.display='block'
+    return
+  }
+
   const res = await fetch('/api/driver/online',{
     method:'POST',
     headers:{'Content-Type':'application/json'},
@@ -192,6 +175,19 @@ async function goOffline(){
   }
 }
 
+async function drawAnimatedRoute(start, end){
+  if(routeLine) routeLine.remove()
+  routeLine=L.polyline([], {color:'#22c55e',weight:6}).addTo(map)
+
+  const steps=50
+  for(let i=0;i<=steps;i++){
+    const lat=start[0]+(end[0]-start[0])*(i/steps)
+    const lng=start[1]+(end[1]-start[1])*(i/steps)
+    routeLine.addLatLng([lat,lng])
+    await new Promise(r=>setTimeout(r,15))
+  }
+}
+
 async function loadFeed(){
   const qs=new URLSearchParams({ phone:s.phone,password:s.password })
   const res=await fetch('/api/orders/feed?'+qs.toString())
@@ -205,22 +201,17 @@ async function loadFeed(){
   document.getElementById('feed').innerHTML=
     data.orders.map(o=>`
       <div class="order-card">
-        <div style="display:flex;justify-content:space-between">
-          <b>#${o.id}</b>
-          <span class="badge">${o.fare_package||'Standard'}</span>
-        </div>
-        <div style="margin-top:10px">📍 ${o.pickup_text}</div>
-        <div style="margin-top:6px">🏁 ${o.dropoff_text}</div>
-        <div style="margin-top:14px">
-          <button class="primary" onclick="acceptOrder(${o.id})">
-            Qəbul et
-          </button>
-        </div>
+        <b>#${o.id}</b>
+        <div>📍 ${o.pickup_text}</div>
+        <div>🏁 ${o.dropoff_text}</div>
+        <button class="primary" onclick="acceptOrder(${o.id},${o.pickup_lat},${o.pickup_lon})">
+          Qəbul et
+        </button>
       </div>
     `).join('')
 }
 
-async function acceptOrder(id){
+async function acceptOrder(id, lat, lon){
   const res=await fetch('/api/orders/accept',{
     method:'POST',
     headers:{'Content-Type':'application/json'},
@@ -228,19 +219,20 @@ async function acceptOrder(id){
   })
   const data=await res.json()
   if(data.success){
+    const myPos=meMarker.getLatLng()
+    drawAnimatedRoute([myPos.lat,myPos.lng],[lat,lon])
     loadFeed()
   }
 }
 
-navigator.geolocation.watchPosition(pos=>{
-  if(meMarker){
-    meMarker.setLatLng([pos.coords.latitude,pos.coords.longitude])
-    map.setView([pos.coords.latitude,pos.coords.longitude])
-  }
-})
-
 loadFeed()
-setInterval(loadFeed,4000)
+
+// Real-time hazırlıq (socket qoşula bilər)
+window.initSocket = function(socket){
+  socket.on('new_order', data=>{
+    loadFeed()
+  })
+}
 </script>
 
 </body>
