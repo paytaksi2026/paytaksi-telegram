@@ -806,14 +806,14 @@ async function updateRouteForOrder(o){
   ensureMap(lastPos.lat, lastPos.lng);
 
 
-  if(!btn) return;
-
+const btn = document.getElementById('centerBtn');
+if(btn){
   btn.onclick = function(){
     if(lastPos && map){
-      map.flyTo([lastPos.lat, lastPos.lng], 16);
+      map.flyTo([lastPos.lat, lastPos.lng], 16, { duration: 1 });
     }
   };
-});
+}
 	
   if(meMarker) meMarker.setLatLng([lastPos.lat,lastPos.lng]);
 
