@@ -179,18 +179,20 @@
   bottom:85px;
   right:15px;
   z-index:1000;
-  width:70px;
-  height:70px;
+  width:58px;
+  height:58px;
   border-radius:50%;
   border:none;
   background:white;
-  box-shadow:0 8px 22px rgba(0,0,0,.35);
+  box-shadow:0 8px 25px rgba(0,0,0,.4);
   cursor:pointer;
   display:none;
   align-items:center;
   justify-content:center;
+  transition:all .25s ease;
 ">
-  <img src="waze_icon.png" style="width:58px;height:58px;border-radius:50%;object-fit:contain;">
+  <img src='https://upload.wikimedia.org/wikipedia/commons/2/2f/Waze_logo_2022.svg'
+       style="width:30px;height:30px">
 </button>
 
 		  
@@ -817,21 +819,6 @@ async function osrmPolyline(aLat,aLng,bLat,bLng){
   return coords.map(c=>[c[1],c[0]]);
 }
 
-async function updateRouteForOrder(o){
-  if(!o) return;
-  const pLat = Number(o.pickup_lat), pLng = Number(o.pickup_lon);
-  const dLat = Number(o.dropoff_lat), dLng = Number(o.dropoff_lon);
-  if(!isFinite(pLat)||!isFinite(pLng)||!isFinite(dLat)||!isFinite(dLng)) return;
-
-  if(!lastPos){
-    document.getElementById('mapInfo').textContent = 'GPS gözlənilir...';
-    ensureMap(pLat,pLng);
-    return;
-  }
-
-  ensureMap(lastPos.lat, lastPos.lng);
-
-
 	
   if(meMarker) meMarker.setLatLng([lastPos.lat,lastPos.lng]);
 
@@ -883,13 +870,84 @@ if(wazeBtn){
   wazeBtn.style.display = 'flex';
   wazeBtn.onclick = function(){
     window.open(nav, '_blank');
-
+  };
+}
 	  } catch(e){
   console.log(e);
 }
 }
 
 
+
+
+async function updateRouteForOrder(o){
+  if(!o) return;
+
+  const pLat = Number(o.pickup_lat), pLng = Number(o.pickup_lon);
+  const dLat = Number(o.dropoff_lat), dLng = Number(o.dropoff_lon);
+  if(!isFinite(pLat)||!isFinite(pLng)||!isFinite(dLat)||!isFinite(dLng)) return;
+
+  if(!lastPos){
+    document.getElementById('mapInfo').textContent = 'GPS gözlənilir...';
+    ensureMap(pLat,pLng);
+    return;
+  }
+
+  ensureMap(lastPos.lat, lastPos.lng);
+
+  if(meMarker) meMarker.setLatLng([lastPos.lat,lastPos.lng]);
+
+  if(pickupMarker) pickupMarker.remove();
+  if(dropoffMarker) dropoffMarker.remove();
+  pickupMarker = L.marker([pLat,pLng]).addTo(map).bindPopup('Götürmə');
+  dropoffMarker = L.marker([dLat,dLng]).addTo(map).bindPopup('Təyinat');
+
+  if(routeToPickup) routeToPickup.remove();
+  if(routePickupToDropoff) routePickupToDropoff.remove();
+
+  try{
+    const poly1 = await osrmPolyline(lastPos.lat,lastPos.lng,pLat,pLng);
+    routeToPickup = L.polyline(poly1, { weight: 5 }).addTo(map);
+
+    const poly2 = await osrmPolyline(pLat,pLng,dLat,dLng);
+    routePickupToDropoff = L.polyline(poly2, { weight: 5, dashArray: '8 10' }).addTo(map);
+
+    const status = String(o.status||'').toLowerCase();
+
+    if(status === 'accepted'){
+      map.flyTo([pLat, pLng], 15, { duration: 1.2 });
+    }
+    else if(status === 'arrived'){
+      map.flyTo([pLat, pLng], 16, { duration: 1 });
+    }
+    else if(status === 'in_progress'){
+      map.flyTo([dLat, dLng], 15, { duration: 1.5 });
+    }
+    else{
+      const g = L.featureGroup([meMarker, pickupMarker, dropoffMarker]);
+      map.fitBounds(g.getBounds().pad(0.15));
+    }
+
+    document.getElementById('mapInfo').textContent =
+      `Marşrut: Siz → Götürmə → Təyinat (Sifariş #${o.id})`;
+
+    const toPickup = ['accepted','arrived'].includes(status);
+    const tLat = toPickup ? pLat : dLat;
+    const tLng = toPickup ? pLng : dLng;
+    const nav = `https://waze.com/ul?ll=${tLat},${tLng}&navigate=yes`;
+
+    const wazeBtn = document.getElementById('wazeFloatingBtn');
+    if(wazeBtn){
+      wazeBtn.style.display = 'flex';
+      wazeBtn.onclick = function(){
+        window.open(nav, '_blank');
+      };
+    }
+
+  }catch(e){
+    console.log(e);
+  }
+}
 
 // ---------------- Chat modal (driver <-> passenger)
 let chatOrderId = null;
@@ -1200,23 +1258,6 @@ async function loadMy(){
   }
 }
 
-
-
-// --- Global center button fix (always works) ---
-document.addEventListener('DOMContentLoaded', function(){
-  const btn = document.getElementById('centerBtn');
-  if(btn){
-    btn.onclick = function(){
-      if(map){
-        if(lastPos && lastPos.lat && lastPos.lng){
-          map.flyTo([lastPos.lat, lastPos.lng], 16, { duration: 1 });
-        }else{
-          const c = map.getCenter();
-          map.flyTo([c.lat, c.lng], 15, { duration: 1 });
-        }
-      }
-
-});
 
 // initial + polling
 loadFeed();
