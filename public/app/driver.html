@@ -837,9 +837,21 @@ async function updateRouteForOrder(o){
 const btn = document.getElementById('centerBtn');
 if(btn){
   btn.onclick = function(){
-    if(lastPos && map){
-      map.flyTo([lastPos.lat, lastPos.lng], 16, { duration: 1 });
+
+    if(map){
+
+      // Əgər GPS mövqeyi varsa ora get
+      if(lastPos && lastPos.lat && lastPos.lng){
+        map.flyTo([lastPos.lat, lastPos.lng], 16, { duration: 1 });
+      }
+      // GPS yoxdursa xəritənin hazırkı mərkəzinə zoom et
+      else{
+        const c = map.getCenter();
+        map.flyTo([c.lat, c.lng], 15, { duration: 1 });
+      }
+
     }
+
   };
 }
 	
