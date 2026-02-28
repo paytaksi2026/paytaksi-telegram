@@ -513,6 +513,16 @@ async function renderPackagePrefs(){
   currentActiveOrder = activeMy || null;
   if(activeMy){
     updateRouteForOrder(activeMy);
+
+if(o.status==='completed' && o.final_fare!=null){
+  const finalFare = Number(o.final_fare||0);
+  const driverEarn = Number(o.driver_earn||0);
+  const commission = finalFare - driverEarn;
+  setTimeout(()=>{
+    showFareModal(finalFare, commission, driverEarn);
+  }, 400);
+}
+
   }else{
     document.getElementById('mapInfo').textContent = 'Xəritə: aktiv sifariş yoxdur';
 
@@ -1200,6 +1210,16 @@ async function loadMy(){
   currentActiveOrder = activeMy || null;
   if(activeMy){
     updateRouteForOrder(activeMy);
+
+if(o.status==='completed' && o.final_fare!=null){
+  const finalFare = Number(o.final_fare||0);
+  const driverEarn = Number(o.driver_earn||0);
+  const commission = finalFare - driverEarn;
+  setTimeout(()=>{
+    showFareModal(finalFare, commission, driverEarn);
+  }, 400);
+}
+
   }else{
     document.getElementById('mapInfo').textContent = 'Xəritə: aktiv sifariş yoxdur';
     const nb = document.getElementById('navBtn');
@@ -1283,6 +1303,72 @@ if(typeof showIncoming === "function"){
     triggerIncomingAnimation();
     __origShowIncoming(o);
   }
+}
+</script>
+
+
+<!-- Premium Fare Result Modal -->
+<div id="fareResultModal" style="
+position:fixed;
+inset:0;
+display:none;
+align-items:center;
+justify-content:center;
+background:rgba(0,0,0,.65);
+backdrop-filter:blur(8px);
+z-index:99999;
+">
+  <div style="
+  background:#0f172a;
+  border-radius:18px;
+  padding:30px;
+  width:min(420px,90%);
+  box-shadow:0 30px 80px rgba(0,0,0,.6);
+  text-align:center;
+  animation:fadeInScale .35s ease;
+  ">
+    <div style="font-size:18px;opacity:.8;margin-bottom:15px">YEKUN MƏBLƏĞ</div>
+    
+    <div style="font-size:42px;font-weight:900;color:#22c55e;margin:10px 0" id="fareCustomerAmount">
+      0.00 AZN
+    </div>
+    
+    <div style="margin-top:15px;font-size:14px;opacity:.8">
+      Komissiya: <span id="fareCommission">0.00 AZN</span>
+    </div>
+    
+    <div style="margin-top:6px;font-size:14px;opacity:.8">
+      Sizin gəlir: <span id="fareDriverEarn">0.00 AZN</span>
+    </div>
+    
+    <button onclick="closeFareModal()" style="
+      margin-top:25px;
+      padding:10px 20px;
+      border-radius:10px;
+      border:none;
+      background:#22c55e;
+      font-weight:700;
+      cursor:pointer;
+    ">Bağla</button>
+  </div>
+</div>
+
+<style>
+@keyframes fadeInScale{
+  from{opacity:0; transform:scale(.9)}
+  to{opacity:1; transform:scale(1)}
+}
+</style>
+
+<script>
+function showFareModal(finalFare, commission, driverEarn){
+  document.getElementById('fareCustomerAmount').innerText = finalFare.toFixed(2) + " AZN";
+  document.getElementById('fareCommission').innerText = commission.toFixed(2) + " AZN";
+  document.getElementById('fareDriverEarn').innerText = driverEarn.toFixed(2) + " AZN";
+  document.getElementById('fareResultModal').style.display = "flex";
+}
+function closeFareModal(){
+  document.getElementById('fareResultModal').style.display = "none";
 }
 </script>
 
