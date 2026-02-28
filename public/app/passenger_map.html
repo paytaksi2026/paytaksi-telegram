@@ -736,7 +736,7 @@ async function renderRideUI(order){
     if (cur==='accepted') beep('info');
     if (cur==='arrived') beep('arrive');
     if (cur==='in_progress') beep('start');
-    if (cur==='completed') beep('info');
+    if (cur==='completed'){ beep('info'); showRideComplete(order); }
   }
 }
 
@@ -1229,5 +1229,83 @@ useMyLocation();
 loadMyOrders();
 startPolling();
 </script>
+
+<!-- PREMIUM COMPLETED RIDE MODAL -->
+<div id="rideCompleteModal" style="position:fixed;inset:0;display:none;align-items:center;justify-content:center;
+background:rgba(0,0,0,.65);backdrop-filter:blur(8px);z-index:20000;">
+  <div style="width:min(420px,92vw);
+    background:linear-gradient(180deg,#0f172a,#020617);
+    border:1px solid rgba(255,255,255,.15);
+    border-radius:22px;padding:26px;text-align:center;
+    box-shadow:0 20px 60px rgba(0,0,0,.6);
+    animation:fadeIn .25s ease-out;">
+    
+    <div style="font-size:42px;margin-bottom:8px;">🙏</div>
+    <div style="font-weight:900;font-size:22px;">Təşəkkür edirik!</div>
+    <div style="opacity:.7;margin-top:4px;">Gediş uğurla tamamlandı</div>
+
+    <div id="rc_distance" style="margin-top:14px;font-size:14px;"></div>
+    <div id="rc_duration" style="margin-top:4px;font-size:14px;"></div>
+
+    <div id="rc_price" style="margin-top:16px;
+        font-size:34px;
+        font-weight:900;
+        color:#22c55e;
+        text-shadow:0 0 18px rgba(34,197,94,.7);">
+    </div>
+
+    <button onclick="closeRideComplete()"
+        style="margin-top:18px;padding:10px 22px;border-radius:12px;
+        border:none;background:#22c55e;color:#081014;
+        font-weight:800;cursor:pointer;">
+        Bağla
+    </button>
+  </div>
+</div>
+
+<style>
+@keyframes fadeIn{
+  from{opacity:0;transform:scale(.92)}
+  to{opacity:1;transform:scale(1)}
+}
+</style>
+
+<script>
+function showRideComplete(order){
+  const modal = document.getElementById('rideCompleteModal');
+  if(!modal || !order) return;
+
+  const km = Number(order.real_km || order.est_km || 0);
+  const fare = Number(order.final_fare || order.est_fare || 0);
+
+  document.getElementById('rc_distance').textContent =
+      km ? "Məsafə: " + km.toFixed(2) + " km" : "";
+
+  document.getElementById('rc_duration').textContent =
+      order.started_at ? "Vaxt: tamamlandı" : "";
+
+  document.getElementById('rc_price').textContent =
+      fare ? fare.toFixed(2) + " AZN" : "";
+
+  modal.style.display = "flex";
+
+  try{
+    const ctx = new (window.AudioContext||window.webkitAudioContext)();
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.frequency.value = 880;
+    g.gain.value = 0.1;
+    o.connect(g); g.connect(ctx.destination);
+    o.start();
+    setTimeout(()=>{o.stop();ctx.close();},200);
+  }catch(e){}
+}
+
+function closeRideComplete(){
+  const modal = document.getElementById('rideCompleteModal');
+  if(modal) modal.style.display = "none";
+}
+</script>
+
 </body>
 </html>
