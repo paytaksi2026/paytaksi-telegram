@@ -83,6 +83,18 @@
 </style>
 
 <link rel="stylesheet" href="/assets/bolt.css" />
+
+<style>
+@keyframes cashPulse {
+  0% { transform: scale(1); box-shadow: 0 0 0 rgba(34,197,94,0.4); }
+  50% { transform: scale(1.08); box-shadow: 0 0 30px rgba(34,197,94,0.9); }
+  100% { transform: scale(1); box-shadow: 0 0 0 rgba(34,197,94,0.4); }
+}
+.cash-animate {
+  animation: cashPulse 0.8s ease-in-out 2;
+}
+</style>
+
 </head>
 <body>
 <div class="wrap">
@@ -1413,13 +1425,54 @@ z-index:99999;">
   </div>
 </div>
 
+
+
+
 <script>
+function playCashSound(){
+  try{
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.type = 'triangle';
+    o.frequency.value = 1200;
+    g.gain.value = 0.15;
+    o.connect(g); g.connect(ctx.destination);
+    o.start();
+    o.frequency.exponentialRampToValueAtTime(800, ctx.currentTime + 0.2);
+    o.stop(ctx.currentTime + 0.25);
+  }catch(e){}
+}
+
+function animateBalanceFlow(amount){
+  const bal = document.getElementById('bal');
+  if(!bal) return;
+  const current = parseFloat(bal.innerText.replace(' AZN','')) || 0;
+  const target = current + amount;
+  let start = current;
+  const step = amount / 25;
+  const interval = setInterval(()=>{
+    start += step;
+    if(start >= target){
+      start = target;
+      clearInterval(interval);
+    }
+    bal.innerText = start.toFixed(2) + " AZN";
+  }, 20);
+}
+
 function showFareModal(finalFare, commission, driverEarn){
-  document.getElementById('fareCustomerAmount').innerText = finalFare.toFixed(2) + " AZN";
+  const main = document.getElementById('fareCustomerAmount');
+  main.innerText = finalFare.toFixed(2) + " AZN";
   document.getElementById('fareCommission').innerText = commission.toFixed(2) + " AZN";
   document.getElementById('fareDriverEarn').innerText = driverEarn.toFixed(2) + " AZN";
   document.getElementById('fareResultModal').style.display = "flex";
+  main.classList.add("cash-animate");
+  setTimeout(()=> main.classList.remove("cash-animate"), 1600);
+  playCashSound();
+  animateBalanceFlow(driverEarn);
 }
+
 function closeFareModal(){
   document.getElementById('fareResultModal').style.display = "none";
 }
