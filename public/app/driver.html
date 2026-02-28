@@ -1271,5 +1271,20 @@ function navBtnHtml(link, text){
 }
 
 </script>
+
+<script>
+function triggerIncomingAnimation(){
+  document.body.classList.add('shake');
+  setTimeout(()=>{ document.body.classList.remove('shake'); }, 500);
+}
+if(typeof showIncoming === "function"){
+  const __origShowIncoming = showIncoming;
+  showIncoming = function(o){
+    triggerIncomingAnimation();
+    __origShowIncoming(o);
+  }
+}
+</script>
+
 </body>
 </html>
