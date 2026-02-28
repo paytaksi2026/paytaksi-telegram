@@ -113,33 +113,10 @@
     <p style="margin-top:6px">Balans: <span class="badge" id="bal" style="cursor:pointer" title="Balans tarixçəsini aç/bağla">0.00 AZN</span> <span id="balHint" style="opacity:.75;font-size:12px"></span></p>
 
 
- <details id="ledgerWrap" style="margin-top:10px">
-	 
-	 <summary class="row" style="justify-content:space-between;align-items:center;list-style:none;cursor:pointer;padding:5px 5px;border-radius:12px;border:1px solid rgba(148,163,184,.18);background:rgba(2,6,23,.35)">
-<div class="row" style="gap:8px;align-items:center">
-    <span style="opacity:.85;font-size:13px">Balans tarixçəsi</span>
-    <div id="ledgerMini" class="badge" style="opacity:.9"></div>
-  </div>
-  </summary>
-
-  <div class="row" style="justify-content:flex-end;gap:8px;margin-top:8px">
-    <button class="secondary" onclick="loadLedger()">Yenilə</button>
-    <button class="secondary" onclick="openLedgerModal()">Hamısı</button>
-  </div>
-
-  <div id="ledgerList" style="margin-top:8px;max-height:220px;overflow:auto"></div>
-</details>
+ 
 
 
-<div id="ledgerModal" style="position:fixed;inset:0;display:none;align-items:flex-end;justify-content:center;background:rgba(0,0,0,.55);z-index:9999">
-  <div style="width:min(720px,100%);max-height:85vh;background:rgba(2,6,23,.96);border:1px solid rgba(148,163,184,.18);border-radius:18px 18px 0 0;overflow:hidden">
-    <div class="row" style="justify-content:space-between;align-items:center;padding:12px 14px;border-bottom:1px solid rgba(148,163,184,.15)">
-      <div style="font-weight:800">Balans tarixçəsi</div>
-      <button class="secondary" onclick="closeLedgerModal()">Bağla</button>
-    </div>
-    <div style="padding:12px 14px;max-height:75vh;overflow:auto">
-      <div id="ledgerFull"></div>
-    </div>
+
   </div>
 </div>
     <div id="controlsRow" class="row">
@@ -327,7 +304,7 @@ function renderBalance(balance, minBalance){
       wrap.open = !wrap.open;
       if(wrap.open){
         // Açılan kimi yüklə
-        try{ loadLedger(); }catch(e){}
+        try{  }catch(e){}
         // Açılan hissəyə scroll et (mobil üçün)
         try{ wrap.scrollIntoView({behavior:'smooth', block:'start'}); }catch(e){}
       }
@@ -367,97 +344,9 @@ function ledgerLabel(row){
   return row?.reason ? String(row.reason) : 'Hərəkət';
 }
 
-function renderLedger(list){
-  const box = document.getElementById('ledgerList');
-  const mini = document.getElementById('ledgerMini');
-  const full = document.getElementById('ledgerFull');
-  if(!box) return;
 
-  const rows = Array.isArray(list) ? list : [];
-  if(!rows.length){
-    box.innerHTML = '<div style="opacity:.75;font-size:13px">Hələ heç bir əməliyyat yoxdur.</div>';
-    if(full) full.innerHTML = box.innerHTML;
-    if(mini) mini.textContent = '0';
-    return;
-  }
 
-  // mini: son əməliyyat
-  try{
-    const last = rows[0];
-    const amt = Number(last.amount||0);
-    const sign = amt >= 0 ? '+' : '';
-    const badgeStyle = amt < 0
-      ? 'border-color:rgba(239,68,68,.55);background:rgba(239,68,68,.10)'
-      : 'border-color:rgba(34,197,94,.55);background:rgba(34,197,94,.10)';
-    if(mini){
-      mini.setAttribute('style', (mini.getAttribute('style')||'') + ';' + badgeStyle);
-      mini.textContent = sign + fmtMoney(amt) + ' AZN';
-      mini.title = ledgerLabel(last);
-    }
-  }catch(e){ if(mini) mini.textContent = String(rows.length); }
 
-  const compact = rows.slice(0, 6).map(r=>{
-    const amt = Number(r.amount||0);
-    const sign = amt >= 0 ? '+' : '';
-    const meta = [fmtTs(r.created_at), (r.order_id?('#'+r.order_id):'')].filter(Boolean).join(' • ');
-    const amtStyle = amt < 0 ? 'opacity:.95' : 'opacity:.95';
-    return `<div class="row" style="justify-content:space-between;align-items:center;border:1px solid rgba(148,163,184,.14);background:rgba(2,6,23,.28);padding:8px 10px;border-radius:12px;margin-top:6px">
-      <div style="min-width:0">
-        <div style="font-weight:700;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(ledgerLabel(r))}</div>
-        <div style="opacity:.7;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(meta)}</div>
-      </div>
-      <div style="font-weight:800;font-size:13px;${amtStyle}">${sign}${fmtMoney(amt)} AZN</div>
-    </div>`;
-  }).join('');
-
-  const moreHint = rows.length > 6
-    ? `<div style="margin-top:8px;opacity:.75;font-size:12px">Daha çox: <button class="secondary" style="padding:6px 10px" onclick="openLedgerModal()">Hamısını göstər (${rows.length})</button></div>`
-    : '';
-
-  box.innerHTML = compact + moreHint;
-
-  if(full){
-    full.innerHTML = rows.map(r=>{
-      const amt = Number(r.amount||0);
-      const sign = amt >= 0 ? '+' : '';
-      const badgeStyle = amt < 0 ? 'border-color:rgba(239,68,68,.55);background:rgba(239,68,68,.10)' : 'border-color:rgba(34,197,94,.55);background:rgba(34,197,94,.10)';
-      const meta = [fmtTs(r.created_at), (r.order_id?('#'+r.order_id):'')].filter(Boolean).join(' • ');
-      return `<div class="row" style="justify-content:space-between;border:1px solid rgba(148,163,184,.16);background:rgba(2,6,23,.28);padding:10px 12px;border-radius:12px;margin-top:8px">
-        <div style="min-width:0">
-          <div style="font-weight:800">${esc(ledgerLabel(r))}</div>
-          <div style="opacity:.7;font-size:12px">${esc(meta)}</div>
-        </div>
-        <div class="badge" style="${badgeStyle}">${sign}${fmtMoney(amt)} AZN</div>
-      </div>`;
-    }).join('');
-  }
-}
-
-function openLedgerModal(){
-  const m = document.getElementById('ledgerModal');
-  if(m) m.style.display = 'flex';
-}
-
-function closeLedgerModal(){
-  const m = document.getElementById('ledgerModal');
-  if(m) m.style.display = 'none';
-}
-
-async function loadLedger(){
-  const box = document.getElementById('ledgerList');
-  if(box) box.innerHTML = '<div style="opacity:.7;font-size:13px">Yüklənir...</div>';
-  try{
-    const res = await fetch('/api/driver/ledger', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password, limit: 20 })});
-    const data = await res.json();
-    if(data && data.success){
-      renderLedger(data.ledger||[]);
-    }else{
-      if(box) box.innerHTML = '<div style="opacity:.75;font-size:13px">'+esc(data?.error||'ERROR')+'</div>';
-    }
-  }catch(e){
-    if(box) box.innerHTML = '<div style="opacity:.75;font-size:13px">ERROR</div>';
-  }
-}
 
 const s = getSession();
 if(!s || s.role !== 'driver'){ location.href='/'; }
@@ -481,12 +370,12 @@ async function refreshDriverMeta(){
       s.min_balance = (data.min_balance!=null)? Number(data.min_balance): (s.min_balance!=null?s.min_balance:-15);
       renderBalance(s.driver_balance, s.min_balance);
       await renderPackagePrefs();
-      loadLedger();
+      
     }
   }catch(e){}
 }
 refreshDriverMeta();
-loadLedger();
+
 setInterval(refreshDriverMeta, 30000);
 
 async function getFarePackages(){
