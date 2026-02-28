@@ -106,3 +106,27 @@ tr:hover td{background:rgba(148,163,184,.06)}
   max-width:min(92vw,720px);
   z-index:9999;
 }
+
+/* === BOLT PRO ANIMATIONS === */
+@keyframes dashMove { to { stroke-dashoffset: -20; } }
+.animated-route { stroke-dasharray: 10 10; animation: dashMove 1s linear infinite; }
+
+@keyframes screenShake {
+  0% { transform: translateX(0); }
+  25% { transform: translateX(-4px); }
+  50% { transform: translateX(4px); }
+  75% { transform: translateX(-4px); }
+  100% { transform: translateX(0); }
+}
+.shake { animation: screenShake 0.4s ease; }
+
+@keyframes slideUp {
+  from { transform: translateY(40px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+.overlay .sheet { animation: slideUp .35s ease; }
+
+.active-order-glow {
+  box-shadow: 0 0 18px rgba(33,196,90,.55);
+  transition: box-shadow .3s ease;
+}
