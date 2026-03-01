@@ -939,20 +939,7 @@ async function setOrderStatus(id, status){
     setMsg('OK');
     loadMy();
 
-if(status==='completed'){
-  // fetch updated order to get final fare
-  fetch('/api/orders/driver/my?phone='+encodeURIComponent(s.phone)+'&password='+encodeURIComponent(s.password))
-  .then(r=>r.json())
-  .then(d=>{
-    if(d.success && Array.isArray(d.orders)){
-      const finished = d.orders.find(x=>x.id==id && x.status==='completed');
-      if(finished && finished.final_fare!=null){
-        const finalFare = Number(finished.final_fare||0);
-        const driverEarn = Number(finished.driver_earn||0);
-        const commission = finalFare - driverEarn;
-        showFareModal(finalFare, commission, driverEarn);
-      }
-    }
+}
   });
 }
 
@@ -1034,20 +1021,7 @@ async function acceptOrder(id){
     loadFeed();
     loadMy();
 
-if(status==='completed'){
-  // fetch updated order to get final fare
-  fetch('/api/orders/driver/my?phone='+encodeURIComponent(s.phone)+'&password='+encodeURIComponent(s.password))
-  .then(r=>r.json())
-  .then(d=>{
-    if(d.success && Array.isArray(d.orders)){
-      const finished = d.orders.find(x=>x.id==id && x.status==='completed');
-      if(finished && finished.final_fare!=null){
-        const finalFare = Number(finished.final_fare||0);
-        const driverEarn = Number(finished.driver_earn||0);
-        const commission = finalFare - driverEarn;
-        showFareModal(finalFare, commission, driverEarn);
-      }
-    }
+}
   });
 }
 
@@ -1062,20 +1036,7 @@ if(status==='completed'){
       setMsg('Sizin aktiv sifarişiniz var. Digər sifarişi götürmək üçün onu tamamlayın və ya ləğv edin. (ID: ' + (data.order_id||'') + ')');
       loadMy();
 
-if(status==='completed'){
-  // fetch updated order to get final fare
-  fetch('/api/orders/driver/my?phone='+encodeURIComponent(s.phone)+'&password='+encodeURIComponent(s.password))
-  .then(r=>r.json())
-  .then(d=>{
-    if(d.success && Array.isArray(d.orders)){
-      const finished = d.orders.find(x=>x.id==id && x.status==='completed');
-      if(finished && finished.final_fare!=null){
-        const finalFare = Number(finished.final_fare||0);
-        const driverEarn = Number(finished.driver_earn||0);
-        const commission = finalFare - driverEarn;
-        showFareModal(finalFare, commission, driverEarn);
-      }
-    }
+}
   });
 }
 
@@ -1186,25 +1147,17 @@ document.addEventListener('DOMContentLoaded', function(){
 loadFeed();
 loadMy();
 
-if(status==='completed'){
-  // fetch updated order to get final fare
-  fetch('/api/orders/driver/my?phone='+encodeURIComponent(s.phone)+'&password='+encodeURIComponent(s.password))
-  .then(r=>r.json())
-  .then(d=>{
-    if(d.success && Array.isArray(d.orders)){
-      const finished = d.orders.find(x=>x.id==id && x.status==='completed');
-      if(finished && finished.final_fare!=null){
-        const finalFare = Number(finished.final_fare||0);
-        const driverEarn = Number(finished.driver_earn||0);
-        const commission = finalFare - driverEarn;
-        showFareModal(finalFare, commission, driverEarn);
-      }
-    }
+}
   });
 }
 
 let _polling = false;
 setInterval(async ()=>{
+  const incoming = document.getElementById('incomingModal');
+  const chat = document.getElementById('chatModal');
+  if((incoming && incoming.style.display==='flex') || (chat && chat.style.display==='flex')){
+    return;
+  }
   if(_polling) return;
   _polling = true;
   try{
@@ -1214,26 +1167,13 @@ setInterval(async ()=>{
       window._myTick = Date.now();
       await loadMy();
 
-if(status==='completed'){
-  // fetch updated order to get final fare
-  fetch('/api/orders/driver/my?phone='+encodeURIComponent(s.phone)+'&password='+encodeURIComponent(s.password))
-  .then(r=>r.json())
-  .then(d=>{
-    if(d.success && Array.isArray(d.orders)){
-      const finished = d.orders.find(x=>x.id==id && x.status==='completed');
-      if(finished && finished.final_fare!=null){
-        const finalFare = Number(finished.final_fare||0);
-        const driverEarn = Number(finished.driver_earn||0);
-        const commission = finalFare - driverEarn;
-        showFareModal(finalFare, commission, driverEarn);
-      }
-    }
+}
   });
 }
 
     }
   }finally{ _polling = false; }
-}, 13000);
+}, 5000);
 startLocationLoop();
 
 function wazeLinkForOrder(o, type){
