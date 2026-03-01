@@ -931,114 +931,56 @@ async function sendChat(){
   }
 }
 
+
 async function setOrderStatus(id, status){
   setMsg('...');
-  const res = await fetch('/api/orders/status', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password, order_id:id, status })});
+  const res = await fetch('/api/orders/status', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ phone:s.phone, password:s.password, order_id:id, status })
+  });
   const data = await res.json();
   if(data.success){
     setMsg('OK');
     loadMy();
-
-}
-
     loadFeed();
-  } else {
+  }else{
     if(data && data.error==='BALANCE_LIMIT'){
-      const b = (data.driver_balance!=null)? Number(data.driver_balance): (s.driver_balance||0);
-      const min = (data.min_balance!=null)? Number(data.min_balance): (s.min_balance!=null?s.min_balance:-15);
-      s.driver_balance = b; s.min_balance = min; localStorage.setItem('pt_session', JSON.stringify(s));
+      const b = Number(data.driver_balance||0);
+      const min = Number(data.min_balance||-15);
+      s.driver_balance = b;
+      s.min_balance = min;
+      localStorage.setItem('pt_session', JSON.stringify(s));
       renderBalance(b, min);
-      setMsg('Balans limitə düşüb: ' + fmtMoney(b) + ' AZN (limit ' + fmtMoney(min) + ' AZN). Balansınızı artırın.');
-    } else {
+      setMsg('Balans limitə düşüb.');
+    }else{
       setMsg(data.error || 'ERROR');
     }
   }
 }
 
-function startLocationLoop(){
-  if(!('geolocation' in navigator)) return;
-  navigator.geolocation.watchPosition(async (pos)=>{
-    const now = Date.now();
-    if(now - lastLocSentAt < 10000) return;
-    lastLocSentAt = now;
-    lastPos = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-    ensureMap(lastPos.lat, lastPos.lng);
-    if(meMarker) meMarker.setLatLng([lastPos.lat, lastPos.lng]);
-    try{
-      await fetch('/api/driver/location', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password, lat: pos.coords.latitude, lng: pos.coords.longitude })});
-    }catch(e){/* ignore */}
-  }, ()=>{}, {enableHighAccuracy:true, maximumAge:10000, timeout:13000});
-}
-
-async function loadFeed(){
-  const box = document.getElementById('feed');
-  box.innerHTML = '<div style="opacity:.75">Yüklənir...</div>';
-  const qs = new URLSearchParams({ phone: s.phone, password: s.password });
-  const res = await fetch('/api/orders/feed?' + qs.toString());
-  const data = await res.json();
-  if(!data.success){
-    applyActiveOrderUI(null);
-    box.innerHTML = `<div style="opacity:.85">${esc(data.error||'ERROR')}</div>`;
-    return;
-  }
-  if(!data.orders || data.orders.length===0){
-    box.innerHTML = '<div style="opacity:.75">Hazırda yeni sifariş yoxdur.</div>';
-    return;
-  }
-  pruneIgnored();
-  // Compact feed: show only counter + bring newest order as modal
-  const orders = (data.orders||[]).filter(o=>!['accepted','arrived','in_progress','completed','cancelled'].includes(String(o.status||'').toLowerCase()));
-  box.innerHTML = `<div style="opacity:.8">Yeni sifariş sayı: <b>${orders.length}</b></div>`;
-
-  // if driver already has active order, don't pop new ones
-  if(currentActiveOrder){
-    return;
-  }
-
-  // pick first non-ignored
-  const cand = orders.find(x=>!ignoredOrders.has(Number(x.id)));
-  if(!cand){
-    return;
-  }
-
-  // avoid reopening same order repeatedly
-  const cid = Number(cand.id);
-  if(lastIncomingId !== cid){
-    lastIncomingId = cid;
-    showIncoming(cand);
-  }
-}
-
-
 async function acceptOrder(id){
   setMsg('Qəbul edilir...');
-  const res = await fetch('/api/orders/accept', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password, order_id:id })});
+  const res = await fetch('/api/orders/accept', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ phone:s.phone, password:s.password, order_id:id })
+  });
   const data = await res.json();
   if(data.success){
     setMsg('Sifariş qəbul olundu.');
     loadFeed();
     loadMy();
-
-}
-  });
-}
-
-  } else {
+  }else{
     if(data && data.error==='BALANCE_LIMIT'){
-      const b = (data.driver_balance!=null)? Number(data.driver_balance): (s.driver_balance||0);
-      const min = (data.min_balance!=null)? Number(data.min_balance): (s.min_balance!=null?s.min_balance:-15);
-      s.driver_balance = b; s.min_balance = min; localStorage.setItem('pt_session', JSON.stringify(s));
+      const b = Number(data.driver_balance||0);
+      const min = Number(data.min_balance||-15);
+      s.driver_balance = b;
+      s.min_balance = min;
+      localStorage.setItem('pt_session', JSON.stringify(s));
       renderBalance(b, min);
-      setMsg('Balans limitə düşüb: ' + fmtMoney(b) + ' AZN (limit ' + fmtMoney(min) + ' AZN). Balansınızı artırın.');
-    } else if (data && data.error==='DRIVER_HAS_ACTIVE_ORDER') {
-      setMsg('Sizin aktiv sifarişiniz var. Digər sifarişi götürmək üçün onu tamamlayın və ya ləğv edin. (ID: ' + (data.order_id||'') + ')');
-      loadMy();
-
-}
-  });
-}
-
-    } else {
+      setMsg('Balans limitə düşüb.');
+    }else{
       setMsg(data.error || 'ERROR');
     }
   }
@@ -1141,13 +1083,10 @@ document.addEventListener('DOMContentLoaded', function(){
   }
 });
 
+
 // initial + polling
 loadFeed();
 loadMy();
-
-}
-  });
-}
 
 let _polling = false;
 setInterval(async ()=>{
@@ -1155,15 +1094,17 @@ setInterval(async ()=>{
   _polling = true;
   try{
     await loadFeed();
-    // my orders less frequent to reduce load
     if(!window._myTick || (Date.now()-window._myTick>8000)){
       window._myTick = Date.now();
       await loadMy();
-
-}
-  } finally { _polling = false; }
+    }
+  } finally {
+    _polling = false;
+  }
 }, 5000);
+
 startLocationLoop();
+
 
 function wazeLinkForOrder(o, type){
   if(!o) return '';
