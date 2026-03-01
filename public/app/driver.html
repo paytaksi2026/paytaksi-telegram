@@ -356,7 +356,7 @@ renderBalance(s.driver_balance||0, (s.min_balance!=null?s.min_balance:-15));
 
 async function refreshDriverMeta(){
   try{
-    const res = await fetch('/api/status', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password })});
+    const res = await fetch('/api/driver/status', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password })});
     const data = await res.json();
     if(data && data.success){
       const r = Number(data.driver_radius_km||s.driver_radius_km||4);
@@ -439,7 +439,7 @@ async function savePackages(){
   }
   setMsg('...');
   try{
-    const res = await fetch('/api/set-packages', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password, enabled_packages:list })});
+    const res = await fetch('/api/driver/set-packages', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password, enabled_packages:list })});
     const data = await res.json();
     if(data && data.success){
       s.allowed_packages = data.allowed_packages || (s.allowed_packages||[]);
@@ -457,7 +457,7 @@ async function savePackages(){
 
 async function goOnline(){
   setMsg('...');
-  const res = await fetch('/api/online', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password })});
+  const res = await fetch('/api/driver/online', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password })});
   const data = await res.json();
   if(data.success){ s.is_online=1; localStorage.setItem('pt_session', JSON.stringify(s)); setSt(true); setMsg('Online oldunuz.'); }
   else if(data.error==='DRIVER_NOT_APPROVED'){ setMsg('Admin təsdiqi yoxdur.'); }
@@ -466,7 +466,7 @@ async function goOnline(){
 async function changeRadius(){
   const r = Number(document.getElementById('radiusSelect').value);
   setMsg('...');
-  const res = await fetch('/api/set-radius', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password, radius_km:r })});
+  const res = await fetch('/api/driver/set-radius', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password, radius_km:r })});
   const data = await res.json();
   if(data.success){ setMsg('Radius: ' + data.driver_radius_km + ' km'); }
   else setMsg(data.error||'ERROR');
@@ -474,7 +474,7 @@ async function changeRadius(){
 
 async function goOffline(){
   setMsg('...');
-  const res = await fetch('/api/offline', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password })});
+  const res = await fetch('/api/driver/offline', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password })});
   const data = await res.json();
   if(data.success){ s.is_online=0; localStorage.setItem('pt_session', JSON.stringify(s)); setSt(false); setMsg('Offline oldunuz.'); }
   else setMsg(data.error||'ERROR');
@@ -931,56 +931,155 @@ async function sendChat(){
   }
 }
 
-
 async function setOrderStatus(id, status){
   setMsg('...');
-  const res = await fetch('/api/orders/status', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ phone:s.phone, password:s.password, order_id:id, status })
-  });
+  const res = await fetch('/api/orders/status', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password, order_id:id, status })});
   const data = await res.json();
   if(data.success){
     setMsg('OK');
     loadMy();
+
+if(status==='completed'){
+  // fetch updated order to get final fare
+  fetch('/api/orders/driver/my?phone='+encodeURIComponent(s.phone)+'&password='+encodeURIComponent(s.password))
+  .then(r=>r.json())
+  .then(d=>{
+    if(d.success && Array.isArray(d.orders)){
+      const finished = d.orders.find(x=>x.id==id && x.status==='completed');
+      if(finished && finished.final_fare!=null){
+        const finalFare = Number(finished.final_fare||0);
+        const driverEarn = Number(finished.driver_earn||0);
+        const commission = finalFare - driverEarn;
+        showFareModal(finalFare, commission, driverEarn);
+      }
+    }
+  });
+}
+
     loadFeed();
-  }else{
+  } else {
     if(data && data.error==='BALANCE_LIMIT'){
-      const b = Number(data.driver_balance||0);
-      const min = Number(data.min_balance||-15);
-      s.driver_balance = b;
-      s.min_balance = min;
-      localStorage.setItem('pt_session', JSON.stringify(s));
+      const b = (data.driver_balance!=null)? Number(data.driver_balance): (s.driver_balance||0);
+      const min = (data.min_balance!=null)? Number(data.min_balance): (s.min_balance!=null?s.min_balance:-15);
+      s.driver_balance = b; s.min_balance = min; localStorage.setItem('pt_session', JSON.stringify(s));
       renderBalance(b, min);
-      setMsg('Balans limitə düşüb.');
-    }else{
+      setMsg('Balans limitə düşüb: ' + fmtMoney(b) + ' AZN (limit ' + fmtMoney(min) + ' AZN). Balansınızı artırın.');
+    } else {
       setMsg(data.error || 'ERROR');
     }
   }
 }
 
+function startLocationLoop(){
+  if(!('geolocation' in navigator)) return;
+  navigator.geolocation.watchPosition(async (pos)=>{
+    const now = Date.now();
+    if(now - lastLocSentAt < 10000) return;
+    lastLocSentAt = now;
+    lastPos = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+    ensureMap(lastPos.lat, lastPos.lng);
+    if(meMarker) meMarker.setLatLng([lastPos.lat, lastPos.lng]);
+    try{
+      await fetch('/api/driver/location', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password, lat: pos.coords.latitude, lng: pos.coords.longitude })});
+    }catch(e){/* ignore */}
+  }, ()=>{}, {enableHighAccuracy:true, maximumAge:10000, timeout:13000});
+}
+
+async function loadFeed(){
+  const box = document.getElementById('feed');
+  box.innerHTML = '<div style="opacity:.75">Yüklənir...</div>';
+  const qs = new URLSearchParams({ phone: s.phone, password: s.password });
+  const res = await fetch('/api/orders/feed?' + qs.toString());
+  const data = await res.json();
+  if(!data.success){
+    applyActiveOrderUI(null);
+    box.innerHTML = `<div style="opacity:.85">${esc(data.error||'ERROR')}</div>`;
+    return;
+  }
+  if(!data.orders || data.orders.length===0){
+    box.innerHTML = '<div style="opacity:.75">Hazırda yeni sifariş yoxdur.</div>';
+    return;
+  }
+  pruneIgnored();
+  // Compact feed: show only counter + bring newest order as modal
+  const orders = (data.orders||[]).filter(o=>!['accepted','arrived','in_progress','completed','cancelled'].includes(String(o.status||'').toLowerCase()));
+  box.innerHTML = `<div style="opacity:.8">Yeni sifariş sayı: <b>${orders.length}</b></div>`;
+
+  // if driver already has active order, don't pop new ones
+  if(currentActiveOrder){
+    return;
+  }
+
+  // pick first non-ignored
+  const cand = orders.find(x=>!ignoredOrders.has(Number(x.id)));
+  if(!cand){
+    return;
+  }
+
+  // avoid reopening same order repeatedly
+  const cid = Number(cand.id);
+  if(lastIncomingId !== cid){
+    lastIncomingId = cid;
+    showIncoming(cand);
+  }
+}
+
+
 async function acceptOrder(id){
   setMsg('Qəbul edilir...');
-  const res = await fetch('/api/orders/accept', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ phone:s.phone, password:s.password, order_id:id })
-  });
+  const res = await fetch('/api/orders/accept', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password, order_id:id })});
   const data = await res.json();
   if(data.success){
     setMsg('Sifariş qəbul olundu.');
     loadFeed();
     loadMy();
-  }else{
+
+if(status==='completed'){
+  // fetch updated order to get final fare
+  fetch('/api/orders/driver/my?phone='+encodeURIComponent(s.phone)+'&password='+encodeURIComponent(s.password))
+  .then(r=>r.json())
+  .then(d=>{
+    if(d.success && Array.isArray(d.orders)){
+      const finished = d.orders.find(x=>x.id==id && x.status==='completed');
+      if(finished && finished.final_fare!=null){
+        const finalFare = Number(finished.final_fare||0);
+        const driverEarn = Number(finished.driver_earn||0);
+        const commission = finalFare - driverEarn;
+        showFareModal(finalFare, commission, driverEarn);
+      }
+    }
+  });
+}
+
+  } else {
     if(data && data.error==='BALANCE_LIMIT'){
-      const b = Number(data.driver_balance||0);
-      const min = Number(data.min_balance||-15);
-      s.driver_balance = b;
-      s.min_balance = min;
-      localStorage.setItem('pt_session', JSON.stringify(s));
+      const b = (data.driver_balance!=null)? Number(data.driver_balance): (s.driver_balance||0);
+      const min = (data.min_balance!=null)? Number(data.min_balance): (s.min_balance!=null?s.min_balance:-15);
+      s.driver_balance = b; s.min_balance = min; localStorage.setItem('pt_session', JSON.stringify(s));
       renderBalance(b, min);
-      setMsg('Balans limitə düşüb.');
-    }else{
+      setMsg('Balans limitə düşüb: ' + fmtMoney(b) + ' AZN (limit ' + fmtMoney(min) + ' AZN). Balansınızı artırın.');
+    } else if (data && data.error==='DRIVER_HAS_ACTIVE_ORDER') {
+      setMsg('Sizin aktiv sifarişiniz var. Digər sifarişi götürmək üçün onu tamamlayın və ya ləğv edin. (ID: ' + (data.order_id||'') + ')');
+      loadMy();
+
+if(status==='completed'){
+  // fetch updated order to get final fare
+  fetch('/api/orders/driver/my?phone='+encodeURIComponent(s.phone)+'&password='+encodeURIComponent(s.password))
+  .then(r=>r.json())
+  .then(d=>{
+    if(d.success && Array.isArray(d.orders)){
+      const finished = d.orders.find(x=>x.id==id && x.status==='completed');
+      if(finished && finished.final_fare!=null){
+        const finalFare = Number(finished.final_fare||0);
+        const driverEarn = Number(finished.driver_earn||0);
+        const commission = finalFare - driverEarn;
+        showFareModal(finalFare, commission, driverEarn);
+      }
+    }
+  });
+}
+
+    } else {
       setMsg(data.error || 'ERROR');
     }
   }
@@ -990,7 +1089,7 @@ async function loadMy(){
   const box = document.getElementById('my');
   box.innerHTML = '<div style="opacity:.75">Yüklənir...</div>';
   const qs = new URLSearchParams({ phone: s.phone, password: s.password });
-  const res = await fetch('/api/orders/my?' + qs.toString());
+  const res = await fetch('/api/orders/driver/my?' + qs.toString());
   const data = await res.json();
   if(!data.success){
     box.innerHTML = `<div style="opacity:.85">${esc(data.error||'ERROR')}</div>`;
@@ -1083,43 +1182,26 @@ document.addEventListener('DOMContentLoaded', function(){
   }
 });
 
-
-
-async function loadFeed(){
-  const box = document.getElementById('feed');
-  if(!box) return;
-  try{
-    const qs = new URLSearchParams({ phone: s.phone, password: s.password });
-    const res = await fetch('/api/orders/feed?' + qs.toString());
-    const data = await res.json();
-    if(!data.success){
-      box.innerHTML = '<div style="opacity:.75">Sifariş yoxdur.</div>';
-      return;
-    }
-    const list = data.orders || [];
-    if(!list.length){
-      box.innerHTML = '<div style="opacity:.75">Yeni sifariş yoxdur.</div>';
-      return;
-    }
-    box.innerHTML = list.map(o=>`
-      <div style="padding:10px;border:1px solid rgba(148,163,184,.18);border-radius:10px;margin-bottom:8px;background:rgba(2,6,23,.35)">
-        <div><b>#${o.id}</b> <span class="badge">${o.fare_package||''}</span></div>
-        <div style="margin-top:6px"><b>Haradan:</b> ${o.pickup_text||''}</div>
-        <div style="margin-top:6px"><b>Haraya:</b> ${o.dropoff_text||''}</div>
-        <div style="margin-top:8px">
-          <button onclick="acceptOrder(${o.id})">Qəbul et</button>
-          <button class="secondary" onclick="ignoreIncoming(${o.id})">Görməzlikdən gəl</button>
-        </div>
-      </div>
-    `).join('');
-  }catch(e){
-    box.innerHTML = '<div style="opacity:.75">Şəbəkə xətası.</div>';
-  }
-}
-
 // initial + polling
 loadFeed();
 loadMy();
+
+if(status==='completed'){
+  // fetch updated order to get final fare
+  fetch('/api/orders/driver/my?phone='+encodeURIComponent(s.phone)+'&password='+encodeURIComponent(s.password))
+  .then(r=>r.json())
+  .then(d=>{
+    if(d.success && Array.isArray(d.orders)){
+      const finished = d.orders.find(x=>x.id==id && x.status==='completed');
+      if(finished && finished.final_fare!=null){
+        const finalFare = Number(finished.final_fare||0);
+        const driverEarn = Number(finished.driver_earn||0);
+        const commission = finalFare - driverEarn;
+        showFareModal(finalFare, commission, driverEarn);
+      }
+    }
+  });
+}
 
 let _polling = false;
 setInterval(async ()=>{
@@ -1127,70 +1209,32 @@ setInterval(async ()=>{
   _polling = true;
   try{
     await loadFeed();
+    // my orders less frequent to reduce load
     if(!window._myTick || (Date.now()-window._myTick>8000)){
       window._myTick = Date.now();
       await loadMy();
-    }
-  } finally {
-    _polling = false;
-  }
-}, 5000);
 
-
-// ----------- STABLE GPS LOOP -----------
-let __gpsWatchId = null;
-
-function startLocationLoop(){
-  if(!navigator.geolocation){
-    console.log("Geolocation not supported");
-    return;
-  }
-
-  if(__gpsWatchId !== null) return; // prevent double start
-
-  __gpsWatchId = navigator.geolocation.watchPosition(
-    async function(pos){
-      const lat = pos.coords.latitude;
-      const lng = pos.coords.longitude;
-
-      lastPos = {lat, lng};
-
-      if(map && meMarker){
-        meMarker.setLatLng([lat,lng]);
+if(status==='completed'){
+  // fetch updated order to get final fare
+  fetch('/api/orders/driver/my?phone='+encodeURIComponent(s.phone)+'&password='+encodeURIComponent(s.password))
+  .then(r=>r.json())
+  .then(d=>{
+    if(d.success && Array.isArray(d.orders)){
+      const finished = d.orders.find(x=>x.id==id && x.status==='completed');
+      if(finished && finished.final_fare!=null){
+        const finalFare = Number(finished.final_fare||0);
+        const driverEarn = Number(finished.driver_earn||0);
+        const commission = finalFare - driverEarn;
+        showFareModal(finalFare, commission, driverEarn);
       }
-
-      // send location to server (max every 5 sec)
-      const now = Date.now();
-      if(now - lastLocSentAt > 5000){
-        lastLocSentAt = now;
-        try{
-          await fetch('/api/location', {
-            method:'POST',
-            headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({
-              phone: s.phone,
-              password: s.password,
-              lat,
-              lng
-            })
-          });
-        }catch(e){}
-      }
-
-    },
-    function(err){
-      console.log("GPS error:", err);
-    },
-    {
-      enableHighAccuracy:true,
-      maximumAge:5000,
-      timeout:15000
     }
-  );
+  });
 }
 
+    }
+  }finally{ _polling = false; }
+}, 3000);
 startLocationLoop();
-
 
 function wazeLinkForOrder(o, type){
   if(!o) return '';
