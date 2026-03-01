@@ -940,8 +940,6 @@ async function setOrderStatus(id, status){
     loadMy();
 
 }
-  });
-}
 
     loadFeed();
   } else {
@@ -1163,11 +1161,7 @@ setInterval(async ()=>{
       await loadMy();
 
 }
-  });
-}
-
-    }
-  }finally{ _polling = false; }
+  } finally { _polling = false; }
 }, 5000);
 startLocationLoop();
 
