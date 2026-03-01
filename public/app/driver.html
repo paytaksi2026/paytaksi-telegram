@@ -356,7 +356,7 @@ renderBalance(s.driver_balance||0, (s.min_balance!=null?s.min_balance:-15));
 
 async function refreshDriverMeta(){
   try{
-    const res = await fetch('/api/driver/status', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password })});
+    const res = await fetch('/api/status', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password })});
     const data = await res.json();
     if(data && data.success){
       const r = Number(data.driver_radius_km||s.driver_radius_km||4);
@@ -439,7 +439,7 @@ async function savePackages(){
   }
   setMsg('...');
   try{
-    const res = await fetch('/api/driver/set-packages', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password, enabled_packages:list })});
+    const res = await fetch('/api/set-packages', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password, enabled_packages:list })});
     const data = await res.json();
     if(data && data.success){
       s.allowed_packages = data.allowed_packages || (s.allowed_packages||[]);
@@ -457,7 +457,7 @@ async function savePackages(){
 
 async function goOnline(){
   setMsg('...');
-  const res = await fetch('/api/driver/online', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password })});
+  const res = await fetch('/api/online', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password })});
   const data = await res.json();
   if(data.success){ s.is_online=1; localStorage.setItem('pt_session', JSON.stringify(s)); setSt(true); setMsg('Online oldunuz.'); }
   else if(data.error==='DRIVER_NOT_APPROVED'){ setMsg('Admin təsdiqi yoxdur.'); }
@@ -466,7 +466,7 @@ async function goOnline(){
 async function changeRadius(){
   const r = Number(document.getElementById('radiusSelect').value);
   setMsg('...');
-  const res = await fetch('/api/driver/set-radius', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password, radius_km:r })});
+  const res = await fetch('/api/set-radius', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password, radius_km:r })});
   const data = await res.json();
   if(data.success){ setMsg('Radius: ' + data.driver_radius_km + ' km'); }
   else setMsg(data.error||'ERROR');
@@ -474,7 +474,7 @@ async function changeRadius(){
 
 async function goOffline(){
   setMsg('...');
-  const res = await fetch('/api/driver/offline', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password })});
+  const res = await fetch('/api/offline', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password })});
   const data = await res.json();
   if(data.success){ s.is_online=0; localStorage.setItem('pt_session', JSON.stringify(s)); setSt(false); setMsg('Offline oldunuz.'); }
   else setMsg(data.error||'ERROR');
@@ -990,7 +990,7 @@ async function loadMy(){
   const box = document.getElementById('my');
   box.innerHTML = '<div style="opacity:.75">Yüklənir...</div>';
   const qs = new URLSearchParams({ phone: s.phone, password: s.password });
-  const res = await fetch('/api/orders/driver/my?' + qs.toString());
+  const res = await fetch('/api/orders/my?' + qs.toString());
   const data = await res.json();
   if(!data.success){
     box.innerHTML = `<div style="opacity:.85">${esc(data.error||'ERROR')}</div>`;
@@ -1090,7 +1090,7 @@ async function loadFeed(){
   if(!box) return;
   try{
     const qs = new URLSearchParams({ phone: s.phone, password: s.password });
-    const res = await fetch('/api/orders/driver/feed?' + qs.toString());
+    const res = await fetch('/api/orders/feed?' + qs.toString());
     const data = await res.json();
     if(!data.success){
       box.innerHTML = '<div style="opacity:.75">Sifariş yoxdur.</div>';
@@ -1164,7 +1164,7 @@ function startLocationLoop(){
       if(now - lastLocSentAt > 5000){
         lastLocSentAt = now;
         try{
-          await fetch('/api/driver/location', {
+          await fetch('/api/location', {
             method:'POST',
             headers:{'Content-Type':'application/json'},
             body: JSON.stringify({
