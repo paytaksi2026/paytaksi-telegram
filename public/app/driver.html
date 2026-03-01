@@ -1136,6 +1136,59 @@ setInterval(async ()=>{
   }
 }, 5000);
 
+
+// ----------- STABLE GPS LOOP -----------
+let __gpsWatchId = null;
+
+function startLocationLoop(){
+  if(!navigator.geolocation){
+    console.log("Geolocation not supported");
+    return;
+  }
+
+  if(__gpsWatchId !== null) return; // prevent double start
+
+  __gpsWatchId = navigator.geolocation.watchPosition(
+    async function(pos){
+      const lat = pos.coords.latitude;
+      const lng = pos.coords.longitude;
+
+      lastPos = {lat, lng};
+
+      if(map && meMarker){
+        meMarker.setLatLng([lat,lng]);
+      }
+
+      // send location to server (max every 5 sec)
+      const now = Date.now();
+      if(now - lastLocSentAt > 5000){
+        lastLocSentAt = now;
+        try{
+          await fetch('/api/driver/location', {
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({
+              phone: s.phone,
+              password: s.password,
+              lat,
+              lng
+            })
+          });
+        }catch(e){}
+      }
+
+    },
+    function(err){
+      console.log("GPS error:", err);
+    },
+    {
+      enableHighAccuracy:true,
+      maximumAge:5000,
+      timeout:15000
+    }
+  );
+}
+
 startLocationLoop();
 
 
