@@ -1153,11 +1153,6 @@ loadMy();
 
 let _polling = false;
 setInterval(async ()=>{
-  const incoming = document.getElementById('incomingModal');
-  const chat = document.getElementById('chatModal');
-  if((incoming && incoming.style.display==='flex') || (chat && chat.style.display==='flex')){
-    return;
-  }
   if(_polling) return;
   _polling = true;
   try{
