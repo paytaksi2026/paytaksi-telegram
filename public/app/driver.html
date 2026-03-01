@@ -1084,6 +1084,39 @@ document.addEventListener('DOMContentLoaded', function(){
 });
 
 
+
+async function loadFeed(){
+  const box = document.getElementById('feed');
+  if(!box) return;
+  try{
+    const qs = new URLSearchParams({ phone: s.phone, password: s.password });
+    const res = await fetch('/api/orders/driver/feed?' + qs.toString());
+    const data = await res.json();
+    if(!data.success){
+      box.innerHTML = '<div style="opacity:.75">Sifariş yoxdur.</div>';
+      return;
+    }
+    const list = data.orders || [];
+    if(!list.length){
+      box.innerHTML = '<div style="opacity:.75">Yeni sifariş yoxdur.</div>';
+      return;
+    }
+    box.innerHTML = list.map(o=>`
+      <div style="padding:10px;border:1px solid rgba(148,163,184,.18);border-radius:10px;margin-bottom:8px;background:rgba(2,6,23,.35)">
+        <div><b>#${o.id}</b> <span class="badge">${o.fare_package||''}</span></div>
+        <div style="margin-top:6px"><b>Haradan:</b> ${o.pickup_text||''}</div>
+        <div style="margin-top:6px"><b>Haraya:</b> ${o.dropoff_text||''}</div>
+        <div style="margin-top:8px">
+          <button onclick="acceptOrder(${o.id})">Qəbul et</button>
+          <button class="secondary" onclick="ignoreIncoming(${o.id})">Görməzlikdən gəl</button>
+        </div>
+      </div>
+    `).join('');
+  }catch(e){
+    box.innerHTML = '<div style="opacity:.75">Şəbəkə xətası.</div>';
+  }
+}
+
 // initial + polling
 loadFeed();
 loadMy();
