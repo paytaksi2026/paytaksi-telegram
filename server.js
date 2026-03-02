@@ -2229,66 +2229,6 @@ app.get('/admin/reset-db', async (req, res) => {
   }
 });
 
-
-// ================= DRIVER PERFORMANCE (FIXED & WORKING) =================
-app.post('/api/driver/performance', async (req, res) => {
-  try {
-    const phone = normPhone(req.body.phone);
-    const password = String(req.body.password || '');
-
-    const driver = await authUser(phone, password, 'driver');
-    if (!driver) {
-      return res.status(401).json({ success: false, error: 'INVALID_CREDENTIALS' });
-    }
-
-    const now = new Date();
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-
-    const day = now.getDay();
-    const diffToMonday = (day === 0 ? -6 : 1 - day);
-    const monday = new Date(now);
-    monday.setDate(now.getDate() + diffToMonday);
-    monday.setHours(0,0,0,0);
-    const weekStart = monday.getTime();
-
-    const rows = await db._query(
-      "SELECT final_fare, driver_earn, created_at FROM orders WHERE driver_phone=$1 AND status='completed'",
-      [driver.phone]
-    ).then(r => r.rows || []).catch(() => []);
-
-    let daily = 0;
-    let weekly = 0;
-    let commission = 0;
-    let count = 0;
-
-    for (const o of rows) {
-      const ts = Number(o.created_at);
-      const earn = Number(o.driver_earn || 0);
-      const fare = Number(o.final_fare || 0);
-      const com = fare - earn;
-
-      if (ts >= todayStart) daily += earn;
-      if (ts >= weekStart) weekly += earn;
-
-      commission += com;
-      count++;
-    }
-
-    res.json({
-      success: true,
-      daily: daily.toFixed(2),
-      weekly: weekly.toFixed(2),
-      commission: commission.toFixed(2),
-      completed_count: count
-    });
-
-  } catch (e) {
-    res.status(500).json({ success: false, error: 'SERVER_ERROR' });
-  }
-});
-// ==========================================================================
-
-
 app.get('/health', (req, res) => res.send("OK"));
 
 // Ensure API routes always return JSON (helps the frontend show a real error instead of generic "ERROR").
@@ -2310,3 +2250,107 @@ initDb()
   });
 
 
+// ================= DRIVER PERFORMANCE (ADDITIVE) =================
+app.post('/api/driver/performance', async (req, res) => {
+  try {
+    const { phone, password } = req.body || {};
+    if (!phone || !password) {
+      return res.json({ success: false, error: 'AUTH_REQUIRED' });
+    }
+
+    const driver = await db.get(
+      "SELECT * FROM users WHERE phone=? AND password=? AND role='driver'",
+      [phone, password]
+    );
+
+    if (!driver) {
+      return res.json({ success: false, error: 'INVALID_CREDENTIALS' });
+    }
+
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+
+    const day = now.getDay();
+    const diffToMonday = (day === 0 ? -6 : 1 - day);
+    const monday = new Date(now);
+    monday.setDate(now.getDate() + diffToMonday);
+    monday.setHours(0,0,0,0);
+    const weekStart = monday.getTime();
+
+    const orders = await db.all(
+      "SELECT final_fare, driver_earn, created_at FROM orders WHERE driver_id=? AND status='completed'",
+      [driver.id]
+    );
+
+    let daily = 0;
+    let weekly = 0;
+    let commission = 0;
+    let count = 0;
+
+    for (const o of orders) {
+      const ts = Number(o.created_at) < 1e12 ? Number(o.created_at)*1000 : Number(o.created_at);
+      const earn = Number(o.driver_earn || 0);
+      const fare = Number(o.final_fare || 0);
+      const com = fare - earn;
+
+      if (ts >= todayStart) daily += earn;
+      if (ts >= weekStart) weekly += earn;
+
+      commission += com;
+      count++;
+    }
+
+    res.json({
+      success: true,
+      daily: daily.toFixed(2),
+      weekly: weekly.toFixed(2),
+      commission: commission.toFixed(2),
+      completed_count: count
+    });
+
+  } catch (e) {
+    res.json({ success: false, error: 'SERVER_ERROR' });
+  }
+});
+// ================================================================
+
+
+
+// ================= DRIVER PERFORMANCE DETAILS =================
+app.post('/api/driver/performance/details', async (req, res) => {
+  try {
+    const phone = normPhone(req.body.phone);
+    const password = String(req.body.password || '');
+    const type = String(req.body.type || 'daily');
+
+    const driver = await authUser(phone, password, 'driver');
+    if (!driver) return res.status(401).json({ success:false });
+
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+
+    const day = now.getDay();
+    const diffToMonday = (day === 0 ? -6 : 1 - day);
+    const monday = new Date(now);
+    monday.setDate(now.getDate() + diffToMonday);
+    monday.setHours(0,0,0,0);
+    const weekStart = monday.getTime();
+
+    const rows = await db._query(
+      "SELECT * FROM orders WHERE driver_phone=$1 AND status='completed' ORDER BY created_at DESC",
+      [driver.phone]
+    ).then(r => r.rows || []);
+
+    const filtered = rows.filter(o => {
+      const ts = Number(o.created_at);
+      if(type === 'weekly') return ts >= weekStart;
+      return ts >= todayStart;
+    });
+
+    res.json({ success:true, orders: filtered });
+
+  } catch(e){
+    res.status(500).json({ success:false });
+  }
+});
+// =================================================================
