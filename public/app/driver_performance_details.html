@@ -1,0 +1,77 @@
+
+<!DOCTYPE html>
+<html lang="az">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Performans Detalları - PayTaksi</title>
+<style>
+body{margin:0;background:#0b1220;color:#e5e7eb;font-family:Arial}
+.wrap{max-width:900px;margin:auto;padding:20px}
+.card{background:#0f172a;border-radius:16px;padding:20px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+button{padding:10px 14px;border-radius:10px;border:none;font-weight:700;cursor:pointer;margin-right:10px}
+.active{background:#22c55e;color:#081014}
+.inactive{background:#1f2937;color:#e5e7eb}
+.item{padding:14px;border-bottom:1px solid rgba(148,163,184,.15)}
+.small{opacity:.7;font-size:13px;margin-top:6px}
+.amount{font-weight:900;color:#22c55e}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="card">
+<h2>📊 Performans Detalları</h2>
+
+<div style="margin:20px 0">
+<button id="btnDaily" class="active" onclick="loadDetails('daily')">Günlük</button>
+<button id="btnWeekly" class="inactive" onclick="loadDetails('weekly')">Həftəlik</button>
+</div>
+
+<div id="list">Yüklənir...</div>
+
+</div>
+</div>
+
+<script>
+function getSession(){ return JSON.parse(localStorage.getItem('pt_session')||'null'); }
+const s = getSession();
+if(!s || s.role!=='driver'){ location.href='/'; }
+
+function setActive(type){
+document.getElementById('btnDaily').className = type==='daily'?'active':'inactive';
+document.getElementById('btnWeekly').className = type==='weekly'?'active':'inactive';
+}
+
+async function loadDetails(type){
+setActive(type);
+const list = document.getElementById('list');
+list.innerHTML = "Yüklənir...";
+try{
+const res = await fetch('/api/driver/performance/details',{
+method:'POST',
+headers:{'Content-Type':'application/json'},
+body: JSON.stringify({ phone:s.phone, password:s.password, type:type })
+});
+const data = await res.json();
+if(!data.success){ list.innerHTML="Xəta"; return; }
+if(!data.orders.length){ list.innerHTML="Bu periodda sifariş yoxdur."; return; }
+
+list.innerHTML = data.orders.map(o=>`
+<div class="item">
+<div><b>#${o.id}</b> • ${o.pickup_text} → ${o.dropoff_text}</div>
+<div class="small">${new Date(o.created_at).toLocaleString()}</div>
+<div style="margin-top:6px">
+Yekun: <b>${Number(o.final_fare).toFixed(2)} AZN</b> |
+Sizin: <span class="amount">${Number(o.driver_earn).toFixed(2)} AZN</span> |
+Komissiya: ${(Number(o.final_fare)-Number(o.driver_earn)).toFixed(2)} AZN
+</div>
+</div>`).join("");
+}catch(e){
+list.innerHTML="Şəbəkə xətası";
+}
+}
+
+loadDetails('daily');
+</script>
+</body>
+</html>
