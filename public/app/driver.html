@@ -7,8 +7,8 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <style>
   body{margin:0;background:#0b1220;color:#e5e7eb;font-family:Arial,Helvetica,sans-serif}
-  .wrap{max-width:980px;margin:0 auto;padding:18px}
-  .card{background:rgba(15,23,42,.75);border:1px solid rgba(148,163,184,.2);border-radius:14px;padding:16px;box-shadow:0 10px 30px rgba(0,0,0,.35)}
+  .wrap{max-width:980px;margin:0 auto;padding:14px}
+  .card{background:rgba(15,23,42,.75);border:1px solid rgba(148,163,184,.2);border-radius:14px;overflow:hidden;box-shadow:0 10px 30px rgba(0,0,0,.35)}
   button{padding:10px 12px;border-radius:10px;border:none;background:#22c55e;color:#081014;font-weight:700;cursor:pointer}
   button.secondary{background:rgba(148,163,184,.15);color:#e5e7eb;border:1px solid rgba(148,163,184,.25)}
   .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
@@ -49,14 +49,7 @@
   }
   .msg{min-height:22px;margin-top:10px}
   .pill{display:inline-block;padding:6px 10px;border-radius:999px;border:1px solid rgba(148,163,184,.25);background:rgba(148,163,184,.10);font-size:12px}
-#map{
-  height:340px;
-  border-radius:14px;
-  overflow:hidden;
-  border:1px solid rgba(148,163,184,.22);
-  background:rgba(2,6,23,.35);
-  position:relative;   /* BU VACİBDİR */
-}
+#map{height:52vh;width:100%}
   /* incoming modal */
   .overlay{position:fixed;inset:0;display:none;align-items:flex-end;justify-content:center;background:rgba(0,0,0,.55);z-index:9999}
   .sheet{width:min(760px,100%);max-height:88vh;background:rgba(2,6,23,.96);border:1px solid rgba(148,163,184,.18);border-radius:18px 18px 0 0;overflow:hidden}
