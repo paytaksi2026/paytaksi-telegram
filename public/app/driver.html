@@ -103,7 +103,18 @@
     </div>
 
     <p style="margin-top:14px">Status: <span class="badge" id="st">OFFLINE</span></p>
-    <p style="margin-top:6px">Balans: <span class="badge" id="bal" style="cursor:pointer" title="Balans tarixçəsini aç/bağla">0.00 AZN</span> <span id="balHint" style="opacity:.75;font-size:12px"></span></p>
+    
+<div class="card" style="margin-top:14px;padding:14px">
+  <div style="font-weight:900;margin-bottom:8px">📊 Performans</div>
+  <div class="row" style="gap:16px;flex-wrap:wrap">
+    <div class="badge">Bugün: <span id="pf_daily">0.00</span> AZN</div>
+    <div class="badge">Həftəlik: <span id="pf_weekly">0.00</span> AZN</div>
+    <div class="badge">Komissiya: <span id="pf_commission">0.00</span> AZN</div>
+    <div class="badge">Tamamlanan: <span id="pf_count">0</span></div>
+  </div>
+</div>
+
+<p style="margin-top:6px">Balans: <span class="badge" id="bal" style="cursor:pointer" title="Balans tarixçəsini aç/bağla">0.00 AZN</span> <span id="balHint" style="opacity:.75;font-size:12px"></span></p>
 
 
  
@@ -1355,6 +1366,28 @@ function showFareModal(finalFare, commission, driverEarn){
 function closeFareModal(){
   document.getElementById('fareResultModal').style.display = "none";
 }
+</script>
+
+
+<script>
+async function loadPerformance(){
+  try{
+    const res = await fetch('/api/driver/performance',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ phone:s.phone, password:s.password })
+    });
+    const data = await res.json();
+    if(data.success){
+      document.getElementById('pf_daily').innerText = data.daily;
+      document.getElementById('pf_weekly').innerText = data.weekly;
+      document.getElementById('pf_commission').innerText = data.commission;
+      document.getElementById('pf_count').innerText = data.completed_count;
+    }
+  }catch(e){}
+}
+setInterval(loadPerformance, 15000);
+loadPerformance();
 </script>
 
 </body>
