@@ -2229,42 +2229,16 @@ app.get('/admin/reset-db', async (req, res) => {
   }
 });
 
-app.get('/health', (req, res) => res.send("OK"));
 
-// Ensure API routes always return JSON (helps the frontend show a real error instead of generic "ERROR").
-app.use('/api', (req, res) => {
-  res.status(404).json({ success:false, error:'NOT_FOUND' });
-});
-
-const PORT = process.env.PORT || 3000;
-initDb()
-  .then(() => {
-    console.log('[PayTaksi] DB ready (PostgreSQL)');
-    startAutoAssignLoop().catch(()=>{});
-    app.listen(PORT, () => console.log('Server started on', PORT));
-  })
-  .catch((err) => {
-    console.error('[PayTaksi] DB init failed:', err);
-    // Crash fast so Render shows the error clearly.
-    process.exit(1);
-  });
-
-
-// ================= DRIVER PERFORMANCE (ADDITIVE) =================
+// ================= DRIVER PERFORMANCE (FIXED & WORKING) =================
 app.post('/api/driver/performance', async (req, res) => {
   try {
-    const { phone, password } = req.body || {};
-    if (!phone || !password) {
-      return res.json({ success: false, error: 'AUTH_REQUIRED' });
-    }
+    const phone = normPhone(req.body.phone);
+    const password = String(req.body.password || '');
 
-    const driver = await db.get(
-      "SELECT * FROM users WHERE phone=? AND password=? AND role='driver'",
-      [phone, password]
-    );
-
+    const driver = await authUser(phone, password, 'driver');
     if (!driver) {
-      return res.json({ success: false, error: 'INVALID_CREDENTIALS' });
+      return res.status(401).json({ success: false, error: 'INVALID_CREDENTIALS' });
     }
 
     const now = new Date();
@@ -2277,18 +2251,18 @@ app.post('/api/driver/performance', async (req, res) => {
     monday.setHours(0,0,0,0);
     const weekStart = monday.getTime();
 
-    const orders = await db.all(
-      "SELECT final_fare, driver_earn, created_at FROM orders WHERE driver_id=? AND status='completed'",
-      [driver.id]
-    );
+    const rows = await db._query(
+      "SELECT final_fare, driver_earn, created_at FROM orders WHERE driver_phone=$1 AND status='completed'",
+      [driver.phone]
+    ).then(r => r.rows || []).catch(() => []);
 
     let daily = 0;
     let weekly = 0;
     let commission = 0;
     let count = 0;
 
-    for (const o of orders) {
-      const ts = Number(o.created_at) < 1e12 ? Number(o.created_at)*1000 : Number(o.created_at);
+    for (const o of rows) {
+      const ts = Number(o.created_at);
       const earn = Number(o.driver_earn || 0);
       const fare = Number(o.final_fare || 0);
       const com = fare - earn;
@@ -2309,8 +2283,30 @@ app.post('/api/driver/performance', async (req, res) => {
     });
 
   } catch (e) {
-    res.json({ success: false, error: 'SERVER_ERROR' });
+    res.status(500).json({ success: false, error: 'SERVER_ERROR' });
   }
 });
-// ================================================================
+// ==========================================================================
+
+
+app.get('/health', (req, res) => res.send("OK"));
+
+// Ensure API routes always return JSON (helps the frontend show a real error instead of generic "ERROR").
+app.use('/api', (req, res) => {
+  res.status(404).json({ success:false, error:'NOT_FOUND' });
+});
+
+const PORT = process.env.PORT || 3000;
+initDb()
+  .then(() => {
+    console.log('[PayTaksi] DB ready (PostgreSQL)');
+    startAutoAssignLoop().catch(()=>{});
+    app.listen(PORT, () => console.log('Server started on', PORT));
+  })
+  .catch((err) => {
+    console.error('[PayTaksi] DB init failed:', err);
+    // Crash fast so Render shows the error clearly.
+    process.exit(1);
+  });
+
 
