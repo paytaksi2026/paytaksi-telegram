@@ -2248,3 +2248,69 @@ initDb()
     // Crash fast so Render shows the error clearly.
     process.exit(1);
   });
+
+
+// ================= DRIVER PERFORMANCE (ADDITIVE) =================
+app.post('/api/driver/performance', async (req, res) => {
+  try {
+    const { phone, password } = req.body || {};
+    if (!phone || !password) {
+      return res.json({ success: false, error: 'AUTH_REQUIRED' });
+    }
+
+    const driver = await db.get(
+      "SELECT * FROM users WHERE phone=? AND password=? AND role='driver'",
+      [phone, password]
+    );
+
+    if (!driver) {
+      return res.json({ success: false, error: 'INVALID_CREDENTIALS' });
+    }
+
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+
+    const day = now.getDay();
+    const diffToMonday = (day === 0 ? -6 : 1 - day);
+    const monday = new Date(now);
+    monday.setDate(now.getDate() + diffToMonday);
+    monday.setHours(0,0,0,0);
+    const weekStart = monday.getTime();
+
+    const orders = await db.all(
+      "SELECT final_fare, driver_earn, created_at FROM orders WHERE driver_id=? AND status='completed'",
+      [driver.id]
+    );
+
+    let daily = 0;
+    let weekly = 0;
+    let commission = 0;
+    let count = 0;
+
+    for (const o of orders) {
+      const ts = Number(o.created_at) < 1e12 ? Number(o.created_at)*1000 : Number(o.created_at);
+      const earn = Number(o.driver_earn || 0);
+      const fare = Number(o.final_fare || 0);
+      const com = fare - earn;
+
+      if (ts >= todayStart) daily += earn;
+      if (ts >= weekStart) weekly += earn;
+
+      commission += com;
+      count++;
+    }
+
+    res.json({
+      success: true,
+      daily: daily.toFixed(2),
+      weekly: weekly.toFixed(2),
+      commission: commission.toFixed(2),
+      completed_count: count
+    });
+
+  } catch (e) {
+    res.json({ success: false, error: 'SERVER_ERROR' });
+  }
+});
+// ================================================================
+
