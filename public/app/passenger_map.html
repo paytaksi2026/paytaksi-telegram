@@ -736,7 +736,7 @@ async function renderRideUI(order){
     if (cur==='accepted') beep('info');
     if (cur==='arrived') beep('arrive');
     if (cur==='in_progress') beep('start');
-    if (cur==='completed'){ beep('info'); showRideComplete(order); }
+    if (cur==='completed'){ beep('info'); showRideComplete(order); try{ window.location='/app/driver_rating.html?driver='+encodeURIComponent(order.driver_phone);}catch(e){}; }
   }
 }
 

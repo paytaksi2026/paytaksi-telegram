@@ -1359,3 +1359,24 @@ function closeFareModal(){
 
 </body>
 </html>
+
+
+<script>
+async function loadDriverRating(){
+  try{
+    const s = JSON.parse(localStorage.getItem('pt_session')||'{}');
+    const phone = s.phone;
+    if(!phone) return;
+    const r = await fetch('/api/driver/rating?driver='+encodeURIComponent(phone));
+    const j = await r.json();
+    if(j.success){
+      const el=document.createElement('div');
+      el.style.margin='10px';
+      el.style.fontWeight='bold';
+      el.innerText='⭐ Reytinq: '+Number(j.rating||0).toFixed(2)+' ('+j.total+' səs)';
+      document.body.prepend(el);
+    }
+  }catch(e){}
+}
+window.addEventListener('load',loadDriverRating);
+</script>
