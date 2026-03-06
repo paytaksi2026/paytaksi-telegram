@@ -2327,3 +2327,83 @@ app.get('/api/driver/rating', async (req,res)=>{
 });
 }catch(e){}
 /* ===== END DRIVER RATING SYSTEM ===== */
+
+
+// ---------------- Driver Rating System (additive)
+
+async function ensureDriverRatingsTable(){
+  try{
+    await db._query(`CREATE TABLE IF NOT EXISTS driver_ratings (
+      id BIGSERIAL PRIMARY KEY,
+      driver_phone TEXT NOT NULL,
+      passenger_phone TEXT NOT NULL,
+      order_id BIGINT,
+      rating INTEGER NOT NULL,
+      comment TEXT,
+      created_at BIGINT NOT NULL
+    )`);
+    await db._query(`CREATE INDEX IF NOT EXISTS idx_driver_ratings_driver ON driver_ratings(driver_phone)`);
+  }catch(e){
+    console.log('rating table init error', e);
+  }
+}
+
+ensureDriverRatingsTable();
+
+app.post('/api/driver/rate', async (req,res)=>{
+  try{
+    const passenger = await authUser(req.body.phone, req.body.password, 'passenger');
+    if(!passenger) return res.status(401).json({error:'INVALID_CREDENTIALS'});
+
+    const order_id = parseInt(req.body.order_id,10);
+    const rating = parseInt(req.body.rating,10);
+    const comment = String(req.body.comment||'');
+
+    if(!order_id) return res.status(400).json({error:'ORDER_ID_REQUIRED'});
+    if(!(rating>=1 && rating<=5)) return res.status(400).json({error:'INVALID_RATING'});
+
+    const ord = await new Promise((resolve)=>{
+      db.get("SELECT driver_phone, passenger_phone FROM orders WHERE id=?", [order_id], (e,row)=>resolve(row||null));
+    });
+
+    if(!ord) return res.status(404).json({error:'ORDER_NOT_FOUND'});
+    if(ord.passenger_phone !== passenger.phone) return res.status(403).json({error:'NOT_YOUR_ORDER'});
+
+    const ts = Date.now();
+
+    await db._query(
+      "INSERT INTO driver_ratings(driver_phone, passenger_phone, order_id, rating, comment, created_at) VALUES($1,$2,$3,$4,$5,$6)",
+      [ord.driver_phone, passenger.phone, order_id, rating, comment, ts]
+    );
+
+    res.json({success:true});
+
+  }catch(e){
+    res.status(500).json({error:'DB_ERROR'});
+  }
+});
+
+app.get('/api/driver/rating', async (req,res)=>{
+  try{
+    const driver_phone = normPhone(req.query.driver_phone);
+    if(!driver_phone) return res.status(400).json({error:'DRIVER_PHONE_REQUIRED'});
+
+    const r = await db._query(
+      "SELECT AVG(rating) as avg, COUNT(*) as total FROM driver_ratings WHERE driver_phone=$1",
+      [driver_phone]
+    );
+
+    const avg = Number(r.rows[0].avg || 0);
+    const total = Number(r.rows[0].total || 0);
+
+    res.json({
+      success:true,
+      rating: Number(avg.toFixed(2)),
+      total,
+      top_driver: avg >= 4.8
+    });
+
+  }catch(e){
+    res.status(500).json({error:'DB_ERROR'});
+  }
+});
