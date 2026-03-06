@@ -1380,3 +1380,17 @@ async function loadDriverRating(){
 }
 window.addEventListener('load',loadDriverRating);
 </script>
+
+<script>
+async function loadDriverRating(phone){
+  try{
+    const r = await fetch('/api/driver/rating?driver_phone='+phone);
+    const j = await r.json();
+    if(!j.success) return;
+    const el = document.getElementById('driverRating');
+    if(el){
+      el.innerHTML = '⭐ '+j.rating+' ('+j.total+')'+(j.top_driver?' <b>TOP DRIVER</b>':'');
+    }
+  }catch(e){}
+}
+</script>

@@ -72,3 +72,16 @@ setTimeout(()=>{
  if(m && !m.innerText) m.innerText='Ulduz seçib göndərin';
 },500);
 </script>
+
+<script>
+async function submitRating(order_id, rating){
+  const phone = localStorage.getItem('phone');
+  const password = localStorage.getItem('password');
+
+  await fetch('/api/driver/rate',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({phone,password,order_id,rating})
+  });
+}
+</script>

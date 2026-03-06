@@ -1309,3 +1309,17 @@ function closeRideComplete(){
 
 </body>
 </html>
+
+<script>
+async function showDriverRating(phone){
+  try{
+    const r = await fetch('/api/driver/rating?driver_phone='+phone);
+    const j = await r.json();
+    if(!j.success) return;
+    const el = document.getElementById('driverRatingPassenger');
+    if(el){
+      el.innerHTML = '⭐ '+j.rating+' ('+j.total+' rides)';
+    }
+  }catch(e){}
+}
+</script>
