@@ -2288,3 +2288,42 @@ initDb()
     // Crash fast so Render shows the error clearly.
     process.exit(1);
   });
+
+
+/* ===== DRIVER RATING SYSTEM (ADDITIVE PATCH) ===== */
+try{
+app.post('/api/driver/rate', async (req,res)=>{
+  try{
+    const {driver, rating} = req.body || {};
+    if(!driver || !rating) return res.json({success:false,error:'INVALID'});
+
+    const r = Number(rating);
+    if(r<1 || r>5) return res.json({success:false,error:'BAD_RATING'});
+
+    await db.run(
+      "CREATE TABLE IF NOT EXISTS driver_ratings(id INTEGER PRIMARY KEY AUTOINCREMENT, driver_phone TEXT, rating INTEGER, created_at INTEGER)"
+    );
+
+    await db.run(
+      "INSERT INTO driver_ratings(driver_phone,rating,created_at) VALUES(?,?,?)",
+      [driver, r, Date.now()]
+    );
+
+    res.json({success:true});
+  }catch(e){
+    res.json({success:false,error:'DB_ERROR'});
+  }
+});
+
+app.get('/api/driver/rating', async (req,res)=>{
+  try{
+    const phone = req.query.driver;
+    if(!phone) return res.json({success:false});
+    const row = await db.get("SELECT AVG(rating) as avg, COUNT(*) as total FROM driver_ratings WHERE driver_phone=?", [phone]);
+    res.json({success:true, rating: row?.avg || 0, total: row?.total || 0});
+  }catch(e){
+    res.json({success:false});
+  }
+});
+}catch(e){}
+/* ===== END DRIVER RATING SYSTEM ===== */
