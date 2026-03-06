@@ -1,0 +1,66 @@
+
+<!doctype html>
+<html lang="az">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sürücü Reytinqi - PayTaksi</title>
+<style>
+body{background:#0b1220;color:#e5e7eb;font-family:Arial;margin:0;padding:20px;text-align:center}
+.card{background:#111827;border-radius:14px;padding:20px;max-width:420px;margin:auto}
+.stars span{font-size:36px;cursor:pointer;color:#555}
+.stars span.active{color:#22c55e}
+button{margin-top:16px;background:#22c55e;border:none;color:#000;padding:10px 18px;border-radius:8px;font-weight:bold;cursor:pointer}
+</style>
+</head>
+<body>
+
+<div class="card">
+<h2>Sürücünü qiymətləndir</h2>
+<p>Gediş necə keçdi?</p>
+
+<div class="stars" id="stars">
+<span data="1">★</span>
+<span data="2">★</span>
+<span data="3">★</span>
+<span data="4">★</span>
+<span data="5">★</span>
+</div>
+
+<button onclick="submitRating()">Göndər</button>
+
+<p id="msg"></p>
+</div>
+
+<script>
+let rating = 0;
+
+document.querySelectorAll("#stars span").forEach(s=>{
+  s.onclick = ()=>{
+    rating = s.getAttribute("data");
+    document.querySelectorAll("#stars span").forEach(x=>x.classList.remove("active"));
+    for(let i=0;i<rating;i++){
+      document.querySelectorAll("#stars span")[i].classList.add("active");
+    }
+  }
+});
+
+async function submitRating(){
+ if(!rating){ alert("Ulduz seçin"); return; }
+
+ const params = new URLSearchParams(location.search);
+ const driver = params.get("driver");
+
+ const res = await fetch("/api/driver/rate",{
+   method:"POST",
+   headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({driver:driver,rating:rating})
+ });
+
+ const data = await res.json();
+ document.getElementById("msg").innerText = data.success ? "Təşəkkür edirik!" : "Xəta baş verdi";
+}
+</script>
+
+</body>
+</html>
