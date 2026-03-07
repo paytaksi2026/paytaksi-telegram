@@ -1225,6 +1225,7 @@ if(status==='completed'){
   }finally{ _polling = false; }
 }, 13000);
 startLocationLoop();
+ensureMap();
 
 function wazeLinkForOrder(o, type){
   if(!o) return '';
