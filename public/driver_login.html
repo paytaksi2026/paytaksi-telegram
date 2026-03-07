@@ -47,6 +47,19 @@
   </div>
 
 <script>
+
+// AUTO LOGIN DRIVER
+try{
+ const s = localStorage.getItem('pt_session');
+ if(s){
+   const data = JSON.parse(s);
+   if(data && data.role === 'driver'){
+     window.location.href = '/app/driver.html';
+   }
+ }
+}catch(e){}
+
+
 const ROLE = "driver";
 const msg = document.getElementById('msg');
 const phoneDigits = document.getElementById('phoneDigits');
