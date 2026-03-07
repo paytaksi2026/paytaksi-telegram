@@ -47,6 +47,19 @@
   </div>
 
 <script>
+
+// AUTO LOGIN
+try{
+ const s = localStorage.getItem('pt_session');
+ if(s){
+   const data = JSON.parse(s);
+   if(data && data.phone){
+     window.location.href = '/app/passenger_map.html';
+   }
+ }
+}catch(e){}
+
+
 const ROLE = "passenger";
 const msg = document.getElementById('msg');
 const phoneDigits = document.getElementById('phoneDigits');
