@@ -973,7 +973,7 @@ function showEstimate(){
 
 function initMap(lat=40.4093, lon=49.8671){
   map = L.map('map').setView([lat, lon], 13);
-  L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(map);
   meMarker = L.marker([lat, lon]).addTo(map).bindPopup('Sizin yeriniz');
 }
 
@@ -996,7 +996,7 @@ function setDropoff(lat, lon, text){
 }
 
 async function reverse(lat, lon){
-  const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}&addressdetails=1`;
+  const url = `https://photon.komoot.io/reverse?lat=${lat}&lon=${lon}`;
 
   const r = await fetch(url, {
     headers: { 'Accept': 'application/json' }
@@ -1004,6 +1004,9 @@ async function reverse(lat, lon){
 
   const j = await r.json();
 
+  if(j && j.features && j.features.length){
+    return j.features[0].properties.name || j.features[0].properties.street || (j.features[0].properties.city||'');
+  }
   if(j && j.display_name){
     return j.display_name;
   }
