@@ -664,7 +664,7 @@ function ensureIncomingMap(lat=40.4093, lng=49.8671){
     tap:true
   }).setView([lat,lng], 13);
 
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(incomingMap);
+  L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(incomingMap);
 }
 
 async function updateIncomingPreviewMap(o){
