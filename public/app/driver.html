@@ -922,6 +922,8 @@ async function sendChat(){
 }
 
 async function setOrderStatus(id, status){
+  if(status==='cancelled'){ window.__driverInitiatedCancel = true; }
+
   setMsg('...');
   const res = await fetch('/api/orders/status', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password, order_id:id, status })});
   const data = await res.json();
@@ -1365,7 +1367,7 @@ function closeFareModal(){
   function playCancel(){
     var a=document.getElementById('cancelSound');
     if(a){ try{ a.currentTime=0; a.play().catch(()=>{});}catch(e){} }
-    
+    alert('Sifariş ləğv edildi');
   }
 
   if(typeof EventSource!=='undefined'){
@@ -1424,7 +1426,16 @@ loadMy = async function(){
 
 
 <script>
+
 function showCancelPopup(){
+  let msgTitle = "❌ Sifariş ləğv edildi";
+  let msgText = "Müştəri sifarişi ləğv etdi";
+
+  if(window.__driverInitiatedCancel){
+    msgText = "Siz sifarişi ləğv etdiniz";
+    window.__driverInitiatedCancel = false;
+  }
+
   try{
     var a=document.getElementById("cancelSound");
     if(a){ a.currentTime=0; a.play().catch(()=>{}); }
@@ -1442,10 +1453,10 @@ function showCancelPopup(){
   overlay.innerHTML=`
   <div style="background:#0f172a;padding:28px;border-radius:16px;text-align:center;width:300px;box-shadow:0 20px 60px rgba(0,0,0,.6)">
     <div style="font-size:22px;font-weight:800;color:#ef4444;margin-bottom:10px">
-      ❌ Sifariş ləğv edildi
+      ${msgTitle}
     </div>
     <div style="opacity:.85;margin-bottom:18px">
-      Müştəri sifarişi ləğv etdi
+      ${msgText}
     </div>
     <button onclick="this.parentNode.parentNode.remove()" 
       style="padding:10px 20px;border:none;border-radius:10px;background:#22c55e;font-weight:700;cursor:pointer">
@@ -1454,6 +1465,12 @@ function showCancelPopup(){
   </div>`;
 
   document.body.appendChild(overlay);
+
+  try{
+    if(navigator.vibrate) navigator.vibrate([200,120,200]);
+  }catch(e){}
+}
+
 
   try{
     if(navigator.vibrate) navigator.vibrate([200,120,200]);
