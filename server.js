@@ -2248,3 +2248,25 @@ initDb()
     // Crash fast so Render shows the error clearly.
     process.exit(1);
   });
+
+
+// ---- Driver Ratings API ----
+app.post('/api/ratings/add', async (req,res)=>{
+  try{
+    const {phone,password,order_id,rating,comment}=req.body||{};
+    if(!phone||!password||!order_id) return res.json({success:false});
+    const r=await pool.query(
+      "INSERT INTO ratings(order_id,rating,comment,created_at) VALUES($1,$2,$3,NOW())",
+      [order_id,rating||5,comment||'']
+    );
+    res.json({success:true});
+  }catch(e){ res.json({success:false}); }
+});
+
+app.get('/api/ratings/driver', async (req,res)=>{
+  try{
+    const {phone,password}=req.query;
+    const q=await pool.query("SELECT AVG(rating) avg, COUNT(*) count FROM ratings");
+    res.json({success:true,avg:q.rows[0].avg||0,count:q.rows[0].count||0});
+  }catch(e){ res.json({success:false}); }
+});
