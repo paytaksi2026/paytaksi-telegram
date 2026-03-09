@@ -1384,5 +1384,44 @@ function closeFareModal(){
 })();
 </script>
 
+
+<script>
+// --- Cancel detect patch (PayTaksi) ---
+let __lastActiveOrderId = null;
+
+function __playCancelSound(){
+  try{
+    const a = document.getElementById("cancelSound");
+    if(a){ a.currentTime = 0; a.play().catch(()=>{}); }
+  }catch(e){}
+}
+
+const __origLoadMy = loadMy;
+loadMy = async function(){
+  const prev = __lastActiveOrderId;
+  await __origLoadMy();
+
+  try{
+    const qs = new URLSearchParams({ phone: s.phone, password: s.password });
+    const r = await fetch('/api/orders/driver/my?' + qs.toString());
+    const d = await r.json();
+    if(!d.success) return;
+
+    const active = (d.orders||[]).find(x=>['accepted','arrived','in_progress'].includes(String(x.status||'').toLowerCase()));
+    const cancelled = (d.orders||[]).find(x=>String(x.status||'').toLowerCase()==='cancelled');
+
+    if(active){
+      __lastActiveOrderId = active.id;
+    }else{
+      if(prev && cancelled){
+        alert("Sifariş ləğv edildi");
+        __playCancelSound();
+      }
+      __lastActiveOrderId = null;
+    }
+  }catch(e){}
+};
+</script>
+
 </body>
 </html>
