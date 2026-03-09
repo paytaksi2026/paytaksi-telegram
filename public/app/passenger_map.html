@@ -6,7 +6,7 @@
 <title>Xəritə & Sifariş - PayTaksi</title>
 
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 function showDriverSearching(){
   const el = document.getElementById('driverSearchingPopup');
   if(el) el.style.display='flex';
@@ -900,7 +900,7 @@ function metersBetween(a,b){
   return 2*R*Math.asin(Math.sqrt(s));
 }
 
-async function //updateOSRMLine(from, to, opts, existingLine){
+async function updateOSRMLine(from, to, opts, existingLine){
   if(!from||!to) return existingLine;
   try{
     const url = `https://router.project-osrm.org/route/v1/driving/${from.lng},${from.lat};${to.lng},${to.lat}?overview=full&geometries=geojson`;
@@ -923,7 +923,7 @@ function havKm(lat1, lon1, lat2, lon2){
   const c = 2*Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
   return R*c;
 }
-async function //drawRoute(){
+async function drawRoute(){
   if(!pickup || !dropoff){
     if(routeLine){ try{ map.removeLayer(routeLine); }catch(e){} routeLine=null; }
     lastRouteKey='';
@@ -1097,7 +1097,7 @@ function swap(){
   if(dropoff) setDropoff(dropoff.lat,dropoff.lon,dropoff.text);
 }
 
-async function showDriverSearching(); createOrder(){
+async function createOrder(){
   if(!pickup || !dropoff){ setMsg('Haradan və Haraya seçin.'); return; }
   // If estimate hasn't finished yet, wait so user never sees a different number.
   if(!estimateReady){
