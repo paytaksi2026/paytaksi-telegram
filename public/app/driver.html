@@ -940,10 +940,6 @@ async function setOrderStatus(id, status){
     loadMy();
 
 
-    }
-  });
-}
-
     loadFeed();
   } else {
     if(data && data.error==='BALANCE_LIMIT'){
@@ -1023,10 +1019,6 @@ async function acceptOrder(id){
     loadMy();
 
 
-    }
-  });
-}
-
   } else {
     if(data && data.error==='BALANCE_LIMIT'){
       const b = (data.driver_balance!=null)? Number(data.driver_balance): (s.driver_balance||0);
@@ -1038,10 +1030,6 @@ async function acceptOrder(id){
       setMsg('Sizin aktiv sifarişiniz var. Digər sifarişi götürmək üçün onu tamamlayın və ya ləğv edin. (ID: ' + (data.order_id||'') + ')');
       loadMy();
 
-
-    }
-  });
-}
 
     } else {
       setMsg(data.error || 'ERROR');
@@ -1151,10 +1139,6 @@ loadFeed();
 loadMy();
 
 
-    }
-  });
-}
-
 let _polling = false;
 setInterval(async ()=>{
   if(_polling) return;
@@ -1166,10 +1150,6 @@ setInterval(async ()=>{
       window._myTick = Date.now();
       await loadMy();
 
-
-    }
-  });
-}
 
     }
   }finally{ _polling = false; }
