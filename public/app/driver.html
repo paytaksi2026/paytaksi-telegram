@@ -103,7 +103,25 @@
     </div>
 
     <p style="margin-top:14px">Status: <span class="badge" id="st">OFFLINE</span></p>
-    <p style="margin-top:6px">Balans: <span class="badge" id="bal" style="cursor:pointer" title="Balans tarixçəsini aç/bağla">0.00 AZN</span> <span id="balHint" style="opacity:.75;font-size:12px"></span></p>
+    
+<div style="margin-top:8px">
+<span class="badge" id="driverRating">⭐ 0.0</span>
+</div>
+<script>
+async function loadDriverRating(){
+  try{
+    const r=await fetch('/api/ratings/driver?phone='+encodeURIComponent(s.phone)+'&password='+encodeURIComponent(s.password));
+    const j=await r.json();
+    if(j && j.success){
+      const el=document.getElementById('driverRating');
+      if(el) el.textContent='⭐ '+Number(j.avg||0).toFixed(1)+' ('+(j.count||0)+')';
+    }
+  }catch(e){}
+}
+setTimeout(loadDriverRating,1500);
+</script>
+
+<p style="margin-top:6px">Balans: <span class="badge" id="bal" style="cursor:pointer" title="Balans tarixçəsini aç/bağla">0.00 AZN</span> <span id="balHint" style="opacity:.75;font-size:12px"></span></p>
 
 
  

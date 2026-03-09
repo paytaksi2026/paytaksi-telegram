@@ -764,7 +764,7 @@ async function renderRideUI(order){
     if (cur==='accepted') beep('info');
     if (cur==='arrived') beep('arrive');
     if (cur==='in_progress') beep('start');
-    if (cur==='completed'){ beep('info'); showRideComplete(order); }
+    if (cur==='completed'){ beep('info'); showRideComplete(order); setTimeout(()=>showRatingModal(),1000); }
   }
 }
 
@@ -1422,6 +1422,44 @@ function showRideComplete(order){
 function closeRideComplete(){
   const modal = document.getElementById('rideCompleteModal');
   if(modal) modal.style.display = "none";
+}
+</script>
+
+
+<!-- Rating Modal -->
+<div id="ratingModal" style="position:fixed;inset:0;display:none;align-items:center;justify-content:center;
+background:rgba(0,0,0,.6);z-index:99999">
+  <div style="background:#0f172a;padding:24px;border-radius:18px;width:min(420px,90%);text-align:center">
+    <div style="font-size:20px;font-weight:800;margin-bottom:10px">Sürücünü qiymətləndir</div>
+    <div id="ratingStars" style="font-size:28px;margin-bottom:10px">
+      ⭐ ⭐ ⭐ ⭐ ⭐
+    </div>
+    <textarea id="ratingComment" placeholder="Rəy yaz (istəyə bağlı)"
+      style="width:100%;padding:10px;border-radius:10px;margin-top:10px"></textarea>
+    <button onclick="sendRating()" style="margin-top:12px">Göndər</button>
+  </div>
+</div>
+<script>
+let selectedRating = 5;
+function showRatingModal(){
+  const m=document.getElementById('ratingModal');
+  if(m) m.style.display='flex';
+}
+async function sendRating(){
+  if(!activeOrderId) return;
+  const comment=document.getElementById('ratingComment').value||'';
+  await fetch('/api/ratings/add',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({
+      phone:s.phone,
+      password:s.password,
+      order_id:activeOrderId,
+      rating:selectedRating,
+      comment:comment
+    })
+  });
+  document.getElementById('ratingModal').style.display='none';
 }
 </script>
 
