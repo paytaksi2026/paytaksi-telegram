@@ -2248,3 +2248,48 @@ initDb()
     // Crash fast so Render shows the error clearly.
     process.exit(1);
   });
+
+
+// ---------------- Firebase Push (Driver wake screen)
+const driverPushTokens = new Map();
+
+app.post('/api/driver/push-token', (req,res)=>{
+  try{
+    const token = req.body.token;
+    const phone = req.body.phone || null;
+    if(token){
+      driverPushTokens.set(token, {phone, ts:Date.now()});
+      console.log("Driver push token saved:", token);
+    }
+    res.json({success:true});
+  }catch(e){
+    res.json({success:false});
+  }
+});
+
+async function sendDriverPush(token,title,body){
+  try{
+    const fetch = (await import('node-fetch')).default;
+    await fetch("https://fcm.googleapis.com/fcm/send",{
+      method:"POST",
+      headers:{
+        "Content-Type":"application/json",
+        "Authorization":"key="+(process.env.FCM_SERVER_KEY||"")
+      },
+      body: JSON.stringify({
+        to: token,
+        priority:"high",
+        notification:{
+          title:title,
+          body:body,
+          sound:"default"
+        },
+        data:{
+          click_action:"OPEN_DRIVER_APP"
+        }
+      })
+    });
+  }catch(e){
+    console.log("Push send error",e);
+  }
+}
