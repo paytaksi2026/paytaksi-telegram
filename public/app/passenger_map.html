@@ -93,6 +93,18 @@
   .chatFoot{padding:12px 14px;border-top:1px solid rgba(148,163,184,.15);display:flex;gap:10px;align-items:center}
   .chatFoot input{flex:1}
   .chatNote{font-size:12px;opacity:.75;margin-top:6px}
+
+/* Driver searching overlay */
+.search-overlay{position:fixed;inset:0;display:none;align-items:center;justify-content:center;
+background:rgba(0,0,0,.65);backdrop-filter:blur(6px);z-index:15000}
+.search-card{width:min(420px,92vw);background:#020617;border:1px solid rgba(255,255,255,.15);
+border-radius:22px;padding:26px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.6)}
+.search-car{font-size:46px;margin-bottom:10px;animation:carFloat 1.4s infinite ease-in-out}
+@keyframes carFloat{0%{transform:translateY(0)}50%{transform:translateY(-6px)}100%{transform:translateY(0)}}
+.search-title{font-size:20px;font-weight:900}
+.search-sub{margin-top:6px;opacity:.8}
+.search-count{margin-top:10px;font-size:18px;font-weight:700;color:#22c55e}
+
 </style>
 
 <link rel="stylesheet" href="/assets/bolt.css" />
@@ -1340,6 +1352,18 @@ background:rgba(0,0,0,.65);backdrop-filter:blur(8px);z-index:20000;">
   from{opacity:0;transform:scale(.92)}
   to{opacity:1;transform:scale(1)}
 }
+
+/* Driver searching overlay */
+.search-overlay{position:fixed;inset:0;display:none;align-items:center;justify-content:center;
+background:rgba(0,0,0,.65);backdrop-filter:blur(6px);z-index:15000}
+.search-card{width:min(420px,92vw);background:#020617;border:1px solid rgba(255,255,255,.15);
+border-radius:22px;padding:26px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.6)}
+.search-car{font-size:46px;margin-bottom:10px;animation:carFloat 1.4s infinite ease-in-out}
+@keyframes carFloat{0%{transform:translateY(0)}50%{transform:translateY(-6px)}100%{transform:translateY(0)}}
+.search-title{font-size:20px;font-weight:900}
+.search-sub{margin-top:6px;opacity:.8}
+.search-count{margin-top:10px;font-size:18px;font-weight:700;color:#22c55e}
+
 </style>
 
 <script>
@@ -1376,6 +1400,60 @@ function showRideComplete(order){
 function closeRideComplete(){
   const modal = document.getElementById('rideCompleteModal');
   if(modal) modal.style.display = "none";
+}
+</script>
+
+
+<div id="driverSearchOverlay" class="search-overlay">
+  <div class="search-card">
+    <div class="search-car">🚕</div>
+    <div class="search-title">Sürücü axtarılır...</div>
+    <div class="search-sub">Ən yaxın sürücülər yoxlanılır</div>
+    <div class="search-count" id="searchCountdown">30</div>
+  </div>
+</div>
+
+
+<script>
+let searchTimer=null;
+let searchSeconds=30;
+
+function showDriverSearch(){
+  const el=document.getElementById('driverSearchOverlay');
+  if(!el) return;
+  el.style.display='flex';
+  searchSeconds=30;
+  document.getElementById('searchCountdown').textContent=searchSeconds;
+
+  if(searchTimer) clearInterval(searchTimer);
+  searchTimer=setInterval(()=>{
+    searchSeconds--;
+    const c=document.getElementById('searchCountdown');
+    if(c) c.textContent=searchSeconds;
+    if(searchSeconds<=0){
+      clearInterval(searchTimer);
+    }
+  },1000);
+}
+
+function hideDriverSearch(){
+  const el=document.getElementById('driverSearchOverlay');
+  if(el) el.style.display='none';
+  if(searchTimer) clearInterval(searchTimer);
+}
+
+// trigger when order created
+const _createOrder=createOrder;
+createOrder=async function(){
+  await _createOrder();
+  showDriverSearch();
+}
+
+// hide when driver accepted
+const _triggerDriverFound=triggerDriverFound;
+triggerDriverFound=function(order){
+  hideDriverSearch();
+  _triggerDriverFound(order);
 }
 </script>
 
