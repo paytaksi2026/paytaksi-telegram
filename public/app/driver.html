@@ -556,11 +556,11 @@ function __beepOnce(){
 
 function __startIncomingAlert(){
   __stopIncomingAlert();
-  // Sound: beep every 700ms (for up to 20s unless user acts)
-  let startedAt = Date.now();
   __beepOnce();
   __alertInterval = setInterval(()=>{
-    if(Date.now() - startedAt > 20000){ __stopIncomingAlert(); return; }
+    __beepOnce();
+  }, 700);
+}
     __beepOnce();
   }, 700);
 
