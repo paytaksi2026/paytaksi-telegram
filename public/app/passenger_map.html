@@ -1127,16 +1127,19 @@ function showDriverSearch(){
   const el=document.getElementById('driverSearchOverlay');
   const cd=document.getElementById('searchCountdown');
   if(!el) return;
+
   searchSeconds=20;
   el.style.display='flex';
   cd.textContent=searchSeconds+' s';
+
   if(searchTimer) clearInterval(searchTimer);
+
   searchTimer=setInterval(()=>{
     searchSeconds--;
-    cd.textContent=searchSeconds+' s';
     if(searchSeconds<=0){
-      clearInterval(searchTimer);
+      searchSeconds=20; // restart search like Uber
     }
+    cd.textContent=searchSeconds+' s';
   },1000);
 }
 
