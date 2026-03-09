@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>PayTaksi - Müştəri Qeydiyyat</title>
+<title>PayTaksi - Sürücü Qeydiyyat</title>
 
 <style>
   body{background:#0b1220;color:#e5e7eb;font-family:Arial,Helvetica,sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0}
@@ -25,7 +25,7 @@
 </head>
 <body>
   <div class="card">
-    <h2>Müştəri Qeydiyyat</h2>
+    <h2>Sürücü Qeydiyyat</h2>
 
     <div class="row">
       <input id="phonePrefix" value="+994" readonly />
@@ -35,6 +35,20 @@
     <input id="name" placeholder="Ad Soyad" autocomplete="name" style="margin-top:6px" />
 
     
+      <div class="row" style="margin-top:6px">
+        <input id="car_make" placeholder="Avtomobil markası (məs: Toyota)" />
+        <input id="car_model" placeholder="Model (məs: Aqua)" />
+      </div>
+      <div class="row" style="margin-top:6px">
+        <input id="car_plate" placeholder="Nömrə (məs: 90 YX 581)" />
+        <select id="car_color">
+          <option value="">Rəng seçin</option>
+          <option value="ağ">ağ</option><option value="qara">qara</option><option value="sarı">sarı</option>
+          <option value="qırmızı">qırmızı</option><option value="göy">göy</option><option value="yaşıl">yaşıl</option><option value="boz">boz</option>
+        </select>
+      </div>
+      <input id="car_year" placeholder="İstehsal ili (2007+)" inputmode="numeric" maxlength="4" style="margin-top:6px" />
+
 
     <div class="row" style="margin-top:8px">
       <button type="button" onclick="doRegister()">Qeydiyyat</button>
@@ -46,11 +60,11 @@
     </div>
 
     <div class="msg" id="msg"></div>
-    <div class="hint">Qeydiyyatdan sonra dərhal aktivdir.</div>
+    <div class="hint">Sürücü hesabı admin təsdiqindən sonra aktiv olur.</div>
   </div>
 
 <script>
-const ROLE = "passenger";
+const ROLE = "driver";
 const msg = document.getElementById('msg');
 const phoneDigits = document.getElementById('phoneDigits');
 const password = document.getElementById('password');
@@ -66,8 +80,8 @@ function normPhone() {
   return '+994' + digits;
 }
 
-function goBack() { window.location.href = "/passenger_login.html"; }
-function goLogin() { window.location.href = "/passenger_login.html"; }
+function goBack() { window.location.href = "/driver_login.html"; }
+function goLogin() { window.location.href = "/driver_login.html"; }
 
 async function doRegister() {
   try {
