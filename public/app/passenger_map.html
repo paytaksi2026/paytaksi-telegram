@@ -8,6 +8,11 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+
+
 <style>
   body{margin:0;background:#0b1220;color:#e5e7eb;font-family:Arial,Helvetica,sans-serif}
   #map{height:52vh;width:100%}
@@ -66,6 +71,16 @@
 
   /* Leaflet custom icon wrapper */
   .pt-car-icon{background:transparent;border:none}
+
+.pt-car-anim {
+  animation: carMove 1.6s infinite ease-in-out;
+}
+@keyframes carMove{
+  0%{transform:translateY(0)}
+  50%{transform:translateY(-4px)}
+  100%{transform:translateY(0)}
+}
+
 
   /* Chat modal */
   .chatOverlay{position:fixed;inset:0;display:none;align-items:flex-end;justify-content:center;background:rgba(0,0,0,.55);z-index:10000}
@@ -1238,9 +1253,53 @@ function startPolling(){
 
 loadPackages();
 initMap();
+addTrafficLayer();
+loadNearbyDrivers();
 useMyLocation();
 loadMyOrders();
 startPolling();
+
+let nearbyCluster = null;
+
+function addTrafficLayer(){
+  const traffic = L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png',{
+    maxZoom:19,
+    opacity:0.6,
+    attribution:'Traffic'
+  });
+  const overlays = { "Traffic": traffic };
+  L.control.layers(null, overlays).addTo(map);
+}
+
+async function loadNearbyDrivers(){
+  try{
+    const res = await fetch('/api/drivers/nearby');
+    const data = await res.json().catch(()=>null);
+    if(!data || !Array.isArray(data.drivers)) return;
+
+    if(!nearbyCluster){
+      nearbyCluster = L.markerClusterGroup();
+      map.addLayer(nearbyCluster);
+    }
+
+    nearbyCluster.clearLayers();
+
+    data.drivers.forEach(d=>{
+      if(!d.lat || !d.lng) return;
+      const icon = L.divIcon({
+        className:'pt-car-icon pt-car-anim',
+        html:'🚗',
+        iconSize:[24,24],
+        iconAnchor:[12,12]
+      });
+      const m = L.marker([d.lat,d.lng],{icon});
+      nearbyCluster.addLayer(m);
+    });
+  }catch(e){}
+}
+
+setInterval(loadNearbyDrivers,5000);
+
 </script>
 
 <!-- PREMIUM COMPLETED RIDE MODAL -->
