@@ -1254,7 +1254,7 @@ function startPolling(){
 loadPackages();
 initMap();
 addTrafficLayer();
-loadNearbyDrivers();
+// loadNearbyDrivers(); // disabled to avoid 404
 useMyLocation();
 loadMyOrders();
 startPolling();
@@ -1298,7 +1298,7 @@ async function loadNearbyDrivers(){
   }catch(e){}
 }
 
-setInterval(loadNearbyDrivers,5000);
+// setInterval(loadNearbyDrivers,5000); // disabled to avoid 404
 
 </script>
 
