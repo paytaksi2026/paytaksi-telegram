@@ -6,12 +6,13 @@
 <title>Xəritə & Sifariş - PayTaksi</title>
 
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js">
+function showDriverSearching(){
+  const el = document.getElementById('driverSearchingPopup');
+  if(el) el.style.display='flex';
+}
 
-<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
-<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
-<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
-
+</script>
 
 <style>
   body{margin:0;background:#0b1220;color:#e5e7eb;font-family:Arial,Helvetica,sans-serif}
@@ -71,16 +72,6 @@
 
   /* Leaflet custom icon wrapper */
   .pt-car-icon{background:transparent;border:none}
-
-.pt-car-anim {
-  animation: carMove 1.6s infinite ease-in-out;
-}
-@keyframes carMove{
-  0%{transform:translateY(0)}
-  50%{transform:translateY(-4px)}
-  100%{transform:translateY(0)}
-}
-
 
   /* Chat modal */
   .chatOverlay{position:fixed;inset:0;display:none;align-items:flex-end;justify-content:center;background:rgba(0,0,0,.55);z-index:10000}
@@ -146,7 +137,7 @@ border-radius:22px;padding:26px;text-align:center;box-shadow:0 20px 60px rgba(0,
       </div>
 
       <div style="height:12px"></div>
-      <button onclick="createOrder()">Sifariş et</button>
+      <button onclick="showDriverSearching(); createOrder()">Sifariş et</button>
 
       </div><!-- /#orderForm -->
 
@@ -355,7 +346,7 @@ function applyDriverLocation(llObj){
     if(!dest) setEtaText('');
 
     if (dest && (moved > 25 || !driverRouteLine)){
-      updateOSRMLine(llObj, dest, { weight: 5, opacity: 0.9, dashArray: '8 10' }, driverRouteLine)
+      //updateOSRMLine(llObj, dest, { weight: 5, opacity: 0.9, dashArray: '8 10' }, driverRouteLine)
         .then(line => { driverRouteLine = line; })
         .catch(()=>{});
     }
@@ -451,7 +442,7 @@ function setSelectedPackage(id){
   }
   // Refresh estimate immediately
   showEstimate();
-  drawRoute();
+  //drawRoute();
 }
 
 async function loadPackages(){
@@ -921,7 +912,7 @@ function metersBetween(a,b){
   return 2*R*Math.asin(Math.sqrt(s));
 }
 
-async function updateOSRMLine(from, to, opts, existingLine){
+async function //updateOSRMLine(from, to, opts, existingLine){
   if(!from||!to) return existingLine;
   try{
     const url = `https://router.project-osrm.org/route/v1/driving/${from.lng},${from.lat};${to.lng},${to.lat}?overview=full&geometries=geojson`;
@@ -944,7 +935,7 @@ function havKm(lat1, lon1, lat2, lon2){
   const c = 2*Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
   return R*c;
 }
-async function drawRoute(){
+async function //drawRoute(){
   if(!pickup || !dropoff){
     if(routeLine){ try{ map.removeLayer(routeLine); }catch(e){} routeLine=null; }
     lastRouteKey='';
@@ -1021,7 +1012,7 @@ function setPickup(lat, lon, text){
   fromMarker = L.marker([lat, lon]).addTo(map).bindPopup('Haradan').openPopup();
   map.setView([lat, lon], 14);
   showEstimate();
-  drawRoute();
+  //drawRoute();
 }
 function setDropoff(lat, lon, text){
   dropoff = {lat, lon, text};
@@ -1029,7 +1020,7 @@ function setDropoff(lat, lon, text){
   if(toMarker) map.removeLayer(toMarker);
   toMarker = L.marker([lat, lon]).addTo(map).bindPopup('Haraya').openPopup();
   showEstimate();
-  drawRoute();
+  //drawRoute();
 }
 
 async function reverse(lat, lon){
@@ -1118,7 +1109,7 @@ function swap(){
   if(dropoff) setDropoff(dropoff.lat,dropoff.lon,dropoff.text);
 }
 
-async function createOrder(){
+async function showDriverSearching(); createOrder(){
   if(!pickup || !dropoff){ setMsg('Haradan və Haraya seçin.'); return; }
   // If estimate hasn't finished yet, wait so user never sees a different number.
   if(!estimateReady){
@@ -1265,52 +1256,14 @@ function startPolling(){
 
 loadPackages();
 initMap();
-addTrafficLayer();
-// loadNearbyDrivers(); // disabled to avoid 404
 useMyLocation();
 loadMyOrders();
 startPolling();
 
-let nearbyCluster = null;
-
-function addTrafficLayer(){
-  const traffic = L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png',{
-    maxZoom:19,
-    opacity:0.6,
-    attribution:'Traffic'
-  });
-  const overlays = { "Traffic": traffic };
-  L.control.layers(null, overlays).addTo(map);
+function showDriverSearching(){
+  const el = document.getElementById('driverSearchingPopup');
+  if(el) el.style.display='flex';
 }
-
-async function loadNearbyDrivers(){
-  try{
-    const res = await fetch('/api/drivers/nearby');
-    const data = await res.json().catch(()=>null);
-    if(!data || !Array.isArray(data.drivers)) return;
-
-    if(!nearbyCluster){
-      nearbyCluster = L.markerClusterGroup();
-      map.addLayer(nearbyCluster);
-    }
-
-    nearbyCluster.clearLayers();
-
-    data.drivers.forEach(d=>{
-      if(!d.lat || !d.lng) return;
-      const icon = L.divIcon({
-        className:'pt-car-icon pt-car-anim',
-        html:'🚗',
-        iconSize:[24,24],
-        iconAnchor:[12,12]
-      });
-      const m = L.marker([d.lat,d.lng],{icon});
-      nearbyCluster.addLayer(m);
-    });
-  }catch(e){}
-}
-
-// setInterval(loadNearbyDrivers,5000); // disabled to avoid 404
 
 </script>
 
@@ -1401,7 +1354,37 @@ function closeRideComplete(){
   const modal = document.getElementById('rideCompleteModal');
   if(modal) modal.style.display = "none";
 }
+
+function showDriverSearching(){
+  const el = document.getElementById('driverSearchingPopup');
+  if(el) el.style.display='flex';
+}
+
 </script>
+
+
+<div id="driverSearchingPopup" style="
+position:fixed;
+top:0;left:0;right:0;bottom:0;
+background:rgba(0,0,0,0.55);
+display:none;
+align-items:center;
+justify-content:center;
+z-index:9999;">
+  <div style="
+  background:#0f172a;
+  color:white;
+  padding:28px;
+  border-radius:14px;
+  text-align:center;
+  box-shadow:0 10px 30px rgba(0,0,0,0.4);">
+    <div style="font-size:40px;margin-bottom:10px">🚕</div>
+    <div style="font-size:18px;font-weight:600">Sürücü axtarılır...</div>
+    <div style="font-size:13px;opacity:.7;margin-top:6px">
+      Yaxın sürücülər tapılır
+    </div>
+  </div>
+</div>
 
 
 <div id="driverSearchOverlay" class="search-overlay">
@@ -1409,51 +1392,33 @@ function closeRideComplete(){
     <div class="search-car">🚕</div>
     <div class="search-title">Sürücü axtarılır...</div>
     <div class="search-sub">Ən yaxın sürücülər yoxlanılır</div>
-    <div class="search-count" id="searchCountdown">30</div>
+    <div class="search-count">Driver tapılan kimi davam edəcək</div>
   </div>
 </div>
 
 
 <script>
-let searchTimer=null;
-let searchSeconds=30;
-
 function showDriverSearch(){
   const el=document.getElementById('driverSearchOverlay');
-  if(!el) return;
-  el.style.display='flex';
-  searchSeconds=30;
-  document.getElementById('searchCountdown').textContent=searchSeconds;
-
-  if(searchTimer) clearInterval(searchTimer);
-  searchTimer=setInterval(()=>{
-    searchSeconds--;
-    const c=document.getElementById('searchCountdown');
-    if(c) c.textContent=searchSeconds;
-    if(searchSeconds<=0){
-      clearInterval(searchTimer);
-    }
-  },1000);
+  if(el) el.style.display='flex';
 }
-
 function hideDriverSearch(){
   const el=document.getElementById('driverSearchOverlay');
   if(el) el.style.display='none';
-  if(searchTimer) clearInterval(searchTimer);
 }
 
-// trigger when order created
-const _createOrder=createOrder;
-createOrder=async function(){
-  await _createOrder();
+/* show when order created */
+const _createOrder_orig = createOrder;
+createOrder = async function(){
   showDriverSearch();
+  await _createOrder_orig();
 }
 
-// hide when driver accepted
-const _triggerDriverFound=triggerDriverFound;
-triggerDriverFound=function(order){
+/* hide only when driver accepted */
+const _triggerDriverFound_orig = triggerDriverFound;
+triggerDriverFound = function(order){
   hideDriverSearch();
-  _triggerDriverFound(order);
+  _triggerDriverFound_orig(order);
 }
 </script>
 
