@@ -555,15 +555,12 @@ function __beepOnce(){
 }
 
 function __startIncomingAlert(){
-  try{
-    const a=document.getElementById('uberOrderSound');
-    if(a){
-      a.loop=true;
-      a.currentTime=0;
-      a.play().catch(()=>{});
-    }
-  }catch(e){}
-}
+  __stopIncomingAlert();
+  // Sound: beep every 700ms (for up to 20s unless user acts)
+  let startedAt = Date.now();
+  __beepOnce();
+  __alertInterval = setInterval(()=>{
+    if(Date.now() - startedAt > 20000){ __stopIncomingAlert(); return; }
     __beepOnce();
   }, 700);
 
@@ -579,14 +576,7 @@ function __startIncomingAlert(){
 }
 
 function __stopIncomingAlert(){
-  try{
-    const a=document.getElementById('uberOrderSound');
-    if(a){
-      a.pause();
-      a.currentTime=0;
-    }
-  }catch(e){}
-}
+  if(__alertInterval){ clearInterval(__alertInterval); __alertInterval=null; }
   if(__vibeInterval){ clearInterval(__vibeInterval); __vibeInterval=null; }
   try{ if(navigator.vibrate) navigator.vibrate(0); }catch(e){}
 }
@@ -648,6 +638,14 @@ function esc(s){ return String(s||'').replace(/[&<>"']/g, c=>({"&":"&amp;","<":"
 let lastLocSentAt = 0;
 
 // Map state
+
+// --- Taxi icon ---
+const taxiIcon = L.icon({
+  iconUrl: '/assets/taxi_marker.png',
+  iconSize: [42,42],
+  iconAnchor: [21,21]
+});
+
 let map, meMarker, pickupMarker, dropoffMarker, routeToPickup, routePickupToDropoff;
 let lastPos = null;
 
@@ -714,7 +712,7 @@ function ensureMap(lat=40.4093, lng=49.8671){
   if(map) return;
   map = L.map('map').setView([lat,lng], 13);
   L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
-  meMarker = L.marker([lat,lng]).addTo(map).bindPopup('Siz');
+  meMarker = L.marker([lat,lng],{icon:taxiIcon}).addTo(map).bindPopup('Siz');
 }
 
 async function osrmPolyline(aLat,aLng,bLat,bLng){
@@ -1462,6 +1460,5 @@ function showCancelPopup(){
 }
 </script>
 
-<audio id="uberOrderSound" src="/assets/uber_order_ding.wav" preload="auto"></audio>
 </body>
 </html>
