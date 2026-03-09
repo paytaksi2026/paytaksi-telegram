@@ -1414,13 +1414,51 @@ loadMy = async function(){
       __lastActiveOrderId = active.id;
     }else{
       if(prev && cancelled){
-        alert("Sifariş ləğv edildi");
-        __playCancelSound();
+        showCancelPopup();
       }
       __lastActiveOrderId = null;
     }
   }catch(e){}
 };
+</script>
+
+
+<script>
+function showCancelPopup(){
+  try{
+    var a=document.getElementById("cancelSound");
+    if(a){ a.currentTime=0; a.play().catch(()=>{}); }
+  }catch(e){}
+
+  var overlay=document.createElement("div");
+  overlay.style.position="fixed";
+  overlay.style.inset="0";
+  overlay.style.background="rgba(0,0,0,.65)";
+  overlay.style.display="flex";
+  overlay.style.alignItems="center";
+  overlay.style.justifyContent="center";
+  overlay.style.zIndex="99999";
+
+  overlay.innerHTML=`
+  <div style="background:#0f172a;padding:28px;border-radius:16px;text-align:center;width:300px;box-shadow:0 20px 60px rgba(0,0,0,.6)">
+    <div style="font-size:22px;font-weight:800;color:#ef4444;margin-bottom:10px">
+      ❌ Sifariş ləğv edildi
+    </div>
+    <div style="opacity:.85;margin-bottom:18px">
+      Müştəri sifarişi ləğv etdi
+    </div>
+    <button onclick="this.parentNode.parentNode.remove()" 
+      style="padding:10px 20px;border:none;border-radius:10px;background:#22c55e;font-weight:700;cursor:pointer">
+      OK
+    </button>
+  </div>`;
+
+  document.body.appendChild(overlay);
+
+  try{
+    if(navigator.vibrate) navigator.vibrate([200,120,200]);
+  }catch(e){}
+}
 </script>
 
 </body>
