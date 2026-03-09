@@ -1363,27 +1363,7 @@ function closeFareModal(){
 
 <audio id="cancelSound" src="Sifariş ləğv edildi!.mp3" preload="auto"></audio>
 <script>
-(function(){
-  function playCancel(){
-    var a=document.getElementById('cancelSound');
-    if(a){ try{ a.currentTime=0; a.play().catch(()=>{});}catch(e){} }
-    alert('Sifariş ləğv edildi');
-  }
 
-  if(typeof EventSource!=='undefined'){
-    const ES = window.EventSource;
-    window.EventSource = function(url,opts){
-      const es = new ES(url,opts);
-      es.addEventListener('status', function(ev){
-        try{
-          var d = JSON.parse(ev.data||'{}');
-          if(d.order && d.order.status==='cancelled'){ playCancel(); }
-        }catch(e){}
-      });
-      return es;
-    }
-  }
-})();
 </script>
 
 
@@ -1465,12 +1445,6 @@ function showCancelPopup(){
   </div>`;
 
   document.body.appendChild(overlay);
-
-  try{
-    if(navigator.vibrate) navigator.vibrate([200,120,200]);
-  }catch(e){}
-}
-
 
   try{
     if(navigator.vibrate) navigator.vibrate([200,120,200]);
