@@ -1314,29 +1314,45 @@ function closeRideComplete(){
 </html>
 
 
-<!-- PASSENGER WAITING COUNTER -->
-<div id="passengerWaitingBox" style="position:fixed;bottom:140px;left:20px;background:#0f172a;color:#fff;padding:10px 14px;border-radius:12px;font-weight:bold;display:none;z-index:9999">
-  Gözləmə: <span id="passengerWaitingTimer">00:00</span>
+<!-- ===== PASSENGER WAITING TIMER UI (ADDITIVE) ===== -->
+<div id="pt_pass_wait_box" style="position:fixed;bottom:140px;left:20px;background:#0f172a;color:#fff;padding:10px 14px;border-radius:12px;font-weight:700;display:none;z-index:9999">
+Gözləmə: <span id="pt_pass_wait_time">00:00</span>
 </div>
 
 <script>
-let passengerWaitingStart = null;
-let passengerWaitingInt = null;
+let pt_pass_wait_start=null;
+let pt_pass_wait_int=null;
 
-function startPassengerWaiting(ts){
-  passengerWaitingStart = ts || Date.now();
-  const box = document.getElementById('passengerWaitingBox');
-  const txt = document.getElementById('passengerWaitingTimer');
-  if(!box || !txt) return;
+function pt_startPassengerWaiting(ts){
+  pt_pass_wait_start = Number(ts)||Date.now();
+  const box=document.getElementById('pt_pass_wait_box');
+  const txt=document.getElementById('pt_pass_wait_time');
+  if(!box||!txt) return;
+
   box.style.display='block';
 
-  if(passengerWaitingInt) clearInterval(passengerWaitingInt);
+  if(pt_pass_wait_int) clearInterval(pt_pass_wait_int);
 
-  passengerWaitingInt = setInterval(()=>{
-    const diff = Date.now() - passengerWaitingStart;
-    const sec = Math.floor(diff/1000)%60;
-    const min = Math.floor(diff/60000);
-    txt.textContent = String(min).padStart(2,'0') + ":" + String(sec).padStart(2,'0');
+  pt_pass_wait_int=setInterval(()=>{
+    const d=Date.now()-pt_pass_wait_start;
+    const s=Math.floor(d/1000)%60;
+    const m=Math.floor(d/60000);
+    txt.textContent=String(m).padStart(2,'0')+":"+String(s).padStart(2,'0');
   },1000);
 }
+
+/* Auto start when order status becomes arrived */
+(function(){
+  const oldRender = window.renderRideUI;
+  if(!oldRender) return;
+  window.renderRideUI = async function(order){
+    await oldRender(order);
+    try{
+      if(order && String(order.status||'').toLowerCase()==='arrived'){
+        pt_startPassengerWaiting(order.arrived_at||Date.now());
+      }
+    }catch(e){}
+  }
+})();
 </script>
+<!-- ===== END PASSENGER WAITING TIMER ===== -->

@@ -1362,29 +1362,31 @@ function closeFareModal(){
 </html>
 
 
-<!-- WAITING TIMER UI (additive) -->
-<div id="waitingTimerBox" style="position:fixed;bottom:120px;right:20px;background:#111;color:#fff;padding:10px 14px;border-radius:10px;font-weight:bold;display:none;z-index:9999">
-  Gözləmə: <span id="waitingTimer">00:00</span>
+<!-- ===== DRIVER WAITING TIMER UI (ADDITIVE) ===== -->
+<div id="pt_driver_wait_box" style="position:fixed;bottom:110px;right:20px;background:#111827;color:#fff;padding:10px 14px;border-radius:12px;font-weight:700;display:none;z-index:9999">
+Gözləmə: <span id="pt_driver_wait_time">00:00</span>
 </div>
 
 <script>
-let waitingStart = null;
-let waitingTimerInt = null;
+let pt_driver_wait_start=null;
+let pt_driver_wait_int=null;
 
-function startWaitingTimer(ts){
-  waitingStart = ts || Date.now();
-  const box = document.getElementById('waitingTimerBox');
-  const txt = document.getElementById('waitingTimer');
-  if(!box || !txt) return;
+function pt_startDriverWaiting(ts){
+  pt_driver_wait_start = Number(ts)||Date.now();
+  const box=document.getElementById('pt_driver_wait_box');
+  const txt=document.getElementById('pt_driver_wait_time');
+  if(!box||!txt) return;
+
   box.style.display='block';
 
-  if(waitingTimerInt) clearInterval(waitingTimerInt);
+  if(pt_driver_wait_int) clearInterval(pt_driver_wait_int);
 
-  waitingTimerInt = setInterval(()=>{
-    const diff = Date.now() - waitingStart;
-    const sec = Math.floor(diff/1000)%60;
-    const min = Math.floor(diff/60000);
-    txt.textContent = String(min).padStart(2,'0') + ":" + String(sec).padStart(2,'0');
+  pt_driver_wait_int=setInterval(()=>{
+    const d=Date.now()-pt_driver_wait_start;
+    const s=Math.floor(d/1000)%60;
+    const m=Math.floor(d/60000);
+    txt.textContent=String(m).padStart(2,'0')+":"+String(s).padStart(2,'0');
   },1000);
 }
 </script>
+<!-- ===== END DRIVER WAITING TIMER ===== -->
