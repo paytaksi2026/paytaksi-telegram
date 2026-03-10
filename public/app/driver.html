@@ -88,6 +88,22 @@
 }
 </style>
 
+
+<style>
+@keyframes screenFlashAlert {
+  0% { background: rgba(239,68,68,0.9); }
+  50% { background: rgba(0,0,0,0); }
+  100% { background: rgba(239,68,68,0.9); }
+}
+.alert-flash {
+  position: fixed;
+  inset:0;
+  z-index:99998;
+  pointer-events:none;
+  animation: screenFlashAlert 0.7s linear infinite;
+}
+</style>
+
 </head>
 <body>
 <div class="wrap">
@@ -1377,6 +1393,47 @@ function showCancelPopup(){
   try{
     if(navigator.vibrate) navigator.vibrate([200,120,200]);
   }catch(e){}
+}
+</script>
+
+
+<script>
+let __wakeLock = null;
+async function __requestWakeLock(){
+  try{
+    if('wakeLock' in navigator){
+      __wakeLock = await navigator.wakeLock.request('screen');
+    }
+  }catch(e){}
+}
+
+function __flashScreenStart(){
+  let f = document.getElementById('alertFlashLayer');
+  if(!f){
+    f = document.createElement('div');
+    f.id = 'alertFlashLayer';
+    f.className = 'alert-flash';
+    document.body.appendChild(f);
+  }
+}
+
+function __flashScreenStop(){
+  const f = document.getElementById('alertFlashLayer');
+  if(f) f.remove();
+}
+
+const __origStartIncomingAlert = window.__startIncomingAlert;
+window.__startIncomingAlert = function(){
+  __requestWakeLock();
+  __flashScreenStart();
+  if(__origStartIncomingAlert) __origStartIncomingAlert();
+}
+
+const __origStopIncomingAlert = window.__stopIncomingAlert;
+window.__stopIncomingAlert = function(){
+  __flashScreenStop();
+  if(__wakeLock){ try{ __wakeLock.release(); }catch(e){} }
+  if(__origStopIncomingAlert) __origStopIncomingAlert();
 }
 </script>
 
