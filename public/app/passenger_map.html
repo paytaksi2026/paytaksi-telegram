@@ -1005,7 +1005,7 @@ function initMap(lat=40.4093, lon=49.8671){
   const hour = new Date().getHours();
   const isNight = (hour >= 19 || hour < 6);
 
-  const dayTile = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+  const dayTile = 'https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png';
   const nightTile = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
 
   const tileUrl = isNight ? nightTile : dayTile;
