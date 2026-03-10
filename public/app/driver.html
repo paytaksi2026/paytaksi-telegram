@@ -638,14 +638,6 @@ function esc(s){ return String(s||'').replace(/[&<>"']/g, c=>({"&":"&amp;","<":"
 let lastLocSentAt = 0;
 
 // Map state
-
-// --- Taxi icon ---
-const taxiIcon = L.icon({
-  iconUrl: '/assets/taxi_marker.png',
-  iconSize: [42,42],
-  iconAnchor: [21,21]
-});
-
 let map, meMarker, pickupMarker, dropoffMarker, routeToPickup, routePickupToDropoff;
 let lastPos = null;
 
@@ -672,7 +664,7 @@ function ensureIncomingMap(lat=40.4093, lng=49.8671){
     tap:true
   }).setView([lat,lng], 13);
 
-  L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(incomingMap);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(incomingMap);
 }
 
 async function updateIncomingPreviewMap(o){
@@ -711,8 +703,8 @@ async function updateIncomingPreviewMap(o){
 function ensureMap(lat=40.4093, lng=49.8671){
   if(map) return;
   map = L.map('map').setView([lat,lng], 13);
-  L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
-  meMarker = L.marker([lat,lng],{icon:taxiIcon}).addTo(map).bindPopup('Siz');
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(map);
+  meMarker = L.marker([lat,lng]).addTo(map).bindPopup('Siz');
 }
 
 async function osrmPolyline(aLat,aLng,bLat,bLng){
@@ -930,8 +922,6 @@ async function sendChat(){
 }
 
 async function setOrderStatus(id, status){
-  if(status==='cancelled'){ window.__driverInitiatedCancel = true; }
-
   setMsg('...');
   const res = await fetch('/api/orders/status', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ phone:s.phone, password:s.password, order_id:id, status })});
   const data = await res.json();
@@ -939,6 +929,22 @@ async function setOrderStatus(id, status){
     setMsg('OK');
     loadMy();
 
+if(status==='completed'){
+  // fetch updated order to get final fare
+  fetch('/api/orders/driver/my?phone='+encodeURIComponent(s.phone)+'&password='+encodeURIComponent(s.password))
+  .then(r=>r.json())
+  .then(d=>{
+    if(d.success && Array.isArray(d.orders)){
+      const finished = d.orders.find(x=>x.id==id && x.status==='completed');
+      if(finished && finished.final_fare!=null){
+        const finalFare = Number(finished.final_fare||0);
+        const driverEarn = Number(finished.driver_earn||0);
+        const commission = finalFare - driverEarn;
+        showFareModal(finalFare, commission, driverEarn);
+      }
+    }
+  });
+}
 
     loadFeed();
   } else {
@@ -1018,6 +1024,22 @@ async function acceptOrder(id){
     loadFeed();
     loadMy();
 
+if(status==='completed'){
+  // fetch updated order to get final fare
+  fetch('/api/orders/driver/my?phone='+encodeURIComponent(s.phone)+'&password='+encodeURIComponent(s.password))
+  .then(r=>r.json())
+  .then(d=>{
+    if(d.success && Array.isArray(d.orders)){
+      const finished = d.orders.find(x=>x.id==id && x.status==='completed');
+      if(finished && finished.final_fare!=null){
+        const finalFare = Number(finished.final_fare||0);
+        const driverEarn = Number(finished.driver_earn||0);
+        const commission = finalFare - driverEarn;
+        showFareModal(finalFare, commission, driverEarn);
+      }
+    }
+  });
+}
 
   } else {
     if(data && data.error==='BALANCE_LIMIT'){
@@ -1030,6 +1052,22 @@ async function acceptOrder(id){
       setMsg('Sizin aktiv sifarişiniz var. Digər sifarişi götürmək üçün onu tamamlayın və ya ləğv edin. (ID: ' + (data.order_id||'') + ')');
       loadMy();
 
+if(status==='completed'){
+  // fetch updated order to get final fare
+  fetch('/api/orders/driver/my?phone='+encodeURIComponent(s.phone)+'&password='+encodeURIComponent(s.password))
+  .then(r=>r.json())
+  .then(d=>{
+    if(d.success && Array.isArray(d.orders)){
+      const finished = d.orders.find(x=>x.id==id && x.status==='completed');
+      if(finished && finished.final_fare!=null){
+        const finalFare = Number(finished.final_fare||0);
+        const driverEarn = Number(finished.driver_earn||0);
+        const commission = finalFare - driverEarn;
+        showFareModal(finalFare, commission, driverEarn);
+      }
+    }
+  });
+}
 
     } else {
       setMsg(data.error || 'ERROR');
@@ -1138,6 +1176,22 @@ document.addEventListener('DOMContentLoaded', function(){
 loadFeed();
 loadMy();
 
+if(status==='completed'){
+  // fetch updated order to get final fare
+  fetch('/api/orders/driver/my?phone='+encodeURIComponent(s.phone)+'&password='+encodeURIComponent(s.password))
+  .then(r=>r.json())
+  .then(d=>{
+    if(d.success && Array.isArray(d.orders)){
+      const finished = d.orders.find(x=>x.id==id && x.status==='completed');
+      if(finished && finished.final_fare!=null){
+        const finalFare = Number(finished.final_fare||0);
+        const driverEarn = Number(finished.driver_earn||0);
+        const commission = finalFare - driverEarn;
+        showFareModal(finalFare, commission, driverEarn);
+      }
+    }
+  });
+}
 
 let _polling = false;
 setInterval(async ()=>{
@@ -1150,12 +1204,27 @@ setInterval(async ()=>{
       window._myTick = Date.now();
       await loadMy();
 
+if(status==='completed'){
+  // fetch updated order to get final fare
+  fetch('/api/orders/driver/my?phone='+encodeURIComponent(s.phone)+'&password='+encodeURIComponent(s.password))
+  .then(r=>r.json())
+  .then(d=>{
+    if(d.success && Array.isArray(d.orders)){
+      const finished = d.orders.find(x=>x.id==id && x.status==='completed');
+      if(finished && finished.final_fare!=null){
+        const finalFare = Number(finished.final_fare||0);
+        const driverEarn = Number(finished.driver_earn||0);
+        const commission = finalFare - driverEarn;
+        showFareModal(finalFare, commission, driverEarn);
+      }
+    }
+  });
+}
 
     }
   }finally{ _polling = false; }
 }, 13000);
 startLocationLoop();
-ensureMap();
 
 function wazeLinkForOrder(o, type){
   if(!o) return '';
@@ -1285,98 +1354,6 @@ function showFareModal(finalFare, commission, driverEarn){
 
 function closeFareModal(){
   document.getElementById('fareResultModal').style.display = "none";
-}
-</script>
-
-
-<audio id="cancelSound" src="Sifariş ləğv edildi!.mp3" preload="auto"></audio>
-<script>
-
-</script>
-
-
-<script>
-// --- Cancel detect patch (PayTaksi) ---
-let __lastActiveOrderId = null;
-
-function __playCancelSound(){
-  try{
-    const a = document.getElementById("cancelSound");
-    if(a){ a.currentTime = 0; a.play().catch(()=>{}); }
-  }catch(e){}
-}
-
-const __origLoadMy = loadMy;
-loadMy = async function(){
-  const prev = __lastActiveOrderId;
-  await __origLoadMy();
-
-  try{
-    const qs = new URLSearchParams({ phone: s.phone, password: s.password });
-    const r = await fetch('/api/orders/driver/my?' + qs.toString());
-    const d = await r.json();
-    if(!d.success) return;
-
-    const active = (d.orders||[]).find(x=>['accepted','arrived','in_progress'].includes(String(x.status||'').toLowerCase()));
-    const cancelled = (d.orders||[]).find(x=>String(x.status||'').toLowerCase()==='cancelled');
-
-    if(active){
-      __lastActiveOrderId = active.id;
-    }else{
-      if(prev && cancelled){
-        showCancelPopup();
-      }
-      __lastActiveOrderId = null;
-    }
-  }catch(e){}
-};
-</script>
-
-
-<script>
-
-function showCancelPopup(){
-  let msgTitle = "❌ Sifariş ləğv edildi";
-  let msgText = "Müştəri sifarişi ləğv etdi";
-
-  if(window.__driverInitiatedCancel){
-    msgText = "Siz sifarişi ləğv etdiniz";
-    window.__driverInitiatedCancel = false;
-  }
-
-  try{
-    var a=document.getElementById("cancelSound");
-    if(a){ a.currentTime=0; a.play().catch(()=>{}); }
-  }catch(e){}
-
-  var overlay=document.createElement("div");
-  overlay.style.position="fixed";
-  overlay.style.inset="0";
-  overlay.style.background="rgba(0,0,0,.65)";
-  overlay.style.display="flex";
-  overlay.style.alignItems="center";
-  overlay.style.justifyContent="center";
-  overlay.style.zIndex="99999";
-
-  overlay.innerHTML=`
-  <div style="background:#0f172a;padding:28px;border-radius:16px;text-align:center;width:300px;box-shadow:0 20px 60px rgba(0,0,0,.6)">
-    <div style="font-size:22px;font-weight:800;color:#ef4444;margin-bottom:10px">
-      ${msgTitle}
-    </div>
-    <div style="opacity:.85;margin-bottom:18px">
-      ${msgText}
-    </div>
-    <button onclick="this.parentNode.parentNode.remove()" 
-      style="padding:10px 20px;border:none;border-radius:10px;background:#22c55e;font-weight:700;cursor:pointer">
-      OK
-    </button>
-  </div>`;
-
-  document.body.appendChild(overlay);
-
-  try{
-    if(navigator.vibrate) navigator.vibrate([200,120,200]);
-  }catch(e){}
 }
 </script>
 
