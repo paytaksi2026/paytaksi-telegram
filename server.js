@@ -2250,17 +2250,31 @@ initDb()
   });
 
 
-/* ==== WAITING TIME SYSTEM (additive patch) ==== */
-let WAITING_FREE_MINUTES = 3;
-let WAITING_FEE_PER_MINUTE = 0.05;
+/* ===== PAYTAKSI WAITING TIMER SYSTEM (ADDITIVE) =====
+   This does NOT remove any existing logic.
+   It only adds waiting fee calculation helpers.
+*/
 
-// helper
-function calculateWaitingFee(arrived_at){
-  if(!arrived_at) return 0;
-  const now = Date.now();
-  const diffMin = (now - Number(arrived_at)) / 60000;
-  if(diffMin <= WAITING_FREE_MINUTES) return 0;
-  const paid = diffMin - WAITING_FREE_MINUTES;
-  return Math.max(0, paid * WAITING_FEE_PER_MINUTE);
+const WAITING_FREE_MINUTES = 3;
+const WAITING_PRICE_PER_MIN = 0.05;
+
+function pt_calculateWaitingFee(arrived_at){
+  try{
+    if(!arrived_at) return 0;
+    const t = Number(arrived_at);
+    if(!Number.isFinite(t)) return 0;
+    const diffMin = (Date.now() - t) / 60000;
+    if(diffMin <= WAITING_FREE_MINUTES) return 0;
+    const paid = diffMin - WAITING_FREE_MINUTES;
+    return Math.max(0, paid * WAITING_PRICE_PER_MIN);
+  }catch(e){
+    return 0;
+  }
 }
-/* ==== END WAITING TIME SYSTEM ==== */
+
+/* Example usage when finishing ride:
+   const waiting = pt_calculateWaitingFee(order.arrived_at);
+   total_fare = total_fare + waiting;
+*/
+
+/* ===== END WAITING TIMER SYSTEM ===== */
