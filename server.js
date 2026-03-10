@@ -2248,3 +2248,19 @@ initDb()
     // Crash fast so Render shows the error clearly.
     process.exit(1);
   });
+
+
+/* ==== WAITING TIME SYSTEM (additive patch) ==== */
+let WAITING_FREE_MINUTES = 3;
+let WAITING_FEE_PER_MINUTE = 0.05;
+
+// helper
+function calculateWaitingFee(arrived_at){
+  if(!arrived_at) return 0;
+  const now = Date.now();
+  const diffMin = (now - Number(arrived_at)) / 60000;
+  if(diffMin <= WAITING_FREE_MINUTES) return 0;
+  const paid = diffMin - WAITING_FREE_MINUTES;
+  return Math.max(0, paid * WAITING_FEE_PER_MINUTE);
+}
+/* ==== END WAITING TIME SYSTEM ==== */
