@@ -1312,3 +1312,31 @@ function closeRideComplete(){
 
 </body>
 </html>
+
+
+<!-- PASSENGER WAITING COUNTER -->
+<div id="passengerWaitingBox" style="position:fixed;bottom:140px;left:20px;background:#0f172a;color:#fff;padding:10px 14px;border-radius:12px;font-weight:bold;display:none;z-index:9999">
+  Gözləmə: <span id="passengerWaitingTimer">00:00</span>
+</div>
+
+<script>
+let passengerWaitingStart = null;
+let passengerWaitingInt = null;
+
+function startPassengerWaiting(ts){
+  passengerWaitingStart = ts || Date.now();
+  const box = document.getElementById('passengerWaitingBox');
+  const txt = document.getElementById('passengerWaitingTimer');
+  if(!box || !txt) return;
+  box.style.display='block';
+
+  if(passengerWaitingInt) clearInterval(passengerWaitingInt);
+
+  passengerWaitingInt = setInterval(()=>{
+    const diff = Date.now() - passengerWaitingStart;
+    const sec = Math.floor(diff/1000)%60;
+    const min = Math.floor(diff/60000);
+    txt.textContent = String(min).padStart(2,'0') + ":" + String(sec).padStart(2,'0');
+  },1000);
+}
+</script>

@@ -1360,3 +1360,31 @@ function closeFareModal(){
 
 </body>
 </html>
+
+
+<!-- WAITING TIMER UI (additive) -->
+<div id="waitingTimerBox" style="position:fixed;bottom:120px;right:20px;background:#111;color:#fff;padding:10px 14px;border-radius:10px;font-weight:bold;display:none;z-index:9999">
+  Gözləmə: <span id="waitingTimer">00:00</span>
+</div>
+
+<script>
+let waitingStart = null;
+let waitingTimerInt = null;
+
+function startWaitingTimer(ts){
+  waitingStart = ts || Date.now();
+  const box = document.getElementById('waitingTimerBox');
+  const txt = document.getElementById('waitingTimer');
+  if(!box || !txt) return;
+  box.style.display='block';
+
+  if(waitingTimerInt) clearInterval(waitingTimerInt);
+
+  waitingTimerInt = setInterval(()=>{
+    const diff = Date.now() - waitingStart;
+    const sec = Math.floor(diff/1000)%60;
+    const min = Math.floor(diff/60000);
+    txt.textContent = String(min).padStart(2,'0') + ":" + String(sec).padStart(2,'0');
+  },1000);
+}
+</script>
