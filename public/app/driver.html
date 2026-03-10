@@ -88,22 +88,6 @@
 }
 </style>
 
-
-<style>
-@keyframes screenFlashAlert {
-  0% { background: rgba(239,68,68,0.9); }
-  50% { background: rgba(0,0,0,0); }
-  100% { background: rgba(239,68,68,0.9); }
-}
-.alert-flash {
-  position: fixed;
-  inset:0;
-  z-index:99998;
-  pointer-events:none;
-  animation: screenFlashAlert 0.7s linear infinite;
-}
-</style>
-
 </head>
 <body>
 <div class="wrap">
@@ -1397,75 +1381,31 @@ function showCancelPopup(){
 </script>
 
 
+<script type="module" src="/driver_push.js"></script>
+
+
 <script>
-let __wakeLock = null;
-async function __requestWakeLock(){
-  try{
-    if('wakeLock' in navigator){
-      __wakeLock = await navigator.wakeLock.request('screen');
-    }
-  }catch(e){}
-}
-
-function __flashScreenStart(){
-  let f = document.getElementById('alertFlashLayer');
-  if(!f){
-    f = document.createElement('div');
-    f.id = 'alertFlashLayer';
-    f.className = 'alert-flash';
-    document.body.appendChild(f);
-  }
-}
-
-function __flashScreenStop(){
-  const f = document.getElementById('alertFlashLayer');
-  if(f) f.remove();
-}
-
-const __origStartIncomingAlert = window.__startIncomingAlert;
-window.__startIncomingAlert = function(){
-  __requestWakeLock();
-  __flashScreenStart();
-  if(__origStartIncomingAlert) __origStartIncomingAlert();
-}
-
-const __origStopIncomingAlert = window.__stopIncomingAlert;
-window.__stopIncomingAlert = function(){
-  __flashScreenStop();
-  if(__wakeLock){ try{ __wakeLock.release(); }catch(e){} }
-  if(__origStopIncomingAlert) __origStopIncomingAlert();
-}
-</script>
-
-
-
-// --- Fare detect patch (PayTaksi) ---
-let __lastCompletedOrder = null;
-
+let __lastCompletedOrder=null;
 async function checkCompletedFare(){
-  try{
-    const qs = new URLSearchParams({ phone: s.phone, password: s.password });
-    const r = await fetch('/api/orders/driver/my?' + qs.toString());
-    const d = await r.json();
-    if(!d.success) return;
-
-    const completed = (d.orders||[]).find(x=>String(x.status||'').toLowerCase()==='completed');
-    if(completed && __lastCompletedOrder !== completed.id){
-      __lastCompletedOrder = completed.id;
-
-      const finalFare = Number(completed.final_fare||0);
-      const driverEarn = Number(completed.driver_earn||0);
-      const commission = finalFare - driverEarn;
-
-      if(typeof showFareModal === 'function'){
-        showFareModal(finalFare, commission, driverEarn);
-      }
-    }
-  }catch(e){}
+ try{
+  const qs=new URLSearchParams({phone:s.phone,password:s.password});
+  const r=await fetch('/api/orders/driver/my?'+qs.toString());
+  const d=await r.json();
+  if(!d.success)return;
+  const completed=(d.orders||[]).find(x=>String(x.status||'').toLowerCase()==='completed');
+  if(completed && __lastCompletedOrder!==completed.id){
+   __lastCompletedOrder=completed.id;
+   const finalFare=Number(completed.final_fare||0);
+   const driverEarn=Number(completed.driver_earn||0);
+   const commission=finalFare-driverEarn;
+   if(typeof showFareModal==='function'){
+     showFareModal(finalFare,commission,driverEarn);
+   }
+  }
+ }catch(e){}
 }
-
-setInterval(checkCompletedFare, 4000);
-
+setInterval(checkCompletedFare,4000);
+</script>
 
 </body>
 </html>
