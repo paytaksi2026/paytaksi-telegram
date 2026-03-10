@@ -1437,5 +1437,35 @@ window.__stopIncomingAlert = function(){
 }
 </script>
 
+
+
+// --- Fare detect patch (PayTaksi) ---
+let __lastCompletedOrder = null;
+
+async function checkCompletedFare(){
+  try{
+    const qs = new URLSearchParams({ phone: s.phone, password: s.password });
+    const r = await fetch('/api/orders/driver/my?' + qs.toString());
+    const d = await r.json();
+    if(!d.success) return;
+
+    const completed = (d.orders||[]).find(x=>String(x.status||'').toLowerCase()==='completed');
+    if(completed && __lastCompletedOrder !== completed.id){
+      __lastCompletedOrder = completed.id;
+
+      const finalFare = Number(completed.final_fare||0);
+      const driverEarn = Number(completed.driver_earn||0);
+      const commission = finalFare - driverEarn;
+
+      if(typeof showFareModal === 'function'){
+        showFareModal(finalFare, commission, driverEarn);
+      }
+    }
+  }catch(e){}
+}
+
+setInterval(checkCompletedFare, 4000);
+
+
 </body>
 </html>
