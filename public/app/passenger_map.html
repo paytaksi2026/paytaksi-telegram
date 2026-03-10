@@ -1356,3 +1356,60 @@ function pt_startPassengerWaiting(ts){
 })();
 </script>
 <!-- ===== END PASSENGER WAITING TIMER ===== -->
+
+
+<!-- ===== RIDE RATING POPUP (ADDITIVE) ===== -->
+<div id="pt_rating_popup" style="position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:10001">
+  <div style="background:#0f172a;padding:20px;border-radius:16px;width:320px;text-align:center;color:#fff">
+    <div style="font-weight:700;margin-bottom:10px">Ride tamamlandı</div>
+    <div style="margin-bottom:10px">Sürücünü qiymətləndir</div>
+    <div id="pt_rating_stars" style="font-size:28px;letter-spacing:6px;margin-bottom:12px">
+      <span onclick="ptRate(1)">⭐</span>
+      <span onclick="ptRate(2)">⭐</span>
+      <span onclick="ptRate(3)">⭐</span>
+      <span onclick="ptRate(4)">⭐</span>
+      <span onclick="ptRate(5)">⭐</span>
+    </div>
+    <button onclick="ptSubmitRating()" style="padding:8px 14px;border-radius:8px;background:#22c55e;border:none;font-weight:700">Göndər</button>
+  </div>
+</div>
+
+<script>
+let pt_rating_value=0;
+let pt_rating_order=null;
+
+function showRideComplete(order){
+  if(!order || !order.id) return;
+  const key='rated_'+order.id;
+  if(localStorage.getItem(key)) return;
+  pt_rating_order=order.id;
+  const el=document.getElementById('pt_rating_popup');
+  if(el) el.style.display='flex';
+}
+
+function ptRate(v){
+  pt_rating_value=v;
+}
+
+async function ptSubmitRating(){
+  if(!pt_rating_order || !pt_rating_value) return;
+
+  try{
+    const r=await fetch('/api/orders/rate',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        order_id:pt_rating_order,
+        rating:pt_rating_value,
+        phone:s.phone
+      })
+    });
+    const j=await r.json().catch(()=>null);
+    if(j && j.success){
+      localStorage.setItem('rated_'+pt_rating_order,'1');
+      document.getElementById('pt_rating_popup').style.display='none';
+    }
+  }catch(e){}
+}
+</script>
+<!-- ===== END RIDE RATING ===== -->
