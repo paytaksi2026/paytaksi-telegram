@@ -2278,26 +2278,3 @@ function pt_calculateWaitingFee(arrived_at){
 */
 
 /* ===== END WAITING TIMER SYSTEM ===== */
-
-
-/* ==== PAYTAKSI RIDE RATING SYSTEM (ADDITIVE) ====
-   Adds endpoint to save passenger rating after ride completion
-*/
-app.post('/api/orders/rate', async (req,res)=>{
-  try{
-    const {order_id, rating, phone} = req.body || {};
-    if(!order_id || !rating) return res.json({success:false,error:'INVALID'});
-
-    if(!global.orderRatings) global.orderRatings = {};
-    if(global.orderRatings[order_id]){
-      return res.json({success:false,error:'ALREADY_RATED'});
-    }
-
-    global.orderRatings[order_id]={rating:Number(rating),phone};
-
-    return res.json({success:true});
-  }catch(e){
-    return res.json({success:false,error:'SERVER_ERROR'});
-  }
-});
-/* ==== END RIDE RATING SYSTEM ==== */
