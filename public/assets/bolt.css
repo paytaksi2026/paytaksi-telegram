@@ -130,25 +130,3 @@ tr:hover td{background:rgba(148,163,184,.06)}
   box-shadow: 0 0 18px rgba(33,196,90,.55);
   transition: box-shadow .3s ease;
 }
-
-
-/* PayTaksi Modern UI */
-button{
-height:58px !important;
-font-size:16px !important;
-border-radius:28px !important;
-}
-
-.pkgbtn{
-border-radius:18px !important;
-padding:14px !important;
-font-size:15px !important;
-}
-
-.pad{
-backdrop-filter:blur(14px);
-}
-
-#map{
-position:relative;
-}
