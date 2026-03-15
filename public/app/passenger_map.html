@@ -13,7 +13,7 @@
   #map{height:100vh;width:100%}
   .wrap{max-width:980px;margin:0 auto;padding:14px}
   .card{background:rgba(15,23,42,.75);border:1px solid rgba(148,163,184,.2);border-radius:14px;overflow:hidden;box-shadow:0 10px 30px rgba(0,0,0,.35)}
-  .pad{padding:14px;position:relative;margin-top:-120px;background:rgba(15,23,42,.96);border-radius:22px 22px 0 0;box-shadow:0 -10px 40px rgba(0,0,0,.5);}
+  .pad{padding:14px}
   input,button{width:100%;padding:12px;border-radius:10px;border:1px solid rgba(148,163,184,.25);background:rgba(2,6,23,.55);color:#e5e7eb;box-sizing:border-box}
   button{background:#22c55e;border:none;color:#081014;font-weight:700;cursor:pointer}
   button.secondary{background:rgba(148,163,184,.15);border:1px solid rgba(148,163,184,.25);color:#e5e7eb}
@@ -78,6 +78,21 @@
   .chatFoot{padding:12px 14px;border-top:1px solid rgba(148,163,184,.15);display:flex;gap:10px;align-items:center}
   .chatFoot input{flex:1}
   .chatNote{font-size:12px;opacity:.75;margin-top:6px}
+
+/* PayTaksi modern bottom sheet */
+.card{position:relative}
+.pad{
+position:absolute;
+bottom:0;
+left:0;
+right:0;
+background:rgba(2,6,23,.92);
+border-radius:20px 20px 0 0;
+box-shadow:0 -10px 40px rgba(0,0,0,.6);
+max-height:55vh;
+overflow:auto;
+}
+
 </style>
 
 <link rel="stylesheet" href="/assets/bolt.css" />
@@ -1271,6 +1286,21 @@ background:rgba(0,0,0,.65);backdrop-filter:blur(8px);z-index:20000;">
   from{opacity:0;transform:scale(.92)}
   to{opacity:1;transform:scale(1)}
 }
+
+/* PayTaksi modern bottom sheet */
+.card{position:relative}
+.pad{
+position:absolute;
+bottom:0;
+left:0;
+right:0;
+background:rgba(2,6,23,.92);
+border-radius:20px 20px 0 0;
+box-shadow:0 -10px 40px rgba(0,0,0,.6);
+max-height:55vh;
+overflow:auto;
+}
+
 </style>
 
 <script>
