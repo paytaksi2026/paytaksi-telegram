@@ -92,11 +92,6 @@ button:disabled{opacity:.55;cursor:not-allowed}
   display:none;max-width:min(92vw,720px);z-index:9999
 }
 
-/* PayTaksi modern tweaks */
-#map{
-  height:100vh !important;
-}
-.pad{
-  border-radius:22px 22px 0 0;
-  margin-top:-120px;
-}
+/* PayTaksi UI tweaks */
+#map{border-radius:0 !important;}
+button{font-size:15px;}

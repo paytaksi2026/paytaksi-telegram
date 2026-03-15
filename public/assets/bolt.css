@@ -131,12 +131,7 @@ tr:hover td{background:rgba(148,163,184,.06)}
   transition: box-shadow .3s ease;
 }
 
-/* PayTaksi modern bottom sheet */
-.pad{
-  position:relative;
-  margin-top:-120px;
-  border-radius:22px 22px 0 0;
-}
-#map{
-  height:100vh !important;
-}
+/* PayTaksi modern tweaks */
+#map{border-radius:0 !important;}
+button{font-size:15px !important;padding:14px 16px !important;}
+.card{border-radius:0 !important;}
