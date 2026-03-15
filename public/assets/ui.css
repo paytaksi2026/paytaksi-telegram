@@ -91,7 +91,3 @@ button:disabled{opacity:.55;cursor:not-allowed}
   box-shadow:var(--shadow);
   display:none;max-width:min(92vw,720px);z-index:9999
 }
-
-/* PayTaksi UI tweaks */
-#map{border-radius:0 !important;}
-button{font-size:15px;}
